@@ -6,22 +6,57 @@
 	import ThreadList from '#lib/components/ThreadList.svelte';
 	import { createSelection } from '#lib/selection.svelte.ts';
 
+	/** Conversations of the Inbox, and those set apart as Important (flagged). */
 	let threads = $state<ThreadSummary[] | null>(null);
+	let flagged = $state<ThreadSummary[] | null>(null);
 	let error = $state('');
 	const selection = createSelection();
-	const picked = $derived(selection.visible(threads ?? [], (t) => t.id));
 
 	$effect(() => {
 		app.tick;
-		api.get<ThreadSummary[]>('/threads?box=important')
-			.then((list) => (threads = list))
+		Promise.all([
+			api.get<ThreadSummary[]>('/threads?box=important'),
+			api.get<ThreadSummary[]>('/threads?box=flagged')
+		])
+			.then(([inbox, important]) => {
+				threads = inbox;
+				flagged = important;
+			})
 			.catch((e) => (error = e.message));
 	});
 
-	const fresh = $derived(threads?.filter((t) => t.unread > 0) ?? []);
+	const unseen = $derived(threads?.filter((t) => t.unread > 0) ?? []);
 	const seen = $derived(threads?.filter((t) => t.unread === 0) ?? []);
-	// Reading order across both sections: new mail first.
-	const sequence = $derived([...fresh, ...seen].map((t) => t.id));
+	const areas = $derived([
+		{ id: 'unseen', title: 'Unseen', list: unseen, empty: 'No unseen messages. Area is empty.' },
+		{ id: 'important', title: 'Important', list: flagged ?? [], empty: 'No flagged messages. Area is empty.' },
+		{ id: 'seen', title: 'Seen', list: seen, empty: 'No seen messages. Area is empty.' }
+	]);
+	const shown = $derived(areas.flatMap((area) => area.list));
+	// Reading order follows the page: unseen, important, seen.
+	const sequence = $derived(shown.map((t) => t.id));
+	const picked = $derived(selection.visible(shown, (t) => t.id));
+
+	// Which areas are folded away; kept in this browser.
+	const KEY = 'emscreen.inbox.collapsed';
+	let collapsed = $state<Record<string, boolean>>(restore());
+
+	function restore(): Record<string, boolean> {
+		try {
+			return JSON.parse(localStorage.getItem(KEY) ?? '{}');
+		} catch {
+			return {};
+		}
+	}
+
+	function toggled(id: string, open: boolean) {
+		collapsed[id] = !open;
+		try {
+			localStorage.setItem(KEY, JSON.stringify(collapsed));
+		} catch {
+			// Without storage the areas simply start open next time.
+		}
+	}
 </script>
 
 {#if app.counts.screener > 0}
@@ -52,38 +87,91 @@
 		Email Screen reads mail from accounts you already have.
 		<p><a class="btn primary" href="/settings">Add a mail account</a></p>
 	</div>
-{:else if threads.length === 0}
-	<div class="empty sheet">
-		<strong>Your inbox is empty</strong>
-		Mail shows up here once you choose Inbox for its sender in the Screener.
-	</div>
 {:else}
-	<SelectAll
-		selected={picked.length}
-		total={threads.length}
-		onall={() => selection.set((threads ?? []).map((t) => t.id))}
-		onnone={selection.clear}
-	/>
-	{#if fresh.length}
-		<h2 class="section-title">New for you</h2>
-		<ThreadList threads={fresh} {selection} {sequence} />
+	{#if shown.length}
+		<SelectAll
+			selected={picked.length}
+			total={shown.length}
+			onall={() => selection.set(shown.map((t) => t.id))}
+			onnone={selection.clear}
+		/>
 	{/if}
-	{#if seen.length}
-		<h2 class="section-title">Previously seen</h2>
-		<ThreadList threads={seen} {selection} {sequence} />
-	{/if}
+	{#each areas as area (area.id)}
+		<details
+			class="area"
+			open={!collapsed[area.id]}
+			ontoggle={(event) => toggled(area.id, event.currentTarget.open)}
+		>
+			<summary>
+				<svg viewBox="0 0 12 8" aria-hidden="true"><path d="M1 1.5 6 6.5l5-5" /></svg>
+				<h2>{area.title}</h2>
+				<span class="count">{area.list.length}</span>
+			</summary>
+			{#if area.list.length}
+				<ThreadList threads={area.list} {selection} {sequence} />
+			{:else}
+				<p class="nothing sheet">{area.empty}</p>
+			{/if}
+		</details>
+	{/each}
 {/if}
 
 <SelectionBar
+	list="mixed"
 	threadIds={picked.map((t) => t.id)}
 	accountIds={[...new Set(picked.map((t) => t.account_id))]}
-	total={threads?.length ?? 0}
-	onselectall={() => selection.set((threads ?? []).map((t) => t.id))}
+	total={shown.length}
+	onselectall={() => selection.set(shown.map((t) => t.id))}
 	onclear={selection.clear}
 	ondone={selection.clear}
 />
 
 <style>
+	.area {
+		margin-top: 1.25rem;
+	}
+	.area summary {
+		display: flex;
+		align-items: center;
+		gap: 0.5rem;
+		width: fit-content;
+		padding: 0.25rem 0.6rem 0.25rem 0.3rem;
+		margin-bottom: 0.4rem;
+		border-radius: 999px;
+		cursor: pointer;
+		list-style: none;
+		user-select: none;
+	}
+	.area summary::-webkit-details-marker {
+		display: none;
+	}
+	.area summary:hover {
+		background: var(--surface);
+	}
+	.area summary svg {
+		width: 0.7rem;
+		fill: none;
+		stroke: var(--ink-soft);
+		stroke-width: 2;
+		stroke-linecap: round;
+		transform: rotate(-90deg);
+		transition: transform 0.15s;
+	}
+	.area[open] summary svg {
+		transform: none;
+	}
+	.area h2 {
+		font: 700 1.05rem var(--display);
+	}
+	.area .count {
+		font-size: 0.85rem;
+		color: var(--ink-soft);
+	}
+	.nothing {
+		margin: 0;
+		padding: 1.1rem 1.2rem;
+		color: var(--ink-soft);
+	}
 	.ticket {
 		display: flex;
 		align-items: center;
