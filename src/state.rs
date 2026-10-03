@@ -2,7 +2,7 @@ use std::{collections::HashMap, path::PathBuf, sync::Arc};
 
 use sqlx::SqlitePool;
 use tokio::{
-    sync::{Mutex, Notify, broadcast},
+    sync::{Mutex, Notify, Semaphore, broadcast},
     task::JoinHandle,
 };
 
@@ -25,6 +25,8 @@ pub struct Inner {
     pub config: Config,
     pub events: broadcast::Sender<Event>,
     pub sync: Mutex<HashMap<i64, SyncHandle>>,
+    /// Limits Office-to-PDF conversions to one at a time.
+    pub convert: Semaphore,
 }
 
 #[derive(Clone)]
@@ -45,6 +47,7 @@ impl AppState {
             config,
             events,
             sync: Mutex::new(HashMap::new()),
+            convert: Semaphore::new(1),
         }))
     }
 
@@ -65,6 +68,15 @@ impl AppState {
             .join("mail")
             .join(account_id.to_string())
             .join(format!("{message_id}.eml"))
+    }
+
+    /// Cached previews of a message's attachments.
+    pub fn preview_dir(&self, account_id: i64, message_id: i64) -> PathBuf {
+        self.config
+            .data_dir
+            .join("mail")
+            .join(account_id.to_string())
+            .join(format!("{message_id}.previews"))
     }
 
     pub fn draft_dir(&self, draft_id: i64) -> PathBuf {

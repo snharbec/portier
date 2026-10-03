@@ -229,6 +229,7 @@ pub async fn delete_messages(state: &AppState, account: &Account, ids: &[i64]) -
         .await?;
     for id in ids {
         let _ = tokio::fs::remove_file(state.raw_path(account.id, *id)).await;
+        let _ = tokio::fs::remove_dir_all(state.preview_dir(account.id, *id)).await;
     }
     sqlx::query(
         "DELETE FROM threads WHERE user_id = ?

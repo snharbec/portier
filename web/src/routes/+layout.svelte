@@ -18,6 +18,7 @@
 		{ href: '/', label: 'Important', hint: 'Mail from people you let in', key: '1', badge: app.counts.unread_important },
 		{ href: '/screener', label: 'Screener', hint: 'New senders waiting for your decision', key: '2', badge: app.counts.screener },
 		{ href: '/feed', label: 'Nice to know', hint: 'Newsletters and updates, ready to read', key: '3', badge: 0 },
+		{ href: '/files', label: 'Attachments', hint: 'Files from the last four weeks', key: '4', badge: 0 },
 		{ href: '/sent', label: 'Sent', hint: '', key: '', badge: 0 },
 		{ href: '/drafts', label: 'Drafts', hint: '', key: '', badge: app.counts.drafts },
 		{ href: '/junk', label: 'Junk', hint: 'Senders you turned away', key: '', badge: 0 },
@@ -33,6 +34,8 @@
 		const target = event.target as HTMLElement;
 		const typing = target.closest('input, textarea, select, [contenteditable="true"]');
 		if (event.key === 'Escape') menuOpen = false;
+		// An open dialog (the attachment viewer) owns the keyboard.
+		if (document.querySelector('dialog[open]')) return;
 		if (typing || event.metaKey || event.ctrlKey || event.altKey || !app.user) return;
 		const place = places.find((p) => p.key === event.key);
 		if (place) goto(place.href);

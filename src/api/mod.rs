@@ -1,6 +1,7 @@
 mod accounts;
 mod auth;
 mod compose;
+mod files;
 mod mail;
 
 use axum::{
@@ -37,6 +38,10 @@ pub fn router() -> Router<AppState> {
         .route("/messages/{id}", get(mail::message))
         .route("/messages/{id}/attachments/{idx}", get(mail::attachment))
         .route("/messages/{id}/cid/{cid}", get(mail::inline_image))
+        .route("/attachments", get(files::list))
+        .route("/messages/{id}/attachments/{idx}/thumb", get(files::thumb))
+        .route("/messages/{id}/attachments/{idx}/view", get(files::view))
+        .route("/messages/{id}/attachments/{idx}/pdf", get(files::pdf))
         .route("/search", get(mail::search))
         .route("/events", get(mail::events))
         .route("/drafts", get(compose::list).post(compose::create))
@@ -80,6 +85,7 @@ mod tests {
             master_key: crypto::random_bytes(),
             open_registration: false,
             sync_max_per_folder: 100,
+            soffice: None,
         };
         let state = AppState::new(db, config);
         (crate::app(state.clone()), state)
@@ -285,6 +291,133 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(category, None);
+    }
+
+    #[tokio::test]
+    async fn attachments_page_lists_recent_files_from_accepted_senders_only() {
+        use crate::mail::smtp::{self, Outgoing, OutgoingAttachment};
+
+        let (app, state) = test_app().await;
+        let admin = json!({ "email": "admin@example.org", "password": "password1" });
+        let (_, cookie, _) = call(&app, "POST", "/api/register", None, Some(admin)).await;
+        let cookie = cookie.unwrap();
+        let bob = json!({ "email": "bob@example.org", "password": "password2" });
+        call(&app, "POST", "/api/users", Some(&cookie), Some(bob.clone())).await;
+        let (_, bob_cookie, _) = call(&app, "POST", "/api/login", None, Some(bob)).await;
+        let bob_cookie = bob_cookie.unwrap();
+
+        // seed_mail's message is from 1970: far outside the four weeks.
+        let (_, old_message, anna) = seed_mail(&state, 1).await;
+        let db = &state.db;
+        sqlx::query("UPDATE senders SET category = 'important' WHERE id = ?")
+            .bind(anna)
+            .execute(db)
+            .await
+            .unwrap();
+        let junk: i64 = sqlx::query_scalar(
+            "INSERT INTO senders (user_id, address, category) VALUES (1, 'spam@example.com', 'junk') RETURNING id",
+        )
+        .fetch_one(db)
+        .await
+        .unwrap();
+        let waiting: i64 =
+            sqlx::query_scalar("INSERT INTO senders (user_id, address) VALUES (1, 'new@example.com') RETURNING id")
+                .fetch_one(db)
+                .await
+                .unwrap();
+
+        let mut recent = Vec::new();
+        for (n, sender) in [anna, junk, waiting].into_iter().enumerate() {
+            let id: i64 = sqlx::query_scalar(
+                "INSERT INTO messages (user_id, account_id, folder_id, uid, thread_id, sender_id, message_id,
+                     from_addr, subject, date)
+                 VALUES (1, 1, 1, ?, 1, ?, ?, 'x@example.com', 'Files', ?) RETURNING id",
+            )
+            .bind(10 + n as i64)
+            .bind(sender)
+            .bind(format!("recent{n}@example.com"))
+            .bind(crate::state::now() - 3600)
+            .fetch_one(db)
+            .await
+            .unwrap();
+            recent.push(id);
+        }
+        let attach = async |message: i64, idx: i64, name: &str, inline: bool| {
+            sqlx::query(
+                "INSERT INTO attachments (message_id, idx, filename, mime, size, content_id, inline)
+                 VALUES (?, ?, ?, 'image/png', 10, ?, ?)",
+            )
+            .bind(message)
+            .bind(idx)
+            .bind(name)
+            .bind(inline.then_some("cid1"))
+            .bind(inline)
+            .execute(db)
+            .await
+            .unwrap();
+        };
+        attach(recent[0], 0, "photo.png", false).await;
+        attach(recent[0], 1, "inline-logo.png", true).await;
+        attach(recent[1], 0, "junk.png", false).await;
+        attach(recent[2], 0, "unscreened.png", false).await;
+        attach(old_message, 0, "old.png", false).await;
+
+        // A real raw message behind photo.png, so previews can be made from it.
+        let mut png = std::io::Cursor::new(Vec::new());
+        image::RgbImage::from_pixel(900, 300, image::Rgb([10, 120, 200]))
+            .write_to(&mut png, image::ImageFormat::Png)
+            .unwrap();
+        let raw = smtp::build(Outgoing {
+            from: "anna@example.com".parse().unwrap(),
+            to: smtp::parse_recipients("owner@example.org").unwrap(),
+            cc: vec![],
+            bcc: vec![],
+            subject: "Files".into(),
+            html: "<p>see attached</p>".into(),
+            in_reply_to: None,
+            references: vec![],
+            attachments: vec![OutgoingAttachment {
+                filename: "photo.png".into(),
+                mime: "image/png".into(),
+                data: png.into_inner(),
+            }],
+        })
+        .unwrap()
+        .formatted();
+        let path = state.raw_path(1, recent[0]);
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(&path, raw).unwrap();
+
+        let (status, _, body) = call(&app, "GET", "/api/attachments", Some(&cookie), None).await;
+        assert_eq!(status, StatusCode::OK);
+        let names: Vec<&str> = body["files"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|f| f["filename"].as_str().unwrap())
+            .collect();
+        assert_eq!(names, ["photo.png"]);
+        assert_eq!(body["files"][0]["kind"], "image");
+        assert_eq!(body["office_previews"], false);
+
+        let base = format!("/api/messages/{}/attachments/0", recent[0]);
+        let (status, _, _) = call(&app, "GET", &format!("{base}/thumb"), Some(&cookie), None).await;
+        assert_eq!(status, StatusCode::OK);
+        let cached = state.preview_dir(1, recent[0]).join("0.jpg");
+        let thumb = image::load_from_memory(&std::fs::read(cached).unwrap()).unwrap();
+        assert_eq!((thumb.width(), thumb.height()), (480, 160));
+        let (status, _, _) = call(&app, "GET", &format!("{base}/view"), Some(&cookie), None).await;
+        assert_eq!(status, StatusCode::OK);
+        let (status, _, _) = call(&app, "GET", &format!("{base}/pdf"), Some(&cookie), None).await;
+        assert_eq!(status, StatusCode::NOT_FOUND);
+
+        // Another user gets none of it.
+        let (_, _, body) = call(&app, "GET", "/api/attachments", Some(&bob_cookie), None).await;
+        assert_eq!(body["files"], json!([]));
+        for suffix in ["thumb", "view", "pdf"] {
+            let (status, _, _) = call(&app, "GET", &format!("{base}/{suffix}"), Some(&bob_cookie), None).await;
+            assert_eq!(status, StatusCode::NOT_FOUND, "{suffix}");
+        }
     }
 
     #[tokio::test]

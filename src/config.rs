@@ -11,6 +11,8 @@ pub struct Config {
     pub open_registration: bool,
     /// Newest messages kept per folder; older mail is not downloaded.
     pub sync_max_per_folder: usize,
+    /// LibreOffice binary used to preview Office attachments, if there is one.
+    pub soffice: Option<PathBuf>,
 }
 
 impl Config {
@@ -36,6 +38,7 @@ impl Config {
             master_key,
             open_registration,
             sync_max_per_folder,
+            soffice: crate::mail::preview::find_soffice(),
         })
     }
 }

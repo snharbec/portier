@@ -445,7 +445,15 @@ pub async fn mark_seen(
 
 // ---- Attachments ----------------------------------------------------------------------------
 
-async fn load_part(state: &AppState, user_id: i64, message_id: i64, idx: i64) -> ApiResult<(String, String, Vec<u8>)> {
+pub(crate) struct Part {
+    pub account_id: i64,
+    pub filename: String,
+    pub mime: String,
+    pub data: Vec<u8>,
+}
+
+/// One attachment of a message the user owns, read from the stored raw message.
+pub(crate) async fn load_part(state: &AppState, user_id: i64, message_id: i64, idx: i64) -> ApiResult<Part> {
     let account_id: i64 = sqlx::query_scalar("SELECT account_id FROM messages WHERE id = ? AND user_id = ?")
         .bind(message_id)
         .bind(user_id)
@@ -455,7 +463,13 @@ async fn load_part(state: &AppState, user_id: i64, message_id: i64, idx: i64) ->
     let raw = tokio::fs::read(state.raw_path(account_id, message_id))
         .await
         .map_err(|_| ApiError::not_found())?;
-    parse::attachment(&raw, idx as u32).ok_or_else(ApiError::not_found)
+    let (filename, mime, data) = parse::attachment(&raw, idx as u32).ok_or_else(ApiError::not_found)?;
+    Ok(Part {
+        account_id,
+        filename,
+        mime,
+        data,
+    })
 }
 
 fn header(value: &str) -> HeaderValue {
@@ -468,7 +482,7 @@ pub async fn attachment(
     user: CurrentUser,
     Path((id, idx)): Path<(i64, i64)>,
 ) -> ApiResult<(HeaderMap, Vec<u8>)> {
-    let (filename, _mime, data) = load_part(&state, user.id, id, idx).await?;
+    let Part { filename, data, .. } = load_part(&state, user.id, id, idx).await?;
     let safe_name: String = filename
         .chars()
         .map(|c| {
@@ -505,7 +519,7 @@ pub async fn inline_image(
     .fetch_optional(&state.db)
     .await?
     .ok_or_else(ApiError::not_found)?;
-    let (_name, mime, data) = load_part(&state, user.id, id, idx).await?;
+    let Part { mime, data, .. } = load_part(&state, user.id, id, idx).await?;
     if !["image/png", "image/jpeg", "image/gif", "image/webp"].contains(&mime.to_lowercase().as_str()) {
         return Err(ApiError::not_found());
     }

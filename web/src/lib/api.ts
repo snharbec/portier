@@ -187,3 +187,21 @@ export const api = {
 	put: <T>(path: string, body: unknown) => request<T>('PUT', path, body),
 	delete: <T>(path: string) => request<T>('DELETE', path)
 };
+
+export interface FileEntry {
+	message_id: number;
+	idx: number;
+	filename: string;
+	size: number;
+	kind: 'image' | 'pdf' | 'office' | 'other';
+	date: number;
+	thread_id: number;
+	subject: string;
+	from_name: string;
+	from_addr: string;
+}
+
+export interface FileList {
+	office_previews: boolean;
+	files: FileEntry[];
+}
