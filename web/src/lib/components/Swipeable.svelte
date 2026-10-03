@@ -205,6 +205,9 @@
 	.move {
 		--c: var(--feed);
 	}
+	.archive {
+		--c: var(--ink-soft);
+	}
 	.trash {
 		--c: var(--junk);
 	}

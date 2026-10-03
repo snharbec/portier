@@ -80,7 +80,11 @@ async fn session_loop(state: &AppState, account_id: i64, wake: &Notify) -> Resul
     let params = ImapParams::for_account(&account, &state.config.master_key)?;
     let mut session = imap::connect(&params).await?;
 
-    if account.junk_folder.is_empty() || account.sent_folder.is_empty() || account.trash_folder.is_empty() {
+    if account.junk_folder.is_empty()
+        || account.sent_folder.is_empty()
+        || account.trash_folder.is_empty()
+        || account.archive_folder.is_empty()
+    {
         let found = imap::discover_folders(&mut session).await?;
         if account.junk_folder.is_empty() {
             account.junk_folder = found.junk.unwrap_or_default();
@@ -91,21 +95,28 @@ async fn session_loop(state: &AppState, account_id: i64, wake: &Notify) -> Resul
         if account.trash_folder.is_empty() {
             account.trash_folder = found.trash.unwrap_or_default();
         }
-        sqlx::query("UPDATE accounts SET junk_folder = ?, sent_folder = ?, trash_folder = ? WHERE id = ?")
-            .bind(&account.junk_folder)
-            .bind(&account.sent_folder)
-            .bind(&account.trash_folder)
-            .bind(account.id)
-            .execute(&state.db)
-            .await?;
+        if account.archive_folder.is_empty() {
+            account.archive_folder = found.archive.unwrap_or_default();
+        }
+        sqlx::query(
+            "UPDATE accounts SET junk_folder = ?, sent_folder = ?, trash_folder = ?, archive_folder = ? WHERE id = ?",
+        )
+        .bind(&account.junk_folder)
+        .bind(&account.sent_folder)
+        .bind(&account.trash_folder)
+        .bind(&account.archive_folder)
+        .bind(account.id)
+        .execute(&state.db)
+        .await?;
     }
 
     // Forget folders that are no longer configured.
-    sqlx::query("DELETE FROM folders WHERE account_id = ? AND name NOT IN (?, ?, ?, ?)")
+    sqlx::query("DELETE FROM folders WHERE account_id = ? AND name NOT IN (?, ?, ?, ?, ?)")
         .bind(account.id)
         .bind(&account.inbox_folder)
         .bind(&account.junk_folder)
         .bind(&account.sent_folder)
+        .bind(&account.archive_folder)
         .bind(LOCAL_SENT)
         .execute(&state.db)
         .await?;
@@ -121,6 +132,9 @@ async fn session_loop(state: &AppState, account_id: i64, wake: &Notify) -> Resul
         Some(store::ensure_folder(&state.db, account.id, &account.junk_folder, "junk").await?)
     };
     folders.extend(junk.clone());
+    if !account.archive_folder.is_empty() {
+        folders.push(store::ensure_folder(&state.db, account.id, &account.archive_folder, "archive").await?);
+    }
 
     loop {
         if load_account(state, account_id).await?.is_none() {
@@ -260,20 +274,15 @@ async fn sync_folder(
     Ok((mailbox.exists, mailbox.uid_next))
 }
 
-/// Moves messages out of `from`, which must be the selected folder, into `to`.
-///
-/// The local rows change folder first and lose their UID; the sync of `to` finds the moved
-/// copies and matches them up by Message-ID. Doing it in this order means a sync pass that runs
-/// in between sees rows that are expected in `to` rather than unknown mail to download again.
-pub async fn move_messages(
-    state: &AppState,
-    session: &mut Session,
-    from: &Folder,
-    uids: &[u32],
-    to: &Folder,
-) -> Result<()> {
+/// Local rows as they were before a move: (message id, UID in the folder they left).
+pub type Moved = Vec<(i64, i64)>;
+
+/// Records locally that messages left `from` for `to`: they change folder and lose their UID.
+/// The sync of `to` later finds the moved copies and matches them up by Message-ID. Until then a
+/// sync pass sees rows that are expected in `to` rather than unknown mail to download again.
+pub async fn move_local(state: &AppState, from: &Folder, uids: &[u32], to: &Folder) -> Result<Moved> {
     let uid_list = serde_json::to_string(uids)?;
-    let rows: Vec<(i64, i64)> =
+    let rows: Moved =
         sqlx::query_as("SELECT id, uid FROM messages WHERE folder_id = ? AND uid IN (SELECT value FROM json_each(?))")
             .bind(from.id)
             .bind(&uid_list)
@@ -288,17 +297,34 @@ pub async fn move_messages(
     .bind(&uid_list)
     .execute(&state.db)
     .await?;
+    Ok(rows)
+}
 
+/// Undoes `move_local` after the server refused the move.
+pub async fn restore_local(state: &AppState, from: &Folder, rows: Moved) -> Result<()> {
+    for (id, uid) in rows {
+        sqlx::query("UPDATE messages SET folder_id = ?, uid = ? WHERE id = ?")
+            .bind(from.id)
+            .bind(uid)
+            .bind(id)
+            .execute(&state.db)
+            .await?;
+    }
+    Ok(())
+}
+
+/// Moves messages out of `from`, which must be the selected folder, into `to`: locally first,
+/// then on the server, putting the local rows back if the server refuses.
+pub async fn move_messages(
+    state: &AppState,
+    session: &mut Session,
+    from: &Folder,
+    uids: &[u32],
+    to: &Folder,
+) -> Result<()> {
+    let rows = move_local(state, from, uids, to).await?;
     if let Err(e) = imap::move_uids(session, uids, &to.name).await {
-        // Nothing moved on the server: put the rows back where they were.
-        for (id, uid) in rows {
-            sqlx::query("UPDATE messages SET folder_id = ?, uid = ? WHERE id = ?")
-                .bind(from.id)
-                .bind(uid)
-                .bind(id)
-                .execute(&state.db)
-                .await?;
-        }
+        restore_local(state, from, rows).await?;
         return Err(e);
     }
     Ok(())

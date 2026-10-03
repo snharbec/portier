@@ -23,6 +23,7 @@ export interface Account {
 	junk_folder: string;
 	sent_folder: string;
 	trash_folder: string;
+	archive_folder: string;
 	append_sent: boolean;
 	last_error: string | null;
 	last_sync_at: number | null;
@@ -99,6 +100,8 @@ export interface Message {
 
 export interface Thread {
 	id: number;
+	/** Some received mail of it is still in the inbox, so it can be archived. */
+	can_archive: boolean;
 	subject: string;
 	sender: { id: number; address: string; display_name: string; category: Category | null } | null;
 	messages: Message[];

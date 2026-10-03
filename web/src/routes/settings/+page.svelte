@@ -24,6 +24,7 @@
 		junk_folder: '',
 		sent_folder: '',
 		trash_folder: '',
+		archive_folder: '',
 		append_sent: true
 	});
 	let form = $state<ReturnType<typeof blank> | null>(null);
@@ -60,11 +61,13 @@
 				junk_folder: string | null;
 				sent_folder: string | null;
 				trash_folder: string | null;
+				archive_folder: string | null;
 			}>('/accounts/test', form);
 			testResult = result;
 			form.junk_folder ||= result.junk_folder ?? '';
 			form.sent_folder ||= result.sent_folder ?? '';
 			form.trash_folder ||= result.trash_folder ?? '';
+			form.archive_folder ||= result.archive_folder ?? '';
 		} catch (e) {
 			formError = (e as Error).message;
 		} finally {
@@ -289,6 +292,9 @@
 				<label class="field">Junk <input bind:value={form.junk_folder} placeholder="Found automatically" /></label>
 				<label class="field">Sent <input bind:value={form.sent_folder} placeholder="Found automatically" /></label>
 				<label class="field">Trash <input bind:value={form.trash_folder} placeholder="Found automatically" /></label>
+				<label class="field">
+					Archive <input bind:value={form.archive_folder} placeholder="Found automatically" />
+				</label>
 			</div>
 			<label class="check">
 				<input type="checkbox" bind:checked={form.append_sent} />

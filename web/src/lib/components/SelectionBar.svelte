@@ -7,6 +7,7 @@
 		messageIds = [],
 		accountIds,
 		total,
+		archivable = true,
 		onselectall,
 		onclear,
 		ondone
@@ -18,6 +19,8 @@
 		accountIds: number[];
 		/** How many items the view offers, for "Select all". */
 		total: number;
+		/** Off in the Archive list, where everything is archived already. */
+		archivable?: boolean;
 		onselectall: () => void;
 		onclear: () => void;
 		/** Called after an action succeeded, to drop the selection and reload. */
@@ -31,7 +34,7 @@
 	let error = $state('');
 	let picker: FolderPicker;
 
-	async function run(action: 'read' | 'unread' | 'trash' | 'move', done: string, extra: Record<string, unknown> = {}) {
+	async function run(action: 'read' | 'unread' | 'archive' | 'trash' | 'move', done: string, extra: Record<string, unknown> = {}) {
 		busy = true;
 		error = '';
 		try {
@@ -59,6 +62,9 @@
 		<span class="spacer"></span>
 		<button class="btn small" disabled={busy} onclick={() => run('read', 'Marked as read:')}>Mark as read</button>
 		<button class="btn small" disabled={busy} onclick={() => run('unread', 'Marked as unread:')}>Mark as unread</button>
+		{#if archivable}
+			<button class="btn small" disabled={busy} onclick={() => run('archive', 'Archived:')}>Archive</button>
+		{/if}
 		<button class="btn small" disabled={busy} onclick={move}>Move to folder</button>
 		<button class="btn small danger" disabled={busy} onclick={() => run('trash', 'Moved to Trash:')}>
 			Move to Trash

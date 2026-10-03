@@ -1,11 +1,12 @@
 import { api } from './api.ts';
 import { app, notify, refreshCounts } from './app.svelte.ts';
 
-export type SwipeAction = 'read' | 'move' | 'trash';
+export type SwipeAction = 'read' | 'archive' | 'move' | 'trash';
 
 /** Every action a slide can be given, in the order they are offered. */
 export const swipeActions: { id: SwipeAction; name: string }[] = [
 	{ id: 'read', name: 'Mark as read or unread' },
+	{ id: 'archive', name: 'Archive' },
 	{ id: 'move', name: 'Move to folder' },
 	{ id: 'trash', name: 'Move to Trash' }
 ];
@@ -17,7 +18,7 @@ export interface Target {
 
 /** Runs one of the server's mail actions, says what happened and reloads the lists. */
 export async function mailAction(
-	action: 'read' | 'unread' | 'trash' | 'move',
+	action: 'read' | 'unread' | 'archive' | 'trash' | 'move',
 	target: Target,
 	done: string,
 	extra: Record<string, unknown> = {}
@@ -45,6 +46,8 @@ export async function swipeMail(
 		if (action === 'read') {
 			if (mail.unread) await mailAction('read', mail, `Marked as read: ${mail.what}`);
 			else await mailAction('unread', mail, `Marked as unread: ${mail.what}`);
+		} else if (action === 'archive') {
+			await mailAction('archive', mail, `Archived: ${mail.what}`);
 		} else if (action === 'trash') {
 			await mailAction('trash', mail, `Moved to Trash: ${mail.what}`);
 		} else {
@@ -63,5 +66,6 @@ export async function swipeMail(
 
 export function swipeLabel(action: SwipeAction, unread: boolean): string {
 	if (action === 'read') return unread ? 'Mark as read' : 'Mark as unread';
+	if (action === 'archive') return 'Archive';
 	return action === 'trash' ? 'Move to Trash' : 'Move to folder';
 }

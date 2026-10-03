@@ -19,6 +19,7 @@ pub struct Account {
     pub junk_folder: String,
     pub sent_folder: String,
     pub trash_folder: String,
+    pub archive_folder: String,
     pub append_sent: bool,
 }
 

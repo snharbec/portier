@@ -77,15 +77,18 @@
 
 	let trashing = $state(false);
 
-	/** Moves the whole conversation to Trash, then goes on to where the reader came from. */
-	async function trash() {
+	const trash = () => putAway('trash', 'Moved to Trash: 1 conversation');
+	const archive = () => putAway('archive', 'Archived: 1 conversation');
+
+	/** Moves the whole conversation to Trash or the Archive, then goes on to where the reader came from. */
+	async function putAway(action: 'trash' | 'archive', done: string) {
 		if (!thread || trashing) return;
 		trashing = true;
 		const threadId = thread.id;
 		const position = hit;
 		try {
 			leaving = true;
-			await mailAction('trash', { threadIds: [threadId] }, 'Moved to Trash: 1 conversation');
+			await mailAction(action, { threadIds: [threadId] }, done);
 		} catch (e) {
 			leaving = false;
 			notify((e as Error).message);
@@ -114,6 +117,7 @@
 		else if (event.key === 'a') draft('reply_all');
 		else if (event.key === 'f') draft('forward');
 		else if (event.key === 'd') trash();
+		else if (event.key === 'e' && thread?.can_archive) archive();
 		else if (hit >= 0 && event.key === 'p') toResult(hit - 1);
 		else if (hit >= 0 && event.key === 'n') toResult(hit + 1);
 	}
@@ -155,6 +159,9 @@
 			{/if}
 		{/if}
 		<p class="tools">
+			{#if thread.can_archive}
+				<button class="btn small" onclick={archive} disabled={trashing}>Archive</button>
+			{/if}
 			<button class="btn small danger" onclick={trash} disabled={trashing}>Move to Trash</button>
 		</p>
 	</div>
@@ -167,7 +174,7 @@
 	{/each}
 
 	<p class="muted keys">
-		Keys: <kbd>r</kbd> reply, <kbd>a</kbd> reply all, <kbd>f</kbd> forward, <kbd>d</kbd> move to Trash{#if hit >= 0}, <kbd>p</kbd> previous result,
+		Keys: <kbd>r</kbd> reply, <kbd>a</kbd> reply all, <kbd>f</kbd> forward, {#if thread.can_archive}<kbd>e</kbd> archive, {/if}<kbd>d</kbd> move to Trash{#if hit >= 0}, <kbd>p</kbd> previous result,
 			<kbd>n</kbd> next result{/if}
 	</p>
 {/if}
@@ -201,6 +208,8 @@
 	}
 	.tools {
 		margin: 0.75rem 0 0;
+		display: flex;
+		gap: 0.5rem;
 	}
 	.keys {
 		font-size: 0.85rem;

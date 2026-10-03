@@ -7,6 +7,9 @@ Screener until you put them in one of three places:
 - **Nice to know**: newsletters and updates, kept out of the way of Important
 - **Junk**: hidden, and moved to the Junk folder of the mail account
 
+**Archive** files a mail away from any list or from the mail itself: it moves to the account's
+Archive folder on the server and shows in the Archive list.
+
 Important, Nice to know, Junk and Sent are conversation lists. Each has "Read all on one page",
 which shows the list's mails opened one below the other.
 
@@ -19,11 +22,11 @@ first page. Selecting one opens the document on the page, with a link to its ema
 
 In Important, Nice to know, Junk, Sent and the search results you can tick several mails and
 mark them read or unread, move them to the account's Trash folder, or move them to any folder
-on the mail server. Email Screen mirrors only Inbox, Sent and Junk, so mail moved elsewhere
+on the mail server. Email Screen mirrors only Inbox, Sent, Junk and Archive, so mail moved elsewhere
 leaves its views and stays on the server.
 
 Rows in the mail lists and search results can also be slid left or right, by finger or mouse.
-Each direction's actions (read/unread, move to folder, move to Trash) are chosen per user under
+Each direction's actions (read/unread, archive, move to folder, move to Trash) are chosen per user under
 Settings: one action is performed on release, several are offered as buttons.
 
 Connects to existing mailboxes over IMAP and SMTP (password or app password). Several users
@@ -93,5 +96,5 @@ Values with spaces go in quotes: `from:"Carsten Meier"`. Days are counted in the
 
 `c` write, `/` search field, `m` menu, `1` Important, `2` Screener, `3` Nice to know, `4` Attachments.
 In the attachment viewer the left and right arrows step through files and Escape closes it.
-In the Screener `i` / `k` / `j` decide the first sender. In a conversation `r` reply, `d` move to Trash,
+In the Screener `i` / `k` / `j` decide the first sender. In a conversation `r` reply, `e` archive, `d` move to Trash,
 `a` reply all, `f` forward.

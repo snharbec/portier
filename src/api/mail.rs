@@ -195,10 +195,24 @@ pub async fn threads(
         // Threads the user started count as important once somebody answers.
         "important" => {
             "(t.sender_id IS NULL OR s.category = 'important')
-             AND EXISTS (SELECT 1 FROM messages m WHERE m.thread_id = t.id AND m.is_outgoing = 0)"
+             AND EXISTS (SELECT 1 FROM messages m JOIN folders f ON f.id = m.folder_id
+                         WHERE m.thread_id = t.id AND m.is_outgoing = 0 AND f.role != 'archive')"
         }
-        "feed" => "s.category = 'feed'",
-        "junk" => "s.category = 'junk'",
+        // A conversation leaves its list once every received message of it is archived.
+        "feed" => {
+            "s.category = 'feed'
+             AND EXISTS (SELECT 1 FROM messages m JOIN folders f ON f.id = m.folder_id
+                         WHERE m.thread_id = t.id AND m.is_outgoing = 0 AND f.role != 'archive')"
+        }
+        "junk" => {
+            "s.category = 'junk'
+             AND EXISTS (SELECT 1 FROM messages m JOIN folders f ON f.id = m.folder_id
+                         WHERE m.thread_id = t.id AND m.is_outgoing = 0 AND f.role != 'archive')"
+        }
+        "archive" => {
+            "EXISTS (SELECT 1 FROM messages m JOIN folders f ON f.id = m.folder_id
+                     WHERE m.thread_id = t.id AND f.role = 'archive')"
+        }
         "sent" => "EXISTS (SELECT 1 FROM messages m WHERE m.thread_id = t.id AND m.is_outgoing = 1)",
         _ => return Err(ApiError::bad_request("unknown box")),
     };
@@ -237,6 +251,7 @@ pub async fn counts(State(state): State<AppState>, user: CurrentUser) -> ApiResu
         "SELECT COUNT(DISTINCT t.id) FROM threads t
          LEFT JOIN senders s ON s.id = t.sender_id
          JOIN messages m ON m.thread_id = t.id AND m.seen = 0 AND m.is_outgoing = 0
+         JOIN folders f ON f.id = m.folder_id AND f.role != 'archive'
          WHERE t.user_id = ? AND (t.sender_id IS NULL OR s.category = 'important')",
     )
     .bind(user.id)
@@ -381,8 +396,18 @@ pub async fn thread(State(state): State<AppState>, user: CurrentUser, Path(id): 
     .fetch_all(&state.db)
     .await?;
 
+    // Archiving applies to received mail that still sits in the inbox (or Junk).
+    let can_archive: bool = sqlx::query_scalar(
+        "SELECT EXISTS (SELECT 1 FROM messages m JOIN folders f ON f.id = m.folder_id
+                        WHERE m.thread_id = ? AND f.role IN ('inbox', 'junk') AND m.uid IS NOT NULL)",
+    )
+    .bind(id)
+    .fetch_one(&state.db)
+    .await?;
+
     Ok(Json(json!({
         "id": id,
+        "can_archive": can_archive,
         "subject": head.0,
         "sender": head.1.map(|sender_id| json!({
             "id": sender_id, "address": head.2, "display_name": head.3, "category": head.4,
@@ -413,7 +438,7 @@ pub async fn message(
 
 #[derive(Deserialize)]
 pub struct Page {
-    /// important | feed | junk | sent
+    /// important | feed | junk | sent | archive
     #[serde(rename = "box", default = "default_box")]
     mailbox: String,
     #[serde(default)]
@@ -433,15 +458,19 @@ pub async fn feed(
     Query(page): Query<Page>,
 ) -> ApiResult<Json<Vec<MessageView>>> {
     let condition = match page.mailbox.as_str() {
-        "important" => "m.is_outgoing = 0 AND (t.sender_id IS NULL OR ts.category = 'important')",
-        "feed" => "m.is_outgoing = 0 AND ts.category = 'feed'",
-        "junk" => "m.is_outgoing = 0 AND ts.category = 'junk'",
+        "important" => {
+            "m.is_outgoing = 0 AND f.role != 'archive' AND (t.sender_id IS NULL OR ts.category = 'important')"
+        }
+        "feed" => "m.is_outgoing = 0 AND f.role != 'archive' AND ts.category = 'feed'",
+        "junk" => "m.is_outgoing = 0 AND f.role != 'archive' AND ts.category = 'junk'",
         "sent" => "m.is_outgoing = 1",
+        "archive" => "f.role = 'archive'",
         _ => return Err(ApiError::bad_request("unknown box")),
     };
     let rows: Vec<MessageRow> = sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "SELECT {MESSAGE_COLUMNS} FROM messages m
          JOIN threads t ON t.id = m.thread_id
+         JOIN folders f ON f.id = m.folder_id
          LEFT JOIN senders ts ON ts.id = t.sender_id
          LEFT JOIN senders s ON s.id = m.sender_id
          WHERE m.user_id = ?1 AND {condition}

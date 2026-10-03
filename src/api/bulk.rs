@@ -1,4 +1,5 @@
-//! Actions on several selected mails at once: mark read or unread, move to Trash, move to a folder.
+//! Actions on several selected mails at once: mark read or unread, archive, move to Trash, move to a
+//! folder.
 
 use std::collections::HashMap;
 
@@ -10,7 +11,7 @@ use crate::{
     auth::CurrentUser,
     error::{ApiError, ApiResult},
     mail::{imap, store, sync},
-    models::Account,
+    models::{Account, Folder},
     state::AppState,
 };
 
@@ -18,7 +19,7 @@ const MAX_SELECTION: usize = 1000;
 
 #[derive(Deserialize)]
 pub struct BulkInput {
-    /// read | unread | trash | move
+    /// read | unread | archive | trash | move
     action: String,
     /// Whole conversations: every message in them is affected.
     #[serde(default)]
@@ -34,7 +35,9 @@ pub struct BulkInput {
 struct Target {
     id: i64,
     account_id: i64,
+    folder_id: i64,
     folder_name: String,
+    folder_role: String,
     uid: Option<u32>,
     is_outgoing: bool,
 }
@@ -49,7 +52,8 @@ pub async fn apply(
     }
     // A message can exist twice (a copy in Sent and one in the inbox); selecting one means both.
     let targets: Vec<Target> = sqlx::query_as(
-        "SELECT m.id, m.account_id, f.name AS folder_name, m.uid, m.is_outgoing
+        "SELECT m.id, m.account_id, f.id AS folder_id, f.name AS folder_name, f.role AS folder_role, m.uid,
+                m.is_outgoing
          FROM messages m JOIN folders f ON f.id = m.folder_id
          WHERE m.user_id = ?1
            AND (m.thread_id IN (SELECT value FROM json_each(?2))
@@ -69,6 +73,7 @@ pub async fn apply(
     let affected = match input.action.as_str() {
         "read" => set_seen(&state, &targets, true).await?,
         "unread" => set_seen(&state, &targets, false).await?,
+        "archive" => archive(&state, user.id, targets).await?,
         "trash" => relocate(&state, user.id, targets, None).await?,
         "move" => {
             let account_id = input
@@ -124,6 +129,88 @@ async fn set_seen(state: &AppState, targets: &[Target], seen: bool) -> ApiResult
         );
     }
     Ok(ids.len())
+}
+
+async fn account_for_task(state: &AppState, account_id: i64) -> anyhow::Result<Account> {
+    sync::load_account(state, account_id)
+        .await?
+        .ok_or_else(|| anyhow::anyhow!("account deleted"))
+}
+
+/// Moves received mail from the inbox (or Junk) to the account's Archive folder. Unlike other
+/// moves the mail stays in Email Screen: the Archive folder is mirrored and shown as its own list.
+/// Sent copies of a conversation stay in Sent.
+async fn archive(state: &AppState, user_id: i64, targets: Vec<Target>) -> ApiResult<usize> {
+    let mut by_account: HashMap<i64, Vec<Target>> = HashMap::new();
+    for target in targets {
+        if matches!(target.folder_role.as_str(), "inbox" | "junk") && target.uid.is_some() {
+            by_account.entry(target.account_id).or_default().push(target);
+        }
+    }
+
+    // Resolve every Archive folder first, so nothing happens if one account has none.
+    let mut plans = Vec::new();
+    for (account_id, targets) in by_account {
+        let account: Account = sqlx::query_as("SELECT * FROM accounts WHERE id = ? AND user_id = ?")
+            .bind(account_id)
+            .bind(user_id)
+            .fetch_one(&state.db)
+            .await?;
+        if account.archive_folder.is_empty() {
+            return Err(ApiError::bad_request(format!(
+                "No Archive folder is known for the account {}. Set it in Settings.",
+                account.address
+            )));
+        }
+        let destination = store::ensure_folder(&state.db, account.id, &account.archive_folder, "archive").await?;
+        plans.push((account, destination, targets));
+    }
+
+    let mut affected = 0;
+    for (account, destination, targets) in plans {
+        let mut by_folder: HashMap<i64, (String, Vec<u32>)> = HashMap::new();
+        for target in targets {
+            let entry = by_folder
+                .entry(target.folder_id)
+                .or_insert_with(|| (target.folder_name.clone(), Vec::new()));
+            entry.1.extend(target.uid);
+        }
+        for (folder_id, (name, uids)) in by_folder {
+            affected += uids.len();
+            let source = Folder {
+                id: folder_id,
+                name,
+                role: String::new(),
+            };
+            // Locally at once, so the lists are right when this request returns.
+            let moved = sync::move_local(state, &source, &uids, &destination).await?;
+            let (task, destination, account_id) = (state.clone(), destination.clone(), account.id);
+            tokio::spawn(async move {
+                let on_server: anyhow::Result<()> = async {
+                    let params = imap::ImapParams::for_account(
+                        &account_for_task(&task, account_id).await?,
+                        &task.config.master_key,
+                    )?;
+                    let mut session = imap::connect(&params).await?;
+                    session.select(&source.name).await?;
+                    imap::move_uids(&mut session, &uids, &destination.name).await?;
+                    let _ = session.logout().await;
+                    Ok(())
+                }
+                .await;
+                if let Err(e) = on_server {
+                    // Nothing moved on the server, whatever the reason: show the mail where it still is.
+                    tracing::warn!(account_id, "archiving failed: {e:#}");
+                    if let Err(e) = sync::restore_local(&task, &source, moved).await {
+                        tracing::error!(account_id, "archived mail could not be put back locally: {e:#}");
+                    }
+                    task.notify(user_id, "mail");
+                }
+                task.wake_sync(account_id).await;
+            });
+        }
+    }
+    Ok(affected)
 }
 
 /// Moves mail on the server to `folder`, or to each account's Trash when `folder` is `None`.

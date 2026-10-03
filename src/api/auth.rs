@@ -198,7 +198,7 @@ pub async fn delete_user(
 }
 
 /// Actions a slide can be given, in the order they are offered.
-const SWIPE_ACTIONS: [&str; 3] = ["read", "move", "trash"];
+const SWIPE_ACTIONS: [&str; 4] = ["read", "archive", "move", "trash"];
 
 fn swipe_list(stored: &str) -> Vec<&str> {
     SWIPE_ACTIONS

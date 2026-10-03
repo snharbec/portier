@@ -593,6 +593,110 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn archiving_moves_a_conversation_to_the_archive_list() {
+        let (app, state) = test_app().await;
+        let admin = json!({ "email": "admin@example.org", "password": "password1" });
+        let (_, cookie, _) = call(&app, "POST", "/api/register", None, Some(admin)).await;
+        let cookie = cookie.unwrap();
+        let (thread, message, sender) = seed_mail(&state, 1).await;
+        let db = &state.db;
+        sqlx::query("UPDATE senders SET category = 'important' WHERE id = ?")
+            .bind(sender)
+            .execute(db)
+            .await
+            .unwrap();
+        let listed = async |mailbox: &str| -> usize {
+            let path = format!("/api/threads?box={mailbox}");
+            let (_, _, body) = call(&app, "GET", &path, Some(&cookie), None).await;
+            body.as_array().unwrap().len()
+        };
+        let role = async || -> String {
+            sqlx::query_scalar("SELECT f.role FROM messages m JOIN folders f ON f.id = m.folder_id WHERE m.id = ?")
+                .bind(message)
+                .fetch_one(db)
+                .await
+                .unwrap()
+        };
+        let archive = json!({ "action": "archive", "thread_ids": [thread] });
+        assert_eq!((listed("important").await, listed("archive").await), (1, 0));
+
+        // No Archive folder known: refuse and change nothing.
+        let (status, _, body) = call(&app, "POST", "/api/mail/actions", Some(&cookie), Some(archive.clone())).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+        assert!(body["error"].as_str().unwrap().contains("No Archive folder"));
+        assert_eq!(role().await, "inbox");
+
+        // A mail server that accepts the connection and then says nothing: the move stays pending,
+        // so what the lists show right after archiving can be checked without a race.
+        let silent = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        sqlx::query(
+            "UPDATE accounts SET archive_folder = 'Archive', imap_host = '127.0.0.1', imap_port = ?, password_enc = ?",
+        )
+        .bind(silent.local_addr().unwrap().port())
+        .bind(crypto::encrypt(&state.config.master_key, "secret").unwrap())
+        .execute(db)
+        .await
+        .unwrap();
+        let (status, _, body) = call(&app, "POST", "/api/mail/actions", Some(&cookie), Some(archive.clone())).await;
+        assert_eq!((status, body["affected"].as_i64()), (StatusCode::OK, Some(1)));
+        assert_eq!(role().await, "archive");
+        assert_eq!((listed("important").await, listed("archive").await), (0, 1));
+        let (_, _, page) = call(&app, "GET", "/api/feed?box=archive", Some(&cookie), None).await;
+        assert_eq!(page.as_array().unwrap().len(), 1);
+        let (_, _, page) = call(&app, "GET", "/api/feed?box=important", Some(&cookie), None).await;
+        assert_eq!(page.as_array().unwrap().len(), 0);
+        // Archiving again is a no-op: the mail is no longer in the inbox.
+        let (_, _, body) = call(&app, "POST", "/api/mail/actions", Some(&cookie), Some(archive)).await;
+        assert_eq!(body["affected"], 0);
+    }
+
+    #[tokio::test]
+    async fn archiving_is_undone_when_the_mail_server_cannot_be_reached() {
+        let (app, state) = test_app().await;
+        let admin = json!({ "email": "admin@example.org", "password": "password1" });
+        let (_, cookie, _) = call(&app, "POST", "/api/register", None, Some(admin)).await;
+        let cookie = cookie.unwrap();
+        let (thread, message, _) = seed_mail(&state, 1).await;
+        let db = &state.db;
+        // A port nothing listens on: the connection is refused at once.
+        let closed = {
+            let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+            listener.local_addr().unwrap().port()
+        };
+        sqlx::query(
+            "UPDATE accounts SET archive_folder = 'Archive', imap_host = '127.0.0.1', imap_port = ?, password_enc = ?",
+        )
+        .bind(closed)
+        .bind(crypto::encrypt(&state.config.master_key, "secret").unwrap())
+        .execute(db)
+        .await
+        .unwrap();
+        let archive = json!({ "action": "archive", "thread_ids": [thread] });
+        let (status, _, _) = call(&app, "POST", "/api/mail/actions", Some(&cookie), Some(archive)).await;
+        assert_eq!(status, StatusCode::OK);
+
+        let mut state_now = (String::new(), None::<i64>);
+        for _ in 0..100 {
+            state_now = sqlx::query_as(
+                "SELECT f.role, m.uid FROM messages m JOIN folders f ON f.id = m.folder_id WHERE m.id = ?",
+            )
+            .bind(message)
+            .fetch_one(db)
+            .await
+            .unwrap();
+            if state_now.0 == "inbox" {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        }
+        assert_eq!(
+            state_now,
+            ("inbox".to_string(), Some(1)),
+            "mail is back in the inbox with its UID"
+        );
+    }
+
+    #[tokio::test]
     async fn classifying_moves_threads_between_views() {
         let (app, state) = test_app().await;
         let admin = json!({ "email": "admin@example.org", "password": "password1" });

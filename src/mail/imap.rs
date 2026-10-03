@@ -116,10 +116,11 @@ pub struct SpecialFolders {
     pub junk: Option<String>,
     pub sent: Option<String>,
     pub trash: Option<String>,
+    pub archive: Option<String>,
     pub all: Vec<String>,
 }
 
-/// Finds Junk, Sent and Trash by SPECIAL-USE attribute, falling back to common names.
+/// Finds Junk, Sent, Trash and Archive by SPECIAL-USE attribute, falling back to common names.
 pub async fn discover_folders(session: &mut Session) -> Result<SpecialFolders> {
     let names: Vec<_> = session.list(Some(""), Some("*")).await?.try_collect().await?;
     let mut found = SpecialFolders::default();
@@ -133,6 +134,7 @@ pub async fn discover_folders(session: &mut Session) -> Result<SpecialFolders> {
                 NameAttribute::Junk => found.junk = Some(name.name().to_string()),
                 NameAttribute::Sent => found.sent = Some(name.name().to_string()),
                 NameAttribute::Trash => found.trash = Some(name.name().to_string()),
+                NameAttribute::Archive => found.archive = Some(name.name().to_string()),
                 _ => {}
             }
         }
@@ -151,6 +153,9 @@ pub async fn discover_folders(session: &mut Session) -> Result<SpecialFolders> {
     }
     if found.trash.is_none() {
         found.trash = by_name(&["trash", "deleted items", "deleted messages", "bin", "papierkorb"]).cloned();
+    }
+    if found.archive.is_none() {
+        found.archive = by_name(&["archive", "archives", "archiv", "archived"]).cloned();
     }
     Ok(found)
 }
