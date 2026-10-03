@@ -1,15 +1,14 @@
 <script lang="ts">
-	import { api, type SearchHit } from '#lib/api.ts';
+	import type { SearchHit } from '#lib/api.ts';
 	import { displayName, shortDate } from '#lib/format.ts';
 	import FolderPicker from '#lib/components/FolderPicker.svelte';
 	import SelectionBar from '#lib/components/SelectionBar.svelte';
 	import Swipeable from '#lib/components/Swipeable.svelte';
 	import { app } from '#lib/app.svelte.ts';
 	import { swipeLabel, swipeMail, type SwipeAction } from '#lib/swipe.ts';
-	import { rememberSearch, resultPath, search } from '#lib/search.svelte.ts';
+	import { resultPath, runSearch, search } from '#lib/search.svelte.ts';
 	import { createSelection } from '#lib/selection.svelte.ts';
 
-	let error = $state('');
 	const selection = createSelection();
 	const picked = $derived(selection.visible(search.hits ?? [], (h) => h.id));
 	let picker: FolderPicker;
@@ -20,37 +19,42 @@
 			{ messageIds: [hit.id], accountId: hit.account_id, unread: !hit.seen, what: '1 mail' },
 			picker.choose
 		);
-		run();
-	}
-	let timer: ReturnType<typeof setTimeout>;
-
-	function oninput() {
-		clearTimeout(timer);
-		timer = setTimeout(run, 250);
-	}
-
-	async function run() {
-		if (!search.query.trim()) {
-			search.hits = null;
-		} else {
-			try {
-				search.hits = await api.get<SearchHit[]>(`/search?q=${encodeURIComponent(search.query)}`);
-				error = '';
-			} catch (e) {
-				error = (e as Error).message;
-			}
-		}
-		rememberSearch();
+		runSearch();
 	}
 </script>
 
 <div class="page-head">
 	<h1>Search</h1>
+	{#if search.hits}
+		<p>{search.hits.length === 200 ? 'The newest 200 mails' : search.hits.length === 1 ? '1 mail' : `${search.hits.length} mails`} for “{search.answered}”</p>
+	{/if}
 </div>
-<!-- svelte-ignore a11y_autofocus -->
-<input class="input" type="search" placeholder="Words, names or addresses" bind:value={search.query} {oninput} autofocus />
 
-{#if error}<p class="error" role="alert">{error}</p>{/if}
+{#if search.error}<p class="error" role="alert">{search.error}</p>{/if}
+
+{#if search.query.trim() && !search.hits && !search.error}
+	<p class="empty" aria-busy="true">Searching</p>
+{:else if !search.hits && !search.error}
+	<div class="sheet help">
+		<p>Type in the field at the top. Words are looked up in subject, sender, recipients and text. Narrow it with:</p>
+		<dl>
+			<dt>from:carsten</dt>
+			<dd>sender name or address contains "carsten"</dd>
+			<dt>to:anna</dt>
+			<dd>a recipient contains "anna"</dd>
+			<dt>subject:invoice <span>or</span> title:invoice</dt>
+			<dd>subject contains "invoice"</dd>
+			<dt>attachment:true</dt>
+			<dd>only mail with attachments; attachment:false for mail without</dd>
+			<dt>received:last month</dt>
+			<dd>also today, yesterday, this week, last week, this month, this year, last year</dd>
+			<dt>received:01.09.2026..01.10.2026</dt>
+			<dd>between two days, both included; also 2026/09/01..2026/10/01, one day alone, or an open end</dd>
+		</dl>
+		<p>Combine them: <code>hallo from:carsten received:last month</code>. Put values with spaces in quotes: <code>from:"Carsten Meier"</code>.</p>
+	</div>
+{/if}
+
 {#if search.hits && search.hits.length === 0}
 	<p class="empty"><strong>No mail matches</strong>Try fewer or different words.</p>
 {:else if search.hits}
@@ -96,11 +100,49 @@
 	onclear={selection.clear}
 	ondone={() => {
 		selection.clear();
-		run();
+		runSearch();
 	}}
 />
 
 <style>
+	.help {
+		padding: 1.1rem 1.3rem;
+		max-width: 46rem;
+	}
+	.help p {
+		margin: 0;
+	}
+	dl {
+		display: grid;
+		grid-template-columns: auto 1fr;
+		gap: 0.45rem 1.25rem;
+		margin: 0.9rem 0;
+	}
+	dt,
+	code {
+		font: 600 0.95rem ui-monospace, SFMono-Regular, Menlo, monospace;
+		white-space: nowrap;
+	}
+	dt span {
+		font: 400 0.9rem var(--body);
+		color: var(--ink-soft);
+	}
+	dd {
+		margin: 0;
+		color: var(--ink-soft);
+	}
+	@media (max-width: 40rem) {
+		dl {
+			grid-template-columns: 1fr;
+			gap: 0.1rem;
+		}
+		dd {
+			margin-bottom: 0.5rem;
+		}
+		dt {
+			white-space: normal;
+		}
+	}
 	li {
 		display: flex;
 	}

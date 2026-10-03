@@ -4,6 +4,7 @@
 	import { page } from '$app/state';
 	import { app, loadSession, logout, startDraft } from '#lib/app.svelte.ts';
 	import Login from '#lib/components/Login.svelte';
+	import { runSearch, search } from '#lib/search.svelte.ts';
 	import { onMount } from 'svelte';
 
 	let { children } = $props();
@@ -26,6 +27,23 @@
 	]);
 	const here = $derived(places.find((p) => p.href === page.url.pathname)?.label ?? 'Email Screen');
 
+	let searchField: HTMLInputElement | undefined = $state();
+	let searchTimer: ReturnType<typeof setTimeout> | undefined;
+
+	/** Typing searches after a short pause and shows the results page. */
+	function searchTyped() {
+		clearTimeout(searchTimer);
+		searchTimer = setTimeout(runSearch, 250);
+		if (page.url.pathname !== '/search') goto('/search', { reset: false });
+	}
+
+	function searchSubmitted(event: SubmitEvent) {
+		event.preventDefault();
+		clearTimeout(searchTimer);
+		runSearch();
+		if (page.url.pathname !== '/search') goto('/search', { reset: false });
+	}
+
 	async function write() {
 		goto(await startDraft('new'));
 	}
@@ -42,7 +60,8 @@
 		else if (event.key === 'c') write();
 		else if (event.key === '/') {
 			event.preventDefault();
-			goto('/search');
+			searchField?.focus();
+			searchField?.select();
 		} else if (event.key === 'm') menuOpen = !menuOpen;
 	}
 </script>
@@ -65,7 +84,18 @@
 					><path d="M1 1.5 6 6.5l5-5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" /></svg
 				>
 			</button>
-			<a class="btn quiet" href="/search">Search</a>
+			<form class="search" role="search" onsubmit={searchSubmitted}>
+				<input
+					type="search"
+					bind:this={searchField}
+					bind:value={search.query}
+					oninput={searchTyped}
+					placeholder="Search mail, e.g. hallo from:carsten"
+					aria-label="Search mail"
+					autocomplete="off"
+					spellcheck="false"
+				/>
+			</form>
 		</div>
 		{#if menuOpen}
 			<button class="scrim" aria-label="Close menu" onclick={() => (menuOpen = false)}></button>
@@ -134,6 +164,29 @@
 	}
 	.bar > :last-child {
 		justify-self: end;
+	}
+	.search {
+		width: min(26rem, 100%);
+	}
+	.search input {
+		width: 100%;
+		padding: 0.45rem 0.95rem;
+		border: 1px solid var(--line);
+		border-radius: 999px;
+		background: var(--surface);
+	}
+	@media (max-width: 44rem) {
+		.bar {
+			grid-template-columns: auto 1fr;
+			row-gap: 0.5rem;
+		}
+		.bar .place {
+			justify-self: end;
+		}
+		.search {
+			grid-column: 1 / -1;
+			width: 100%;
+		}
 	}
 	.place {
 		display: inline-flex;

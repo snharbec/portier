@@ -552,6 +552,47 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn search_filters_narrow_the_results() {
+        let (app, state) = test_app().await;
+        let admin = json!({ "email": "admin@example.org", "password": "password1" });
+        let (_, cookie, _) = call(&app, "POST", "/api/register", None, Some(admin)).await;
+        let cookie = cookie.unwrap();
+        // One mail: from anna@example.com, subject "Secret", body "confidential words", dated 1970.
+        seed_mail(&state, 1).await;
+
+        // (query as typed, URL-encoded by hand, expected hits)
+        let cases = [
+            ("confidential", "confidential", 1),
+            ("from:anna", "from:anna", 1),
+            ("from:ANNA@EXAMPLE", "from:ANNA@EXAMPLE", 1),
+            ("from:bob", "from:bob", 0),
+            ("confidential from:anna", "confidential%20from:anna", 1),
+            ("confidential from:bob", "confidential%20from:bob", 0),
+            ("subject:secr", "subject:secr", 1),
+            ("title:secr", "title:secr", 1),
+            ("subject:words", "subject:words", 0),
+            ("attachment:false", "attachment:false", 1),
+            ("attachment:true", "attachment:true", 0),
+            ("received:..1971/01/01", "received:..1971/01/01", 1),
+            ("received:01.01.1969..01.01.1971", "received:01.01.1969..01.01.1971", 1),
+            ("received:2026/01/01..", "received:2026/01/01..", 0),
+            ("received:last month", "received:last%20month", 0),
+            ("from:100% (wildcards are literal)", "from:100%25", 0),
+            ("from:_nna (wildcards are literal)", "from:_nna", 0),
+        ];
+        for (typed, encoded, expected) in cases {
+            let path = format!("/api/search?q={encoded}");
+            let (status, _, hits) = call(&app, "GET", &path, Some(&cookie), None).await;
+            assert_eq!(status, StatusCode::OK, "{typed}");
+            assert_eq!(hits.as_array().unwrap().len(), expected, "{typed}");
+        }
+
+        let (status, _, body) = call(&app, "GET", "/api/search?q=received:sometime", Some(&cookie), None).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+        assert!(body["error"].as_str().unwrap().contains("received:sometime"));
+    }
+
+    #[tokio::test]
     async fn classifying_moves_threads_between_views() {
         let (app, state) = test_app().await;
         let admin = json!({ "email": "admin@example.org", "password": "password1" });

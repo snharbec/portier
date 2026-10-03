@@ -599,38 +599,80 @@ pub struct SearchRow {
     excerpt: String,
 }
 
-/// Turns free text into an FTS5 query of quoted prefix terms, so user input cannot be FTS syntax.
-fn fts_query(input: &str) -> String {
-    input
-        .split_whitespace()
-        .map(|term| format!("\"{}\"*", term.replace('"', "")))
-        .filter(|term| term.len() > 3)
-        .collect::<Vec<_>>()
-        .join(" ")
+/// LIKE pattern matching `needle` anywhere, with LIKE's own wildcards taken literally.
+fn contains(needle: &str) -> String {
+    let escaped = needle.replace('\\', "\\\\").replace('%', "\\%").replace('_', "\\_");
+    format!("%{escaped}%")
 }
 
+/// Search with the filters of `crate::search`. Dates are days in the server's time zone.
 pub async fn search(
     State(state): State<AppState>,
     user: CurrentUser,
     Query(q): Query<ContactQuery>,
 ) -> ApiResult<Json<Vec<SearchRow>>> {
-    let query = fts_query(&q.q);
+    let today = chrono::Local::now().date_naive();
+    let query = crate::search::parse(&q.q, today).map_err(ApiError::bad_request)?;
     if query.is_empty() {
         return Ok(Json(vec![]));
     }
-    Ok(Json(
-        sqlx::query_as(
-            "SELECT m.id, m.thread_id, m.account_id, m.subject, m.from_name, m.from_addr, m.date, m.seen,
-                    snippet(messages_fts, 4, '', '', '…', 16) AS excerpt
+    let fts = query.fts();
+    let columns = "m.id, m.thread_id, m.account_id, m.subject, m.from_name, m.from_addr, m.date, m.seen";
+
+    let mut sql = sqlx::QueryBuilder::<sqlx::Sqlite>::new("SELECT ");
+    sql.push(columns);
+    if fts.is_empty() {
+        // Filters only: no text to match, so the stored preview stands in for the excerpt.
+        sql.push(", m.snippet AS excerpt FROM messages m WHERE m.user_id = ")
+            .push_bind(user.id);
+    } else {
+        sql.push(
+            ", snippet(messages_fts, 4, '', '', '…', 16) AS excerpt
              FROM messages_fts JOIN messages m ON m.id = messages_fts.rowid
-             WHERE messages_fts MATCH ? AND m.user_id = ?
-             ORDER BY m.date DESC LIMIT 100",
+             WHERE messages_fts MATCH ",
         )
-        .bind(query)
-        .bind(user.id)
-        .fetch_all(&state.db)
-        .await?,
-    ))
+        .push_bind(fts)
+        .push(" AND m.user_id = ")
+        .push_bind(user.id);
+    }
+    for sender in &query.from {
+        sql.push(" AND (m.from_name LIKE ")
+            .push_bind(contains(sender))
+            .push(" ESCAPE '\\' OR m.from_addr LIKE ")
+            .push_bind(contains(sender))
+            .push(" ESCAPE '\\')");
+    }
+    for recipient in &query.to {
+        sql.push(" AND (m.to_addrs LIKE ")
+            .push_bind(contains(recipient))
+            .push(" ESCAPE '\\' OR m.cc_addrs LIKE ")
+            .push_bind(contains(recipient))
+            .push(" ESCAPE '\\')");
+    }
+    for subject in &query.subject {
+        sql.push(" AND m.subject LIKE ")
+            .push_bind(contains(subject))
+            .push(" ESCAPE '\\'");
+    }
+    if let Some(wanted) = query.attachment {
+        sql.push(" AND m.has_attachments = ").push_bind(wanted);
+    }
+    if let Some((first, last)) = query.received {
+        // Midnight in the server's zone; a day that starts twice or not at all (clock change) still gets one.
+        let midnight = |day: chrono::NaiveDate| {
+            day.and_hms_opt(0, 0, 0)
+                .and_then(|t| t.and_local_timezone(chrono::Local).earliest())
+                .map(|t| t.timestamp())
+        };
+        if let Some(from) = first.and_then(midnight) {
+            sql.push(" AND m.date >= ").push_bind(from);
+        }
+        if let Some(until) = last.and_then(|day| day.succ_opt()).and_then(midnight) {
+            sql.push(" AND m.date < ").push_bind(until);
+        }
+    }
+    sql.push(" ORDER BY m.date DESC, m.id DESC LIMIT 200");
+    Ok(Json(sql.build_query_as().fetch_all(&state.db).await?))
 }
 
 pub async fn events(
@@ -647,16 +689,4 @@ pub async fn events(
         async move { item }
     });
     Sse::new(stream).keep_alive(KeepAlive::default())
-}
-
-#[cfg(test)]
-mod tests {
-    use super::fts_query;
-
-    #[test]
-    fn fts_terms_are_quoted() {
-        assert_eq!(fts_query("hello wor"), "\"hello\"* \"wor\"*");
-        assert_eq!(fts_query("a\"b OR"), "\"ab\"* \"OR\"*");
-        assert_eq!(fts_query("  \" "), "");
-    }
 }

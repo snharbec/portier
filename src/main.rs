@@ -6,6 +6,7 @@ mod crypto;
 mod error;
 mod mail;
 mod models;
+mod search;
 mod state;
 
 use std::str::FromStr;

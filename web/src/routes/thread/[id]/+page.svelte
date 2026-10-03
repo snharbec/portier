@@ -98,7 +98,7 @@
 			search.hits = search.hits.filter((h) => h.thread_id !== threadId);
 			rememberSearch();
 			const next = Math.min(position, search.hits.length - 1);
-			goto(next >= 0 ? resultPath(next) : '/search', { replaceState: true });
+			goto(next >= 0 ? resultPath(next) : '/search', { replace: true });
 		} else if (history.length > 1) {
 			history.back();
 		} else {
@@ -129,7 +129,7 @@
 	{#if hit >= 0 && search.hits}
 		<nav class="results" aria-label="Search results">
 			<a class="btn small" href="/search">Back to results</a>
-			<span class="muted">Result {hit + 1} of {search.hits.length} for “{search.query}”</span>
+			<span class="muted">Result {hit + 1} of {search.hits.length} for “{search.answered}”</span>
 			<button class="btn small" onclick={() => toResult(hit - 1)} disabled={hit === 0}>Previous</button>
 			<button class="btn small" onclick={() => toResult(hit + 1)} disabled={hit === search.hits.length - 1}>
 				Next

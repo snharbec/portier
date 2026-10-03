@@ -73,9 +73,25 @@ you do not want that.
     cargo test && cargo clippy --all-targets -- -D warnings
     cd web && npm run check
 
+## Search
+
+The field in the top bar searches subject, sender, recipients and text, and takes filters:
+
+| Filter | Finds |
+|---|---|
+| `from:carsten` | sender name or address contains "carsten" |
+| `to:anna` | a recipient contains "anna" |
+| `subject:invoice`, `title:invoice` | subject contains "invoice" |
+| `attachment:true`, `attachment:false` | mail with, or without, attachments |
+| `received:last month` | also `today`, `yesterday`, `this week`, `last week`, `this month`, `this year`, `last year` |
+| `received:01.09.2026..01.10.2026` | from first to last day, both included; also `2026/09/01..2026/10/01`, a single day, or an open end |
+
+Filters combine with each other and with words: `hallo from:carsten received:last month`.
+Values with spaces go in quotes: `from:"Carsten Meier"`. Days are counted in the server's time zone.
+
 ## Keyboard
 
-`c` write, `/` search, `m` menu, `1` Important, `2` Screener, `3` Nice to know, `4` Attachments.
+`c` write, `/` search field, `m` menu, `1` Important, `2` Screener, `3` Nice to know, `4` Attachments.
 In the attachment viewer the left and right arrows step through files and Escape closes it.
 In the Screener `i` / `k` / `j` decide the first sender. In a conversation `r` reply, `d` move to Trash,
 `a` reply all, `f` forward.
