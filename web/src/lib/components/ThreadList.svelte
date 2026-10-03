@@ -1,14 +1,28 @@
 <script lang="ts">
 	import type { ThreadSummary } from '#lib/api.ts';
 	import { app } from '#lib/app.svelte.ts';
+	import { page } from '$app/state';
 	import { displayName, hue, shortDate } from '#lib/format.ts';
+	import { startReading } from '#lib/reading.ts';
 	import type { Selection } from '#lib/selection.svelte.ts';
 	import { swipeLabel, swipeMail, type SwipeAction } from '#lib/swipe.ts';
 	import Avatar from './Avatar.svelte';
 	import FolderPicker from './FolderPicker.svelte';
 	import Swipeable from './Swipeable.svelte';
 
-	let { threads, selection }: { threads: ThreadSummary[]; selection?: Selection } = $props();
+	let {
+		threads,
+		selection,
+		sequence
+	}: {
+		threads: ThreadSummary[];
+		selection?: Selection;
+		/** The whole list in reading order, when this is only one section of it. */
+		sequence?: number[];
+	} = $props();
+
+	/** Opening a conversation remembers the list, so the email view can move on to the next one. */
+	const opened = () => startReading(sequence ?? threads.map((t) => t.id), page.url.pathname);
 
 	const accountLabel = (id: number) => app.accounts.find((a) => a.id === id)?.label ?? '';
 
@@ -46,7 +60,7 @@
 					/>
 				</label>
 			{/if}
-			<a href="/thread/{thread.id}" class:unread={thread.unread > 0}>
+			<a href="/thread/{thread.id}" class:unread={thread.unread > 0} onclick={opened}>
 				<Avatar name={who} seed={thread.sender_address ?? thread.from_addr} />
 				<span class="main">
 					<span class="top">

@@ -6,6 +6,7 @@
 	import ClassifyButtons from '#lib/components/ClassifyButtons.svelte';
 	import MessageCard from '#lib/components/MessageCard.svelte';
 	import { displayName } from '#lib/format.ts';
+	import { afterRemoving } from '#lib/reading.ts';
 	import { rememberSearch, resultPath, search } from '#lib/search.svelte.ts';
 	import { mailAction } from '#lib/swipe.ts';
 
@@ -102,10 +103,12 @@
 			rememberSearch();
 			const next = Math.min(position, search.hits.length - 1);
 			goto(next >= 0 ? resultPath(next) : '/search', { replace: true });
-		} else if (history.length > 1) {
-			history.back();
 		} else {
-			goto('/');
+			// Opened from a list: go straight on to the conversation that followed this one.
+			const onward = afterRemoving(threadId);
+			if (onward) goto(onward, { replace: true });
+			else if (history.length > 1) history.back();
+			else goto('/');
 		}
 	}
 

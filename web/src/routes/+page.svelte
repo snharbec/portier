@@ -19,6 +19,8 @@
 
 	const fresh = $derived(threads?.filter((t) => t.unread > 0) ?? []);
 	const seen = $derived(threads?.filter((t) => t.unread === 0) ?? []);
+	// Reading order across both sections: new mail first.
+	const sequence = $derived([...fresh, ...seen].map((t) => t.id));
 </script>
 
 {#if app.counts.screener > 0}
@@ -57,11 +59,11 @@
 {:else}
 	{#if fresh.length}
 		<h2 class="section-title">New for you</h2>
-		<ThreadList threads={fresh} {selection} />
+		<ThreadList threads={fresh} {selection} {sequence} />
 	{/if}
 	{#if seen.length}
 		<h2 class="section-title">Previously seen</h2>
-		<ThreadList threads={seen} {selection} />
+		<ThreadList threads={seen} {selection} {sequence} />
 	{/if}
 {/if}
 
