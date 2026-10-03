@@ -79,6 +79,12 @@ blockquote{margin:0 0 0 .8ex;border-left:2px solid ${plain ? theme.line : '#c9cf
 		if (!doc?.body) return;
 		// Images arriving late change the height.
 		new ResizeObserver(measure).observe(doc.body);
+		// Keys pressed after clicking into the mail still reach the page's shortcuts.
+		doc.addEventListener('keydown', (event) => {
+			const { key, code, shiftKey, ctrlKey, altKey, metaKey } = event;
+			const copy = new KeyboardEvent('keydown', { key, code, shiftKey, ctrlKey, altKey, metaKey, bubbles: true, cancelable: true });
+			if (!frame?.dispatchEvent(copy)) event.preventDefault();
+		});
 	}
 </script>
 

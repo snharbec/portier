@@ -137,3 +137,6 @@ each time, so `received:last month` keeps meaning the previous month.
 In the attachment viewer the left and right arrows step through files and Escape closes it.
 In the Screener `i` / `k` / `j` decide the first sender. In a conversation `r` reply, `u` mark as unseen, `i` important, `z` delay (then `1`, `2`, `3` or `7`), `e` archive, `d` move to Trash,
 `a` reply all, `f` forward.
+Arrow down and up go to the next and previous mail: in a conversation, and on a list in split
+view; on a list without split view they move from row to row and Enter opens. Space pages down
+in the mail, Backspace (or Shift+Space) pages up; Ctrl+Down and Ctrl+Up do the same.

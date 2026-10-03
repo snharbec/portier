@@ -86,6 +86,7 @@
 				href={hrefOf(thread.id)}
 				class:unread={thread.unread > 0}
 				class:open={openId === thread.id}
+				data-row={thread.id}
 				data-sveltekit-noscroll={app.splitActive ? '' : undefined}
 				data-sveltekit-keepfocus={app.splitActive ? '' : undefined}
 				onclick={opened}

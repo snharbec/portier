@@ -93,6 +93,37 @@
 	});
 	const stacked = $derived(app.split === 'below' || !roomy);
 	const openId = $derived(app.splitActive ? page.url.searchParams.get('open') : null);
+	let pane: HTMLElement | undefined = $state();
+
+	// Another mail starts at its top.
+	$effect(() => {
+		openId;
+		if (pane) pane.scrollTop = 0;
+	});
+
+	/**
+	 * Arrow keys on a mail list: in split view they open the row after or before the opened one,
+	 * otherwise they move the focus from row to row (Enter opens). False when there is no list.
+	 */
+	function stepRow(step: -1 | 1): boolean {
+		const rows = [...document.querySelectorAll<HTMLElement>('main a[data-row]')].filter((row) => row.offsetParent);
+		if (!rows.length) return false;
+		const at = app.splitActive
+			? rows.findIndex((row) => row.dataset.row === openId)
+			: rows.indexOf(document.activeElement as HTMLElement);
+		const next = at < 0 ? rows[0] : rows[at + step];
+		if (!next) return true;
+		if (app.splitActive) next.click();
+		else next.focus();
+		next.scrollIntoView({ block: 'nearest' });
+		return true;
+	}
+
+	/** Space and Backspace page through the mail: its pane in split view, otherwise the window. */
+	function pageMail(step: -1 | 1) {
+		if (app.splitActive) pane?.scrollBy({ top: step * pane.clientHeight * 0.9 });
+		else window.scrollBy({ top: step * (window.innerHeight - barHeight) * 0.9 });
+	}
 
 	/** Choosing the split that is on turns it off again. */
 	function chooseSplit(choice: 'beside' | 'below') {
@@ -206,7 +237,15 @@
 		if (event.key === 'Escape') menuOpen = false;
 		// An open dialog (the attachment viewer) owns the keyboard.
 		if (document.querySelector('dialog[open]')) return;
-		if (typing || event.metaKey || event.ctrlKey || event.altKey || !app.user) return;
+		if (typing || !app.user) return;
+		// Ctrl with an arrow pages through the mail, like Space and Backspace.
+		const arrow = event.key === 'ArrowDown' ? 1 : event.key === 'ArrowUp' ? -1 : 0;
+		if (arrow && event.ctrlKey && !event.metaKey && !event.altKey) {
+			event.preventDefault();
+			pageMail(arrow);
+			return;
+		}
+		if (event.metaKey || event.ctrlKey || event.altKey) return;
 		const place = places.find((p) => p.key === event.key);
 		if (place) goto(place.href);
 		else if (event.key === 'c') write();
@@ -215,6 +254,16 @@
 			searchField?.focus();
 			searchField?.select();
 		} else if (event.key === 'm') menuOpen = !menuOpen;
+		else if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+			// The divider of the split view uses the arrows itself.
+			if (target.closest('[role="separator"]')) return;
+			if (stepRow(event.key === 'ArrowDown' ? 1 : -1)) event.preventDefault();
+		} else if (event.key === ' ' || event.key === 'Backspace') {
+			// Space on a button presses it.
+			if (target.closest('button, summary')) return;
+			event.preventDefault();
+			pageMail(event.key === ' ' && !event.shiftKey ? 1 : -1);
+		}
 	}
 </script>
 
@@ -369,7 +418,7 @@
 				onkeydown={dividerKey}
 				ondblclick={dividerReset}
 			></div>
-			<div class="pane">
+			<div class="pane" bind:this={pane}>
 				{#if openId}
 					{#key openId}
 						<ThreadView id={openId} embedded />

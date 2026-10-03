@@ -7,7 +7,7 @@
 	import MessageCard from './MessageCard.svelte';
 	import DelayMenu from './DelayMenu.svelte';
 	import { displayName, returnTime } from '#lib/format.ts';
-	import { afterRemoving } from '#lib/reading.ts';
+	import { afterRemoving, neighbour } from '#lib/reading.ts';
 	import { rememberSearch, resultPath, search } from '#lib/search.svelte.ts';
 	import { mailAction } from '#lib/swipe.ts';
 
@@ -83,6 +83,13 @@
 
 	function toResult(index: number) {
 		if (search.hits && index >= 0 && index < search.hits.length) goto(resultPath(index));
+	}
+
+	/** The mail before or after this one: in the search results, or in the list it was opened from. */
+	function toNeighbour(step: -1 | 1) {
+		if (hit >= 0) return toResult(hit + step);
+		const next = neighbour(Number(id), step);
+		if (next !== undefined) goto(`/thread/${next}`, { replace: true });
 	}
 
 	async function draft(kind: string) {
@@ -176,6 +183,11 @@
 			delayMenu?.show();
 		}
 		else if (event.key === 'e' && thread?.can_archive) archive();
+		// Beside a list the arrows step through the list's rows; the layout does that.
+		else if (!embedded && (event.key === 'ArrowDown' || event.key === 'ArrowUp')) {
+			event.preventDefault();
+			toNeighbour(event.key === 'ArrowDown' ? 1 : -1);
+		}
 		else if (hit >= 0 && event.key === 'p') toResult(hit - 1);
 		else if (hit >= 0 && event.key === 'n') toResult(hit + 1);
 	}
