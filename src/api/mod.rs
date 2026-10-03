@@ -728,6 +728,71 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn mail_sent_to_yourself_shows_as_received_mail() {
+        let (app, state) = test_app().await;
+        let admin = json!({ "email": "admin@example.org", "password": "password1" });
+        let (_, cookie, _) = call(&app, "POST", "/api/register", None, Some(admin)).await;
+        let cookie = cookie.unwrap();
+        seed_mail(&state, 1).await;
+        let db = &state.db;
+        let account = crate::mail::sync::load_account(&state, 1).await.unwrap().unwrap();
+        let inbox = crate::mail::store::ensure_folder(db, account.id, "INBOX", "inbox")
+            .await
+            .unwrap();
+        let sent = crate::mail::store::ensure_folder(db, account.id, "Sent", "sent")
+            .await
+            .unwrap();
+        let raw = b"From: Me <owner@example.org>\r\nTo: owner@example.org\r\nSubject: Note to self\r\n\
+            Message-ID: <self-1@example.org>\r\nDate: Sat, 3 Oct 2026 10:00:00 +0000\r\n\r\nremember the milk\r\n";
+
+        // The copy kept when sending, then the one the mail server delivers to the inbox.
+        crate::mail::store::store_message(&state, &account, &sent, None, true, false, raw)
+            .await
+            .unwrap();
+        let (_, _, home) = call(&app, "GET", "/api/threads?box=important", Some(&cookie), None).await;
+        assert_eq!(home.as_array().unwrap().len(), 0, "only sent so far");
+        crate::mail::store::store_message(&state, &account, &inbox, Some(9), false, false, raw)
+            .await
+            .unwrap();
+
+        let (_, _, home) = call(&app, "GET", "/api/threads?box=important", Some(&cookie), None).await;
+        let home = home.as_array().unwrap();
+        assert_eq!(home.len(), 1, "the mail to yourself is in the Home list");
+        assert_eq!(
+            (home[0]["subject"].as_str(), home[0]["unread"].as_i64()),
+            (Some("Note to self"), Some(1))
+        );
+        // One conversation with one mail, also listed in Sent; nobody has to screen themselves.
+        let (_, _, sent_list) = call(&app, "GET", "/api/threads?box=sent", Some(&cookie), None).await;
+        assert_eq!(sent_list[0]["id"], home[0]["id"]);
+        let path = format!("/api/threads/{}", home[0]["id"]);
+        let (_, _, detail) = call(&app, "GET", &path, Some(&cookie), None).await;
+        assert_eq!(detail["messages"].as_array().unwrap().len(), 1);
+        let own: Option<String> =
+            sqlx::query_scalar("SELECT category FROM senders WHERE address = 'owner@example.org'")
+                .fetch_one(db)
+                .await
+                .unwrap();
+        assert_eq!(own.as_deref(), Some("important"));
+
+        // Mail from your own address anywhere else is still your sent mail.
+        let archive = crate::mail::store::ensure_folder(db, account.id, "Archive", "archive")
+            .await
+            .unwrap();
+        let other = b"From: owner@example.org\r\nTo: anna@example.com\r\nSubject: Old answer\r\n\
+            Message-ID: <old-1@example.org>\r\n\r\nhello\r\n";
+        crate::mail::store::store_message(&state, &account, &archive, Some(3), true, false, other)
+            .await
+            .unwrap();
+        let outgoing: bool =
+            sqlx::query_scalar("SELECT is_outgoing FROM messages WHERE message_id = 'old-1@example.org'")
+                .fetch_one(db)
+                .await
+                .unwrap();
+        assert!(outgoing);
+    }
+
+    #[tokio::test]
     async fn archiving_moves_a_conversation_to_the_archive_list() {
         let (app, state) = test_app().await;
         let admin = json!({ "email": "admin@example.org", "password": "password1" });

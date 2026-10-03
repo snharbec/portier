@@ -40,6 +40,16 @@ pub async fn folder_by_name(db: &SqlitePool, account_id: i64, name: &str) -> Res
 
 /// Finds the thread a message belongs to through its reply headers, in either direction.
 async fn find_thread(db: &SqlitePool, user_id: i64, p: &parse::Parsed) -> Result<Option<i64>> {
+    // Another copy of the same mail (in Sent and in the inbox, when you write to yourself).
+    let copy: Option<i64> =
+        sqlx::query_scalar("SELECT thread_id FROM messages WHERE user_id = ? AND message_id = ? LIMIT 1")
+            .bind(user_id)
+            .bind(&p.message_id)
+            .fetch_optional(db)
+            .await?;
+    if copy.is_some() {
+        return Ok(copy);
+    }
     let mut ancestors = p.refs.clone();
     if !p.in_reply_to.is_empty() {
         ancestors.push(p.in_reply_to.clone());
@@ -130,7 +140,9 @@ pub async fn store_message(
             .bind(&p.from.address)
             .fetch_one(db)
             .await?;
-    let is_outgoing = folder.role == "sent" || own_address;
+    // Mail from yourself that arrives in the inbox was sent to yourself: it is received mail too.
+    let to_self = own_address && folder.role == "inbox";
+    let is_outgoing = folder.role == "sent" || (own_address && !to_self);
 
     let mut sender_id = None;
     let mut category: Option<String> = None;
@@ -148,6 +160,14 @@ pub async fn store_message(
         .await?;
         sender_id = Some(row.0);
         category = row.1;
+        // Nobody needs to screen themselves.
+        if to_self && category.is_none() {
+            sqlx::query("UPDATE senders SET category = 'important', decided_at = unixepoch() WHERE id = ?")
+                .bind(row.0)
+                .execute(db)
+                .await?;
+            category = Some("important".to_string());
+        }
     }
 
     let thread_id = match find_thread(db, account.user_id, &p).await? {
