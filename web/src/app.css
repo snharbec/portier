@@ -85,6 +85,8 @@ textarea {
 /* Page content spans the window, with a gutter on each side. */
 .column {
 	width: calc(100% - 2.5rem);
+	/* Lets page parts adapt to the column they are in (it is narrow in split view). */
+	container: column / inline-size;
 	margin-inline: auto;
 }
 

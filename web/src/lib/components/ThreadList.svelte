@@ -23,6 +23,11 @@
 	} = $props();
 
 	/** Opening a conversation remembers the list, so the email view can move on to the next one. */
+	/** Where a row leads: beside the list in split view, otherwise to the conversation's own page. */
+	const hrefOf = (threadId: number) =>
+		app.splitActive ? `${page.url.pathname}?open=${threadId}` : `/thread/${threadId}`;
+	const openId = $derived(app.splitActive ? Number(page.url.searchParams.get('open')) : 0);
+
 	const opened = () => startReading(sequence ?? threads.map((t) => t.id), page.url.pathname);
 
 	const accountLabel = (id: number) => app.accounts.find((a) => a.id === id)?.label ?? '';
@@ -77,7 +82,14 @@
 					/>
 				</label>
 			{/if}
-			<a href="/thread/{thread.id}" class:unread={thread.unread > 0} onclick={opened}>
+			<a
+				href={hrefOf(thread.id)}
+				class:unread={thread.unread > 0}
+				class:open={openId === thread.id}
+				data-sveltekit-noscroll={app.splitActive ? '' : undefined}
+				data-sveltekit-keepfocus={app.splitActive ? '' : undefined}
+				onclick={opened}
+			>
 				<Avatar
 					name={who}
 					size={36}
@@ -118,6 +130,8 @@
 		list-style: none;
 		margin: 0;
 		padding: 0;
+		/* Rows lay themselves out by the list's own width, which is narrow in split view. */
+		container: list / inline-size;
 	}
 	li {
 		display: flex;
@@ -209,9 +223,13 @@
 			stroke-linecap: round;
 		}
 	}
-	/* Wide windows: sender, subject with the start of the text, and date on a single line, so a
+	a.open {
+		background: color-mix(in srgb, var(--important) 12%, transparent);
+		box-shadow: inset 3px 0 0 var(--important);
+	}
+	/* A wide list: sender, subject with the start of the text, and date on a single line, so a
 	   screenful holds far more conversations and the eye runs along one row. */
-	@media (min-width: 69rem) {
+	@container list (min-width: 52rem) {
 		a {
 			align-items: center;
 			padding-block: 0.5rem;

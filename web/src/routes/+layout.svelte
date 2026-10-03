@@ -5,6 +5,7 @@
 	import { app, loadSession, logout, startDraft } from '#lib/app.svelte.ts';
 	import type { SavedSearch } from '#lib/api.ts';
 	import Login from '#lib/components/Login.svelte';
+	import ThreadView from '#lib/components/ThreadView.svelte';
 	import { carriesMail, dropOn, dropTargets } from '#lib/drag.ts';
 	import { runSearch, search } from '#lib/search.svelte.ts';
 	import { onMount } from 'svelte';
@@ -64,6 +65,41 @@
 		runSearch();
 	}
 
+	// ---- Split view: mail list on the left, the opened mail beside it ----
+	const SPLIT_KEY = 'emscreen.split';
+	const listPages = ['/', '/important', '/delayed', '/feed', '/archive', '/sent', '/junk', '/trash'];
+	let roomy = $state(false);
+	/** Height of the top bar, which differs between wide and narrow windows. */
+	let barHeight = $state(57);
+
+	onMount(() => {
+		try {
+			app.split = localStorage.getItem(SPLIT_KEY) === '1';
+		} catch {
+			// No storage: the choice lasts until the page is reloaded.
+		}
+		// Two columns beside the side bar need a wide window.
+		const wide = window.matchMedia('(min-width: 75rem)');
+		const update = () => (roomy = wide.matches);
+		update();
+		wide.addEventListener('change', update);
+		return () => wide.removeEventListener('change', update);
+	});
+
+	$effect(() => {
+		app.splitActive = app.split && roomy && listPages.includes(page.url.pathname);
+	});
+	const openId = $derived(app.splitActive ? page.url.searchParams.get('open') : null);
+
+	function toggleSplit() {
+		app.split = !app.split;
+		try {
+			localStorage.setItem(SPLIT_KEY, app.split ? '1' : '0');
+		} catch {
+			// See above.
+		}
+	}
+
 	/** Side bar entry a dragged conversation is over, for highlighting. */
 	let dropAt = $state<string | null>(null);
 
@@ -112,7 +148,7 @@
 {:else if !app.user}
 	<Login />
 {:else}
-	<header>
+	<header bind:offsetHeight={barHeight}>
 		<div class="bar column">
 			<button class="btn primary" onclick={write}>Write</button>
 			<button class="place" onclick={() => (menuOpen = !menuOpen)} aria-expanded={menuOpen} aria-controls="places">
@@ -133,6 +169,17 @@
 					spellcheck="false"
 				/>
 			</form>
+			{#if roomy}
+				<button
+					class="btn small view"
+					aria-pressed={app.split}
+					onclick={toggleSplit}
+					title="Show the opened mail beside the list"
+				>
+					<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 5h16v14H4zM10 5v14" /></svg>
+					Split view
+				</button>
+			{/if}
 		</div>
 		{#if menuOpen}
 			<button class="scrim" aria-label="Close menu" onclick={() => (menuOpen = false)}></button>
@@ -212,8 +259,21 @@
 			<button class="btn small quiet" onclick={logout}>Sign out</button>
 		</p>
 	</nav>
-	<main class="column">
-		{@render children()}
+	<main class="column" class:split={app.splitActive} style="--top: {barHeight}px">
+		{#if app.splitActive}
+			<div class="list">{@render children()}</div>
+			<div class="pane">
+				{#if openId}
+					{#key openId}
+						<ThreadView id={openId} embedded />
+					{/key}
+				{:else}
+					<p class="empty"><strong>No mail opened</strong>Choose one from the list to read it here.</p>
+				{/if}
+			</div>
+		{:else}
+			{@render children()}
+		{/if}
 	</main>
 	{#if app.notice}
 		<div class="toast" role="status">{app.notice}</div>
@@ -248,7 +308,7 @@
 	   Write above the side bar and the search field above the content. */
 	@media (min-width: 69rem) {
 		.bar {
-			grid-template-columns: 11.75rem 1fr;
+			grid-template-columns: 11.75rem 1fr auto;
 		}
 		.bar .place {
 			display: none;
@@ -468,6 +528,43 @@
 	}
 	main {
 		padding-bottom: 5rem;
+	}
+	/* Split view: the list and the opened mail each scroll on their own, below the top bar. */
+	main.split {
+		display: grid;
+		grid-template-columns: minmax(20rem, 27rem) minmax(0, 1fr);
+		gap: 1.25rem;
+		/* Exactly the window below the top bar, so only the two columns scroll. */
+		height: calc(100dvh - var(--top));
+		padding-bottom: 0;
+	}
+	main.split .list,
+	main.split .pane {
+		min-width: 0;
+		overflow-y: auto;
+		padding-bottom: 2rem;
+	}
+	main.split .list {
+		padding-right: 0.25rem;
+		/* Page parts measure this column now, not the whole window. */
+		container: column / inline-size;
+	}
+	main.split .pane {
+		border-left: 1px solid var(--line);
+		padding-left: 1.25rem;
+	}
+	.view svg {
+		width: 1.05rem;
+		height: 1.05rem;
+		fill: none;
+		stroke: currentColor;
+		stroke-width: 1.8;
+		stroke-linejoin: round;
+	}
+	.view[aria-pressed='true'] {
+		background: var(--ink);
+		border-color: var(--ink);
+		color: var(--paper);
 	}
 	.toast {
 		position: fixed;

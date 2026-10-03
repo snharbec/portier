@@ -202,7 +202,8 @@
 		text-underline-offset: 3px;
 		white-space: nowrap;
 	}
-	@media (max-width: 34rem) {
+	/* By the width of the column the ticket sits in: a narrow window, or the list in split view. */
+	@container column (max-width: 34rem) {
 		.ticket {
 			margin-top: 1rem;
 			padding-block: 0.6rem;

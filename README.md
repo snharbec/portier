@@ -23,6 +23,9 @@ so other mail programs show it as flag or star, and mail flagged there appears i
 list and returns at 7:00 (server time) on that day, unseen and at the top. A new mail in the
 conversation ends the delay early. Delays are kept in Email Screen only.
 
+**Split view** (button in the top bar, on windows about 1200 px or wider) shows the mail list on
+the left and the opened mail beside it; each scrolls on its own. The choice is kept per browser.
+
 **Archive** files a mail away from any list or from the mail itself: it moves to the account's
 Archive folder on the server and shows in the Archive list.
 
