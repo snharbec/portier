@@ -139,6 +139,7 @@ export interface SearchHit {
 	from_name: string;
 	from_addr: string;
 	date: number;
+	seen: boolean;
 	excerpt: string;
 }
 

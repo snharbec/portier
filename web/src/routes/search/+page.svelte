@@ -1,13 +1,27 @@
 <script lang="ts">
 	import { api, type SearchHit } from '#lib/api.ts';
 	import { displayName, shortDate } from '#lib/format.ts';
+	import FolderPicker from '#lib/components/FolderPicker.svelte';
 	import SelectionBar from '#lib/components/SelectionBar.svelte';
+	import Swipeable from '#lib/components/Swipeable.svelte';
+	import { app } from '#lib/app.svelte.ts';
+	import { swipeLabel, swipeMail, type SwipeAction } from '#lib/swipe.ts';
 	import { rememberSearch, resultPath, search } from '#lib/search.svelte.ts';
 	import { createSelection } from '#lib/selection.svelte.ts';
 
 	let error = $state('');
 	const selection = createSelection();
 	const picked = $derived(selection.visible(search.hits ?? [], (h) => h.id));
+	let picker: FolderPicker;
+
+	async function slide(action: SwipeAction, hit: SearchHit) {
+		await swipeMail(
+			action,
+			{ messageIds: [hit.id], accountId: hit.account_id, unread: !hit.seen, what: '1 mail' },
+			picker.choose
+		);
+		run();
+	}
 	let timer: ReturnType<typeof setTimeout>;
 
 	function oninput() {
@@ -42,7 +56,14 @@
 {:else if search.hits}
 	<ul class="sheet">
 		{#each search.hits as hit, index (hit.id)}
-			<li class:selected={selection.has(hit.id)}>
+			<li>
+				<Swipeable
+					left={app.swipe.left}
+					right={app.swipe.right}
+					label={(action) => swipeLabel(action, !hit.seen)}
+					onaction={(action) => slide(action, hit)}
+					tinted={selection.has(hit.id)}
+				>
 				<label class="pick">
 					<input
 						type="checkbox"
@@ -59,10 +80,13 @@
 					<span>{hit.subject || '(no subject)'}</span>
 					<span class="muted">{hit.excerpt}</span>
 				</a>
+				</Swipeable>
 			</li>
 		{/each}
 	</ul>
 {/if}
+
+<FolderPicker bind:this={picker} />
 
 <SelectionBar
 	messageIds={picked.map((h) => h.id)}
@@ -79,9 +103,6 @@
 <style>
 	li {
 		display: flex;
-	}
-	li.selected {
-		background: color-mix(in srgb, var(--important) 9%, transparent);
 	}
 	ul {
 		list-style: none;

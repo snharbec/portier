@@ -22,6 +22,7 @@ pub fn router() -> Router<AppState> {
         .route("/login", post(auth::login))
         .route("/logout", post(auth::logout))
         .route("/password", post(auth::change_password))
+        .route("/settings", get(auth::settings).put(auth::update_settings))
         .route("/users", get(auth::list_users).post(auth::create_user))
         .route("/users/{id}", delete(auth::delete_user))
         .route("/accounts", get(accounts::list).post(accounts::create))
@@ -498,6 +499,38 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(threads, 0);
+    }
+
+    #[tokio::test]
+    async fn slide_actions_are_stored_per_user() {
+        let (app, _state) = test_app().await;
+        let admin = json!({ "email": "admin@example.org", "password": "password1" });
+        let (_, cookie, _) = call(&app, "POST", "/api/register", None, Some(admin)).await;
+        let cookie = cookie.unwrap();
+        let bob = json!({ "email": "bob@example.org", "password": "password2" });
+        call(&app, "POST", "/api/users", Some(&cookie), Some(bob.clone())).await;
+        let (_, bob_cookie, _) = call(&app, "POST", "/api/login", None, Some(bob)).await;
+        let bob_cookie = bob_cookie.unwrap();
+
+        let (_, _, defaults) = call(&app, "GET", "/api/settings", Some(&cookie), None).await;
+        assert_eq!(defaults, json!({ "swipe_left": ["trash"], "swipe_right": ["read"] }));
+
+        // Order and repeats in the request do not matter; an empty list turns a direction off.
+        let change = json!({ "swipe_left": ["trash", "move", "trash"], "swipe_right": [] });
+        let (status, _, saved) = call(&app, "PUT", "/api/settings", Some(&cookie), Some(change)).await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(saved, json!({ "swipe_left": ["move", "trash"], "swipe_right": [] }));
+        let (_, _, again) = call(&app, "GET", "/api/settings", Some(&cookie), None).await;
+        assert_eq!(again, saved);
+
+        let bad = json!({ "swipe_left": ["explode"], "swipe_right": [] });
+        let (status, _, _) = call(&app, "PUT", "/api/settings", Some(&cookie), Some(bad)).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+
+        let (_, _, bobs) = call(&app, "GET", "/api/settings", Some(&bob_cookie), None).await;
+        assert_eq!(bobs, defaults);
+        let (status, _, _) = call(&app, "GET", "/api/settings", None, None).await;
+        assert_eq!(status, StatusCode::UNAUTHORIZED);
     }
 
     #[tokio::test]

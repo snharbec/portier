@@ -1,3 +1,4 @@
+import type { SwipeAction } from './swipe.ts';
 import { api, setUnauthorizedHandler, type Account, type Category, type Counts, type User } from './api.ts';
 
 /** Session-wide state. `tick` changes whenever the server reports new or changed mail. */
@@ -10,6 +11,10 @@ export const app = $state({
 	officePreviews: false,
 	counts: { screener: 0, unread_important: 0, drafts: 0 } as Counts,
 	accounts: [] as Account[],
+	/** What sliding a mail left or right does; set in Settings. */
+	swipe: { left: ['trash'], right: ['read'] } as { left: SwipeAction[]; right: SwipeAction[] },
+	/** Short message about the last action, shown for a few seconds. */
+	notice: '',
 	tick: 0
 });
 
@@ -35,13 +40,26 @@ export async function loadSession() {
 	app.officePreviews = me.office_previews;
 	app.ready = true;
 	if (app.user) {
-		await Promise.all([refreshCounts(), refreshAccounts()]);
+		await Promise.all([refreshCounts(), refreshAccounts(), refreshSettings()]);
 		connectEvents();
 	}
 }
 
 export async function refreshCounts() {
 	app.counts = await api.get<Counts>('/counts');
+}
+
+export async function refreshSettings() {
+	const settings = await api.get<{ swipe_left: SwipeAction[]; swipe_right: SwipeAction[] }>('/settings');
+	app.swipe = { left: settings.swipe_left, right: settings.swipe_right };
+}
+
+let noticeTimer: ReturnType<typeof setTimeout> | undefined;
+
+export function notify(text: string) {
+	app.notice = text;
+	clearTimeout(noticeTimer);
+	noticeTimer = setTimeout(() => (app.notice = ''), 5000);
 }
 
 export async function refreshAccounts() {

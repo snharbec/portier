@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { api, type Account, type Category, type Sender, type User } from '#lib/api.ts';
 	import { app, categoryNames, classify, refreshAccounts } from '#lib/app.svelte.ts';
+	import { swipeActions, type SwipeAction } from '#lib/swipe.ts';
 	import ClassifyButtons from '#lib/components/ClassifyButtons.svelte';
 	import { displayName, fullDate } from '#lib/format.ts';
 
@@ -117,6 +118,24 @@
 	async function reclassify(sender: Sender, category: Category) {
 		await classify(sender.id, category);
 		editingSender = null;
+	}
+
+	// ---- Sliding a mail ----
+	let swipeError = $state('');
+
+	async function toggleSwipe(direction: 'left' | 'right', action: SwipeAction, on: boolean) {
+		const next = { left: [...app.swipe.left], right: [...app.swipe.right] };
+		next[direction] = on ? [...next[direction], action] : next[direction].filter((a) => a !== action);
+		swipeError = '';
+		try {
+			const saved = await api.put<{ swipe_left: SwipeAction[]; swipe_right: SwipeAction[] }>('/settings', {
+				swipe_left: next.left,
+				swipe_right: next.right
+			});
+			app.swipe = { left: saved.swipe_left, right: saved.swipe_right };
+		} catch (e) {
+			swipeError = (e as Error).message;
+		}
 	}
 
 	// ---- Users (admin) ----
@@ -332,6 +351,32 @@
 	{/if}
 </section>
 
+<section>
+	<h2>Sliding a mail</h2>
+	<p class="muted">
+		In the mail lists, slide a row left or right with a finger or the mouse. With one action chosen, sliding far
+		enough performs it. With several, sliding shows them as buttons. With none, that direction does nothing.
+	</p>
+	<div class="swipe-grid">
+		{#each [{ key: 'right', title: 'Slide right' }, { key: 'left', title: 'Slide left' }] as const as direction}
+			<fieldset>
+				<legend>{direction.title}</legend>
+				{#each swipeActions as action}
+					<label class="check">
+						<input
+							type="checkbox"
+							checked={app.swipe[direction.key].includes(action.id)}
+							onchange={(event) => toggleSwipe(direction.key, action.id, event.currentTarget.checked)}
+						/>
+						{action.name}
+					</label>
+				{/each}
+			</fieldset>
+		{/each}
+	</div>
+	{#if swipeError}<p class="error" role="alert">{swipeError}</p>{/if}
+</section>
+
 {#if app.user?.is_admin}
 	<section>
 		<h2>Users</h2>
@@ -438,6 +483,26 @@
 		.grid.server {
 			grid-template-columns: 1fr 1fr;
 		}
+	}
+	.swipe-grid {
+		display: grid;
+		grid-template-columns: repeat(auto-fit, minmax(14rem, 1fr));
+		gap: 1rem;
+		margin-top: 0.75rem;
+	}
+	fieldset {
+		margin: 0;
+		padding: 0.6rem 1rem 0.9rem;
+		border: 1px solid var(--line);
+		border-radius: var(--radius);
+		background: var(--surface);
+	}
+	legend {
+		padding: 0 0.4rem;
+		font: 700 1rem var(--display);
+	}
+	fieldset .check {
+		margin-top: 0.4rem;
 	}
 	.check {
 		display: flex;

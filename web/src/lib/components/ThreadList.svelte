@@ -3,11 +3,24 @@
 	import { app } from '#lib/app.svelte.ts';
 	import { displayName, hue, shortDate } from '#lib/format.ts';
 	import type { Selection } from '#lib/selection.svelte.ts';
+	import { swipeLabel, swipeMail, type SwipeAction } from '#lib/swipe.ts';
 	import Avatar from './Avatar.svelte';
+	import FolderPicker from './FolderPicker.svelte';
+	import Swipeable from './Swipeable.svelte';
 
 	let { threads, selection }: { threads: ThreadSummary[]; selection?: Selection } = $props();
 
 	const accountLabel = (id: number) => app.accounts.find((a) => a.id === id)?.label ?? '';
+
+	let picker: FolderPicker;
+
+	function slide(action: SwipeAction, thread: ThreadSummary) {
+		swipeMail(
+			action,
+			{ threadIds: [thread.id], accountId: thread.account_id, unread: thread.unread > 0, what: '1 conversation' },
+			picker.choose
+		);
+	}
 </script>
 
 <ul class="sheet">
@@ -15,7 +28,14 @@
 		{@const who = thread.is_outgoing && thread.sender_address
 			? displayName(thread.sender_name, thread.sender_address)
 			: displayName(thread.from_name, thread.from_addr)}
-		<li class:selected={selection?.has(thread.id)}>
+		<li>
+			<Swipeable
+				left={app.swipe.left}
+				right={app.swipe.right}
+				label={(action) => swipeLabel(action, thread.unread > 0)}
+				onaction={(action) => slide(action, thread)}
+				tinted={selection?.has(thread.id)}
+			>
 			{#if selection}
 				<label class="pick">
 					<input
@@ -45,9 +65,12 @@
 					></span>
 				{/if}
 			</a>
+			</Swipeable>
 		</li>
 	{/each}
 </ul>
+
+<FolderPicker bind:this={picker} />
 
 <style>
 	ul {
@@ -61,9 +84,6 @@
 	}
 	li + li {
 		border-top: 1px solid var(--line);
-	}
-	li.selected {
-		background: color-mix(in srgb, var(--important) 9%, transparent);
 	}
 	a {
 		display: flex;
@@ -122,7 +142,7 @@
 	.unread .subject {
 		font-weight: 700;
 	}
-	li:has(.unread)::before {
+	a.unread::before {
 		content: '';
 		position: absolute;
 		left: 0;

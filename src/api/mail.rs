@@ -544,6 +544,7 @@ pub struct SearchRow {
     from_name: String,
     from_addr: String,
     date: i64,
+    seen: bool,
     excerpt: String,
 }
 
@@ -568,7 +569,7 @@ pub async fn search(
     }
     Ok(Json(
         sqlx::query_as(
-            "SELECT m.id, m.thread_id, m.account_id, m.subject, m.from_name, m.from_addr, m.date,
+            "SELECT m.id, m.thread_id, m.account_id, m.subject, m.from_name, m.from_addr, m.date, m.seen,
                     snippet(messages_fts, 4, '', '', '…', 16) AS excerpt
              FROM messages_fts JOIN messages m ON m.id = messages_fts.rowid
              WHERE messages_fts MATCH ? AND m.user_id = ?

@@ -16,6 +16,10 @@ mark them read or unread, move them to the account's Trash folder, or move them 
 on the mail server. Email Screen mirrors only Inbox, Sent and Junk, so mail moved elsewhere
 leaves its views and stays on the server.
 
+Rows in the mail lists and search results can also be slid left or right, by finger or mouse.
+Each direction's actions (read/unread, move to folder, move to Trash) are chosen per user under
+Settings: one action is performed on release, several are offered as buttons.
+
 Connects to existing mailboxes over IMAP and SMTP (password or app password). Several users
 can share one installation; each has their own accounts and sender decisions.
 

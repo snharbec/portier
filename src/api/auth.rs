@@ -196,3 +196,52 @@ pub async fn delete_user(
     }
     Ok(Json(json!({ "ok": true })))
 }
+
+/// Actions a slide can be given, in the order they are offered.
+const SWIPE_ACTIONS: [&str; 3] = ["read", "move", "trash"];
+
+fn swipe_list(stored: &str) -> Vec<&str> {
+    SWIPE_ACTIONS
+        .into_iter()
+        .filter(|action| stored.split(',').any(|s| s == *action))
+        .collect()
+}
+
+pub async fn settings(State(state): State<AppState>, user: CurrentUser) -> ApiResult<Json<Value>> {
+    let (left, right): (String, String) = sqlx::query_as("SELECT swipe_left, swipe_right FROM users WHERE id = ?")
+        .bind(user.id)
+        .fetch_one(&state.db)
+        .await?;
+    Ok(Json(
+        json!({ "swipe_left": swipe_list(&left), "swipe_right": swipe_list(&right) }),
+    ))
+}
+
+#[derive(Deserialize)]
+pub struct SettingsInput {
+    swipe_left: Vec<String>,
+    swipe_right: Vec<String>,
+}
+
+pub async fn update_settings(
+    State(state): State<AppState>,
+    user: CurrentUser,
+    Json(input): Json<SettingsInput>,
+) -> ApiResult<Json<Value>> {
+    let known = |list: &[String]| list.iter().all(|a| SWIPE_ACTIONS.contains(&a.as_str()));
+    if !known(&input.swipe_left) || !known(&input.swipe_right) {
+        return Err(ApiError::bad_request("unknown slide action"));
+    }
+    // Stored in the fixed offering order, without repeats.
+    let (left, right) = (input.swipe_left.join(","), input.swipe_right.join(","));
+    let (left, right) = (swipe_list(&left).join(","), swipe_list(&right).join(","));
+    sqlx::query("UPDATE users SET swipe_left = ?, swipe_right = ? WHERE id = ?")
+        .bind(&left)
+        .bind(&right)
+        .bind(user.id)
+        .execute(&state.db)
+        .await?;
+    Ok(Json(
+        json!({ "swipe_left": swipe_list(&left), "swipe_right": swipe_list(&right) }),
+    ))
+}

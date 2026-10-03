@@ -109,6 +109,9 @@
 	<main class="column">
 		{@render children()}
 	</main>
+	{#if app.notice}
+		<div class="toast" role="status">{app.notice}</div>
+	{/if}
 {/if}
 
 <style>
@@ -276,5 +279,19 @@
 	}
 	main {
 		padding-bottom: 5rem;
+	}
+	.toast {
+		position: fixed;
+		left: 50%;
+		bottom: 1rem;
+		transform: translateX(-50%);
+		z-index: 30;
+		max-width: calc(100vw - 2rem);
+		padding: 0.6rem 1.2rem;
+		border-radius: 999px;
+		background: var(--ink);
+		color: var(--paper);
+		font-weight: 600;
+		box-shadow: 0 18px 40px -18px color-mix(in srgb, var(--ink) 70%, transparent);
 	}
 </style>
