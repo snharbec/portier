@@ -17,7 +17,8 @@
 		if (!open) return;
 		const box = root.getBoundingClientRect();
 		const left = Math.max(8, Math.min(box.left, window.innerWidth - 220));
-		place = up
+		// Above only where the choices fit between the button and the top of the window.
+		place = up && box.top > 220
 			? `left: ${left}px; bottom: ${window.innerHeight - box.top + 6}px`
 			: `left: ${left}px; top: ${box.bottom + 6}px`;
 	});

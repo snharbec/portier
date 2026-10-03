@@ -55,7 +55,7 @@
 		if (loadedBox !== box) {
 			loadedBox = box;
 			messages = null;
-			selection.clear();
+			selection.stop();
 		}
 		// load() reads `messages`; untracked, so that storing the result does not restart this effect.
 		untrack(() => load(false));
@@ -102,6 +102,7 @@
 		</div>
 	{:else}
 		<SelectAll
+			{selection}
 			selected={picked.length}
 			total={messages.length}
 			onall={() => selection.set((messages ?? []).map((m) => m.id))}
@@ -109,6 +110,7 @@
 		/>
 		{#each messages as message (message.id)}
 			<div class="row" class:unread={!message.seen && !message.is_outgoing}>
+				{#if selection.active}
 				<label class="pick">
 					<input
 						type="checkbox"
@@ -117,6 +119,7 @@
 						aria-label="Select {message.subject || '(no subject)'} from {message.from.name || message.from.address}"
 					/>
 				</label>
+				{/if}
 				<div class="card"><MessageCard {message} showSubject /></div>
 			</div>
 		{/each}
@@ -134,7 +137,7 @@
 		total={messages?.length ?? 0}
 		onselectall={() => selection.set((messages ?? []).map((m) => m.id))}
 		onclear={selection.clear}
-		ondone={selection.clear}
+		ondone={selection.stop}
 	/>
 {/if}
 

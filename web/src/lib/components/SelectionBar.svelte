@@ -40,8 +40,51 @@
 	const things = $derived(`${count} ${threadIds.length ? 'conversation' : 'mail'}${count === 1 ? '' : 's'}`);
 
 	let busy = $state(false);
-	/** Height of the floating bar; the same room is kept free below the list so nothing hides under it. */
-	let barHeight = $state(0);
+	let bar: HTMLElement | undefined = $state();
+	/** Where the floating bar sits in the window. */
+	let place = $state('');
+
+	/** Room at the start of a row for its handle and checkbox, which the bar leaves uncovered. */
+	const CHECKBOXES = 56;
+
+	/**
+	 * Puts the bar next to the first selected mail: just above its row (below it when there is
+	 * no room above), beside the checkboxes so that every mail can still be ticked. When that
+	 * mail is scrolled out of view the bar waits at the edge it left by. A list too narrow to
+	 * hold the bar beside its checkboxes gets it at the bottom of the window instead.
+	 */
+	function position() {
+		if (!bar) return;
+		const ticked = [...document.querySelectorAll<HTMLElement>('main li .pick input:checked, main .row .pick input:checked')];
+		const row = ticked.find((box) => box.offsetParent)?.closest<HTMLElement>('li, .row');
+		const height = bar.offsetHeight;
+		const width = bar.offsetWidth;
+		const highest = (document.querySelector('header')?.getBoundingClientRect().bottom ?? 0) + 8;
+		const lowest = window.innerHeight - height - 12;
+		let top = lowest;
+		let left = (window.innerWidth - width) / 2;
+		const box = row?.getBoundingClientRect();
+		if (box && box.left + CHECKBOXES + width <= box.right) {
+			const above = box.top - height - 6;
+			top = above >= highest ? above : box.bottom > highest ? box.bottom + 6 : highest;
+			left = box.left + CHECKBOXES;
+		}
+		top = Math.max(Math.min(top, lowest), 0);
+		left = Math.max(12, Math.min(left, window.innerWidth - width - 12));
+		const next = `top: ${Math.round(top)}px; left: ${Math.round(left)}px`;
+		if (next !== place) place = next;
+	}
+
+	// Rows move for many reasons (scrolling, new mail, folded areas, the split divider), so the
+	// bar simply follows its row frame by frame while it is shown.
+	$effect(() => {
+		if (count === 0) return;
+		let frame = requestAnimationFrame(function follow() {
+			position();
+			frame = requestAnimationFrame(follow);
+		});
+		return () => cancelAnimationFrame(frame);
+	});
 	let error = $state('');
 	let picker: FolderPicker;
 
@@ -67,8 +110,7 @@
 </script>
 
 {#if count > 0}
-	<div class="room" style="height: {barHeight + 24}px"></div>
-	<div class="bar" role="toolbar" aria-label="Actions for selected mail" bind:offsetHeight={barHeight}>
+	<div class="bar" role="toolbar" aria-label="Actions for selected mail" bind:this={bar} style={place}>
 		<div class="summary">
 			<strong>{things} selected</strong>
 			<button class="btn small quiet" onclick={onclear}>Clear selection</button>
@@ -110,16 +152,11 @@
 <FolderPicker bind:this={picker} />
 
 <style>
-	.room {
-		flex: none;
-	}
 	.bar {
 		position: fixed;
-		/* Centred with margins, not a transform: a transform would trap the Delay menu inside the bar. */
+		/* Placed with top and left, not a transform: a transform would trap the Delay menu inside the bar. */
+		top: 100%;
 		left: 0;
-		right: 0;
-		margin-inline: auto;
-		bottom: 1rem;
 		z-index: 20;
 		width: max-content;
 		max-width: calc(100vw - 1.5rem);

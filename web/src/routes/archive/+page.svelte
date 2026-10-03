@@ -38,6 +38,7 @@
 	</div>
 {:else}
 	<SelectAll
+		{selection}
 		selected={picked.length}
 		total={threads.length}
 		onall={() => selection.set((threads ?? []).map((t) => t.id))}
@@ -54,5 +55,5 @@
 	total={threads?.length ?? 0}
 	onselectall={() => selection.set((threads ?? []).map((t) => t.id))}
 	onclear={selection.clear}
-	ondone={selection.clear}
+	ondone={selection.stop}
 />

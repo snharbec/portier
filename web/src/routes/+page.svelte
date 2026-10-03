@@ -90,6 +90,7 @@
 {:else}
 	{#if shown.length}
 		<SelectAll
+			{selection}
 			selected={picked.length}
 			total={shown.length}
 			onall={() => selection.set(shown.map((t) => t.id))}
@@ -123,7 +124,7 @@
 	total={shown.length}
 	onselectall={() => selection.set(shown.map((t) => t.id))}
 	onclear={selection.clear}
-	ondone={selection.clear}
+	ondone={selection.stop}
 />
 
 <style>

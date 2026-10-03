@@ -72,7 +72,7 @@
 			>
 				<svg viewBox="0 0 10 16"><path d="M2 2h.01M2 8h.01M2 14h.01M8 2h.01M8 8h.01M8 14h.01" /></svg>
 			</span>
-			{#if selection}
+			{#if selection?.active}
 				<label class="pick">
 					<input
 						type="checkbox"

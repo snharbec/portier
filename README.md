@@ -41,7 +41,8 @@ The **Attachments** page shows every file received in the last four weeks from s
 Inbox and Nice to know, as a picture of its content: images as thumbnails, PDFs by their
 first page. Selecting one opens the document on the page, with a link to its email.
 
-In Inbox, Nice to know, Junk, Sent and the search results you can tick several mails and
+In Inbox, Nice to know, Junk, Sent and the search results, "Select" above the list shows a
+checkbox on every mail (Escape or "Stop selecting" hides them again). Tick several mails and
 mark them seen or unseen, move them to the account's Trash folder, or move them to any folder
 on the mail server. Email Screen mirrors only Inbox, Sent, Junk, Archive and Trash, so mail moved elsewhere
 leaves its views and stays on the server.

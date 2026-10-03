@@ -123,6 +123,7 @@
 	<p class="empty"><strong>No mail matches</strong>Try fewer or different words.</p>
 {:else if search.hits}
 	<SelectAll
+		{selection}
 		selected={picked.length}
 		total={search.hits.length}
 		onall={() => selection.set((search.hits ?? []).map((h) => h.id))}
@@ -138,6 +139,7 @@
 					onaction={(action) => slide(action, hit)}
 					tinted={selection.has(hit.id)}
 				>
+				{#if selection.active}
 				<label class="pick">
 					<input
 						type="checkbox"
@@ -146,6 +148,7 @@
 						aria-label="Select {hit.subject || '(no subject)'} from {displayName(hit.from_name, hit.from_addr)}"
 					/>
 				</label>
+				{/if}
 				<a href={resultPath(index)}>
 					<span class="top">
 						<strong title={hit.from_addr}>{displayName(hit.from_name, hit.from_addr)}</strong>
@@ -169,7 +172,7 @@
 	onselectall={() => selection.set((search.hits ?? []).map((h) => h.id))}
 	onclear={selection.clear}
 	ondone={() => {
-		selection.clear();
+		selection.stop();
 		runSearch();
 	}}
 />
