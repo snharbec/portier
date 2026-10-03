@@ -6,6 +6,7 @@
 	import ClassifyButtons from '#lib/components/ClassifyButtons.svelte';
 	import MessageCard from '#lib/components/MessageCard.svelte';
 	import { displayName } from '#lib/format.ts';
+	import { resultPath, search } from '#lib/search.svelte.ts';
 
 	let thread = $state<Thread | null>(null);
 	let error = $state('');
@@ -47,6 +48,19 @@
 
 	const last = $derived(thread?.messages.at(-1));
 
+	/** Position in the last search's results, when this conversation was opened from there. */
+	const hit = $derived.by(() => {
+		const raw = page.url.searchParams.get('hit');
+		const index = raw === null ? -1 : Number(raw);
+		const valid = search.hits && Number.isInteger(index) && index >= 0 && index < search.hits.length;
+		return valid && String(search.hits![index].thread_id) === id ? index : -1;
+	});
+	const hitMessage = $derived(hit >= 0 ? search.hits![hit].id : null);
+
+	function toResult(index: number) {
+		if (search.hits && index >= 0 && index < search.hits.length) goto(resultPath(index));
+	}
+
 	async function draft(kind: string) {
 		if (last) goto(await startDraft(kind, last.id));
 	}
@@ -58,6 +72,8 @@
 		if (event.key === 'r') draft('reply');
 		else if (event.key === 'a') draft('reply_all');
 		else if (event.key === 'f') draft('forward');
+		else if (hit >= 0 && event.key === 'p') toResult(hit - 1);
+		else if (hit >= 0 && event.key === 'n') toResult(hit + 1);
 	}
 </script>
 
@@ -68,6 +84,16 @@
 {:else if !thread}
 	<p class="empty" aria-busy="true">Loading</p>
 {:else}
+	{#if hit >= 0 && search.hits}
+		<nav class="results" aria-label="Search results">
+			<a class="btn small" href="/search">Back to results</a>
+			<span class="muted">Result {hit + 1} of {search.hits.length} for “{search.query}”</span>
+			<button class="btn small" onclick={() => toResult(hit - 1)} disabled={hit === 0}>Previous</button>
+			<button class="btn small" onclick={() => toResult(hit + 1)} disabled={hit === search.hits.length - 1}>
+				Next
+			</button>
+		</nav>
+	{/if}
 	<div class="page-head">
 		<h1>{thread.subject || '(no subject)'}</h1>
 		{#if thread.sender}
@@ -89,13 +115,38 @@
 	</div>
 
 	{#each thread.messages as message, index (message.id)}
-		<MessageCard {message} open={index === thread.messages.length - 1 || unreadAtOpen.has(message.id)} />
+		<MessageCard
+			{message}
+			open={index === thread.messages.length - 1 || unreadAtOpen.has(message.id) || message.id === hitMessage}
+		/>
 	{/each}
 
-	<p class="muted keys">Keys: <kbd>r</kbd> reply, <kbd>a</kbd> reply all, <kbd>f</kbd> forward</p>
+	<p class="muted keys">
+		Keys: <kbd>r</kbd> reply, <kbd>a</kbd> reply all, <kbd>f</kbd> forward{#if hit >= 0}, <kbd>p</kbd> previous result,
+			<kbd>n</kbd> next result{/if}
+	</p>
 {/if}
 
 <style>
+	.results {
+		display: flex;
+		align-items: center;
+		flex-wrap: wrap;
+		gap: 0.5rem;
+		margin-top: 1.25rem;
+		padding: 0.5rem 0.6rem;
+		background: var(--surface);
+		border: 1px solid var(--line);
+		border-radius: 999px;
+	}
+	.results span {
+		flex: 1;
+		min-width: 8rem;
+		font-size: 0.9rem;
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
+	}
 	.sender {
 		display: flex;
 		align-items: center;

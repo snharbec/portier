@@ -1,9 +1,8 @@
 <script lang="ts">
 	import { api, type SearchHit } from '#lib/api.ts';
 	import { displayName, shortDate } from '#lib/format.ts';
+	import { rememberSearch, resultPath, search } from '#lib/search.svelte.ts';
 
-	let query = $state('');
-	let hits = $state<SearchHit[] | null>(null);
 	let error = $state('');
 	let timer: ReturnType<typeof setTimeout>;
 
@@ -13,16 +12,17 @@
 	}
 
 	async function run() {
-		if (!query.trim()) {
-			hits = null;
-			return;
+		if (!search.query.trim()) {
+			search.hits = null;
+		} else {
+			try {
+				search.hits = await api.get<SearchHit[]>(`/search?q=${encodeURIComponent(search.query)}`);
+				error = '';
+			} catch (e) {
+				error = (e as Error).message;
+			}
 		}
-		try {
-			hits = await api.get<SearchHit[]>(`/search?q=${encodeURIComponent(query)}`);
-			error = '';
-		} catch (e) {
-			error = (e as Error).message;
-		}
+		rememberSearch();
 	}
 </script>
 
@@ -30,16 +30,16 @@
 	<h1>Search</h1>
 </div>
 <!-- svelte-ignore a11y_autofocus -->
-<input class="input" type="search" placeholder="Words, names or addresses" bind:value={query} {oninput} autofocus />
+<input class="input" type="search" placeholder="Words, names or addresses" bind:value={search.query} {oninput} autofocus />
 
 {#if error}<p class="error" role="alert">{error}</p>{/if}
-{#if hits && hits.length === 0}
+{#if search.hits && search.hits.length === 0}
 	<p class="empty"><strong>No mail matches</strong>Try fewer or different words.</p>
-{:else if hits}
+{:else if search.hits}
 	<ul class="sheet">
-		{#each hits as hit (hit.id)}
+		{#each search.hits as hit, index (hit.id)}
 			<li>
-				<a href="/thread/{hit.thread_id}">
+				<a href={resultPath(index)}>
 					<span class="top">
 						<strong>{displayName(hit.from_name, hit.from_addr)}</strong>
 						<time class="muted">{shortDate(hit.date)}</time>
