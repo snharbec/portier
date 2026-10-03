@@ -1,10 +1,12 @@
 <script lang="ts">
 	import { goto } from '$app/navigation';
-	import type { Message } from '#lib/api.ts';
-	import { startDraft } from '#lib/app.svelte.ts';
+	import type { FileEntry, Message } from '#lib/api.ts';
+	import { app, startDraft } from '#lib/app.svelte.ts';
 	import { displayName, fileSize, fullDate, shortDate } from '#lib/format.ts';
 	import { untrack } from 'svelte';
 	import Avatar from './Avatar.svelte';
+	import FileTile from './FileTile.svelte';
+	import FileViewer from './FileViewer.svelte';
 	import MessageBody from './MessageBody.svelte';
 
 	let {
@@ -18,6 +20,27 @@
 	let expanded = $state(untrack(() => open));
 	const who = $derived(message.is_outgoing ? 'You' : displayName(message.from.name, message.from.address));
 	const recipients = $derived([...message.to, ...message.cc].map((a) => a.name || a.address).join(', '));
+
+	// Previews open the file's content, for Office files in LibreOffice on the server. That is
+	// reserved for your own mail and senders you let in; everyone else's files are download-only.
+	const trusted = $derived(
+		message.is_outgoing || message.sender_category === 'important' || message.sender_category === 'feed'
+	);
+	const files = $derived<FileEntry[]>(
+		message.attachments.map((a) => ({
+			message_id: message.id,
+			idx: a.idx,
+			filename: a.filename,
+			size: a.size,
+			kind: a.kind,
+			date: message.date,
+			thread_id: message.thread_id,
+			subject: message.subject,
+			from_name: message.from.name,
+			from_addr: message.from.address
+		}))
+	);
+	let viewing = $state<number | null>(null);
 
 	async function draft(kind: string) {
 		goto(await startDraft(kind, message.id));
@@ -44,7 +67,18 @@
 				<h2><a href="/thread/{message.thread_id}">{message.subject || '(no subject)'}</a></h2>
 			{/if}
 			<MessageBody {message} />
-			{#if message.attachments.length}
+			{#if files.length && trusted}
+				<div class="previews">
+					{#each files as file, index (file.idx)}
+						<FileTile
+							{file}
+							officePreviews={app.officePreviews}
+							caption={fileSize(file.size)}
+							onopen={() => (viewing = index)}
+						/>
+					{/each}
+				</div>
+			{:else if files.length}
 				<ul class="files">
 					{#each message.attachments as file}
 						<li>
@@ -67,6 +101,16 @@
 		</div>
 	{/if}
 </article>
+
+{#if viewing !== null}
+	<FileViewer
+		{files}
+		bind:index={viewing}
+		officePreviews={app.officePreviews}
+		emailLink={false}
+		onclose={() => (viewing = null)}
+	/>
+{/if}
 
 <style>
 	article {
@@ -114,6 +158,12 @@
 	}
 	h2 a:hover {
 		text-decoration: underline;
+	}
+	.previews {
+		display: grid;
+		grid-template-columns: repeat(auto-fill, minmax(9rem, 1fr));
+		gap: 1rem;
+		margin-top: 1rem;
 	}
 	.files {
 		list-style: none;

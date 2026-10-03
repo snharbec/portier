@@ -3,7 +3,12 @@
 	import { extension, pdfUrl, thumbUrl } from '#lib/files.ts';
 	import { displayName, shortDate } from '#lib/format.ts';
 
-	let { file, officePreviews, onopen }: { file: FileEntry; officePreviews: boolean; onopen: () => void } = $props();
+	let {
+		file,
+		officePreviews,
+		onopen,
+		caption
+	}: { file: FileEntry; officePreviews: boolean; onopen: () => void; caption?: string } = $props();
 
 	let failed = $state(false);
 	let drawn = $state(false);
@@ -49,7 +54,7 @@
 		{/if}
 	</span>
 	<span class="name">{file.filename}</span>
-	<span class="from">{displayName(file.from_name, file.from_addr)}, {shortDate(file.date)}</span>
+	<span class="from">{caption ?? `${displayName(file.from_name, file.from_addr)}, ${shortDate(file.date)}`}</span>
 </button>
 
 <style>

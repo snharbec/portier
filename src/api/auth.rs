@@ -32,6 +32,7 @@ pub async fn me(State(state): State<AppState>, user: Result<CurrentUser, ApiErro
         "user": user.ok(),
         "setup_needed": user_count(&state).await? == 0,
         "open_registration": state.config.open_registration,
+        "office_previews": state.config.soffice.is_some(),
     })))
 }
 

@@ -6,6 +6,8 @@ export const app = $state({
 	user: null as User | null,
 	setupNeeded: false,
 	openRegistration: false,
+	/** Whether the server can turn Office documents into previews (LibreOffice installed). */
+	officePreviews: false,
 	counts: { screener: 0, unread_important: 0, drafts: 0 } as Counts,
 	accounts: [] as Account[],
 	tick: 0
@@ -21,10 +23,16 @@ setUnauthorizedHandler(() => {
 });
 
 export async function loadSession() {
-	const me = await api.get<{ user: User | null; setup_needed: boolean; open_registration: boolean }>('/me');
+	const me = await api.get<{
+		user: User | null;
+		setup_needed: boolean;
+		open_registration: boolean;
+		office_previews: boolean;
+	}>('/me');
 	app.user = me.user;
 	app.setupNeeded = me.setup_needed;
 	app.openRegistration = me.open_registration;
+	app.officePreviews = me.office_previews;
 	app.ready = true;
 	if (app.user) {
 		await Promise.all([refreshCounts(), refreshAccounts()]);

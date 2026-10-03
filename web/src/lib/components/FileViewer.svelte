@@ -9,8 +9,16 @@
 		files,
 		index = $bindable(),
 		officePreviews,
-		onclose
-	}: { files: FileEntry[]; index: number; officePreviews: boolean; onclose: () => void } = $props();
+		onclose,
+		emailLink = true
+	}: {
+		files: FileEntry[];
+		index: number;
+		officePreviews: boolean;
+		onclose: () => void;
+		/** Off when the viewer is opened from inside the email itself. */
+		emailLink?: boolean;
+	} = $props();
 
 	let dialog: HTMLDialogElement;
 	let pages: HTMLDivElement | undefined = $state();
@@ -98,7 +106,7 @@
 				{displayName(file.from_name, file.from_addr)}, {fullDate(file.date)}, {fileSize(file.size)}
 			</span>
 		</div>
-		<a class="btn small" href="/thread/{file.thread_id}">Open email</a>
+		{#if emailLink}<a class="btn small" href="/thread/{file.thread_id}">Open email</a>{/if}
 		<a class="btn small" href={downloadUrl(file)} download={file.filename}>Download</a>
 		<button class="btn small primary" onclick={() => dialog.close()}>Close</button>
 	</header>

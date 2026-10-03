@@ -17,7 +17,7 @@ use tokio_stream::wrappers::BroadcastStream;
 use crate::{
     auth::CurrentUser,
     error::{ApiError, ApiResult},
-    mail::{classify, imap, parse, sync},
+    mail::{classify, imap, parse, preview, sync},
     models::Addr,
     state::AppState,
 };
@@ -253,6 +253,8 @@ pub struct AttachmentView {
     filename: String,
     mime: String,
     size: i64,
+    /// Which preview the file can get: image, pdf, office or other.
+    kind: &'static str,
 }
 
 #[derive(Serialize)]
@@ -292,6 +294,7 @@ async fn to_views(state: &AppState, rows: Vec<MessageRow>) -> ApiResult<Vec<Mess
     let mut by_message: HashMap<i64, Vec<AttachmentView>> = HashMap::new();
     for (message_id, idx, filename, mime, size) in attachment_rows {
         by_message.entry(message_id).or_default().push(AttachmentView {
+            kind: preview::kind(&mime, &filename).as_str(),
             idx,
             filename,
             mime,

@@ -74,6 +74,7 @@ export interface Attachment {
 	filename: string;
 	mime: string;
 	size: number;
+	kind: 'image' | 'pdf' | 'office' | 'other';
 }
 
 export interface Message {

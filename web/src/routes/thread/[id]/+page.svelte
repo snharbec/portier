@@ -54,6 +54,7 @@
 	function onkeydown(event: KeyboardEvent) {
 		const typing = (event.target as HTMLElement).closest('input, textarea, [contenteditable="true"]');
 		if (typing || event.metaKey || event.ctrlKey || event.altKey) return;
+		if (document.querySelector('dialog[open]')) return;
 		if (event.key === 'r') draft('reply');
 		else if (event.key === 'a') draft('reply_all');
 		else if (event.key === 'f') draft('forward');
