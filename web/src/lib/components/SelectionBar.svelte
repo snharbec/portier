@@ -9,6 +9,7 @@
 		accountIds,
 		archivable = true,
 		trashable = true,
+		restorable = false,
 		list = 'inbox',
 		onclear,
 		ondone
@@ -24,6 +25,8 @@
 		archivable?: boolean;
 		/** Off in the Trash list. */
 		trashable?: boolean;
+		/** On in the Trash list: its mail can be moved back to the inbox. */
+		restorable?: boolean;
 		/**
 		 * Which list the bar serves: 'inbox' offers Important and Delay, 'important' and 'delayed'
 		 * offer the way back, 'mixed' (the Inbox page, which also shows Important) offers both
@@ -88,7 +91,7 @@
 	let error = $state('');
 	let picker: FolderPicker;
 
-	type Action = 'read' | 'unread' | 'important' | 'unimportant' | 'delay' | 'undelay' | 'archive' | 'trash' | 'move';
+	type Action = 'read' | 'unread' | 'important' | 'unimportant' | 'delay' | 'undelay' | 'archive' | 'trash' | 'untrash' | 'move';
 
 	async function run(action: Action, done: string, extra: Record<string, unknown> = {}) {
 		busy = true;
@@ -134,6 +137,11 @@
 		{/if}
 		{#if list === 'inbox' || list === 'important' || list === 'mixed'}
 			<DelayMenu up disabled={busy} onpick={(days) => run('delay', `Delayed for ${days} ${days === 1 ? 'day' : 'days'}:`, { days })} />
+		{/if}
+		{#if restorable}
+			<button class="btn small" disabled={busy} onclick={() => run('untrash', 'Moved back to the Inbox:')}>
+				Move back to Inbox
+			</button>
 		{/if}
 		{#if archivable}
 			<button class="btn small" disabled={busy} onclick={() => run('archive', 'Archived:')}>Archive</button>

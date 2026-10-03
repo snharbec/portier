@@ -106,6 +106,8 @@ export interface Thread {
 	can_archive: boolean;
 	/** Some mail of it is not in the Trash yet. */
 	can_trash: boolean;
+	/** Some mail of it is in the Trash and can be moved back. */
+	can_restore: boolean;
 	/** It is in the Important list (a mail of it is flagged). */
 	important: boolean;
 	/** Delayed until then, or null. */

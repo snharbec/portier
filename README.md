@@ -12,7 +12,8 @@ their newest mail is older than a number of weeks you choose. Unseen, Important 
 conversations and the other lists are left alone. It is checked hourly.
 
 **Trash** lists what you deleted: the newest 500 mails of the account's Trash folder. Mail in the
-Trash is left out of the other lists and of search. Moving it to the folder INBOX brings it back.
+Trash is left out of the other lists and of search. "Move back to Inbox", on an opened
+mail or for mails selected in the Trash list, brings it back: received mail to the inbox, your own to Sent.
 
 **Important** is a list below the Inbox for conversations you want set apart. Drag a row by its
 handle onto Important in the side bar, use the button in the selection bar, or press `i` while
@@ -134,7 +135,9 @@ each time, so `received:last month` keeps meaning the previous month.
 
 ## Keyboard
 
-`c` write, `/` search field, `m` menu, `1` Inbox, `2` Screener, `3` Nice to know, `4` Attachments.
+`?` shows all keyboard shortcuts. `c` write, `/` search field, `m` menu, `1` Inbox, `Shift+I` Important,
+`Shift+D` Delayed, `Shift+N` or `3` Nice to know, `2` Screener, `4` Attachments.
+In the composer `Ctrl+Return` (or `Cmd+Return`) sends the mail.
 In the attachment viewer the left and right arrows step through files and Escape closes it.
 In the Screener `i` / `k` / `j` decide the first sender. In a conversation `r` reply, `u` mark as unseen, `i` important, `z` delay (then `1`, `2`, `3` or `7`), `e` archive, `d` move to Trash,
 `a` reply all, `f` forward.

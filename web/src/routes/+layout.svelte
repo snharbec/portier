@@ -4,6 +4,7 @@
 	import { page } from '$app/state';
 	import { app, loadSession, logout, startDraft } from '#lib/app.svelte.ts';
 	import type { SavedSearch } from '#lib/api.ts';
+	import KeyHelp from '#lib/components/KeyHelp.svelte';
 	import Login from '#lib/components/Login.svelte';
 	import ThreadView from '#lib/components/ThreadView.svelte';
 	import { carriesMail, dropOn, dropTargets } from '#lib/drag.ts';
@@ -20,8 +21,8 @@
 
 	const places = $derived([
 		{ group: 1, href: '/', icon: 'M4 13.5 6.5 5h11L20 13.5V19H4zM4 13.5h4.5l1 2.5h5l1-2.5H20', label: 'Inbox', hint: 'Mail from people you let in', key: '1', badge: app.counts.unread_important },
-		{ group: 1, href: '/important', icon: 'M12 3.5l2.6 5.3 5.9.9-4.3 4.1 1 5.8L12 16.9l-5.2 2.7 1-5.8L3.5 9.7l5.9-.9z', label: 'Important', hint: 'Conversations you set apart', key: '', badge: app.counts.unread_flagged },
-		{ group: 1, href: '/delayed', icon: 'M12 4a8 8 0 1 0 0 16 8 8 0 0 0 0-16zM12 8v4.5l3 2', label: 'Delayed', hint: 'Waiting to return to the Inbox', key: '', badge: 0 },
+		{ group: 1, href: '/important', icon: 'M12 3.5l2.6 5.3 5.9.9-4.3 4.1 1 5.8L12 16.9l-5.2 2.7 1-5.8L3.5 9.7l5.9-.9z', label: 'Important', hint: 'Conversations you set apart', key: 'I', badge: app.counts.unread_flagged },
+		{ group: 1, href: '/delayed', icon: 'M12 4a8 8 0 1 0 0 16 8 8 0 0 0 0-16zM12 8v4.5l3 2', label: 'Delayed', hint: 'Waiting to return to the Inbox', key: 'D', badge: 0 },
 		{ group: 1, href: '/feed', icon: 'M5 5h11v14H7a2 2 0 0 1-2-2zM16 9h3v8a2 2 0 0 1-2 2M8 9h5M8 12.5h5M8 16h3', label: 'Nice to know', hint: 'Newsletters and updates, ready to read', key: '3', badge: 0 },
 		{ group: 2, href: '/screener', icon: 'M4 5h16l-6 7.5V19l-4-2v-4.5z', label: 'Screener', hint: 'New senders waiting for your decision', key: '2', badge: app.counts.screener },
 		{ group: 3, href: '/files', icon: 'M20 11.5l-8.1 8.1a5 5 0 0 1-7.1-7.1l8.5-8.5a3.3 3.3 0 0 1 4.7 4.7l-8.5 8.5a1.7 1.7 0 0 1-2.4-2.4l7.8-7.8', label: 'Attachments', hint: 'Files from the last four weeks', key: '4', badge: 0 },
@@ -33,6 +34,9 @@
 		{ group: 5, href: '/settings', icon: 'M4 7h9M17 7h3M4 17h3M11 17h9M15 4.5v5M9 14.5v5', label: 'Settings', hint: 'Mail accounts, senders, users', key: '', badge: 0 }
 	]);
 	// What each group holds: reading lists, the Screener, attachments, put-away mail, settings.
+	/** A capital letter is typed with Shift. */
+	const keyLabel = (key: string) => (/^[A-Z]$/.test(key) ? `Shift ${key}` : key);
+	let keyHelp: KeyHelp | undefined = $state();
 	const startsGroup = (index: number) => index > 0 && places[index].group !== places[index - 1].group;
 	const here = $derived(places.find((p) => p.href === page.url.pathname)?.label ?? 'Email Screen');
 
@@ -248,6 +252,9 @@
 		if (event.metaKey || event.ctrlKey || event.altKey) return;
 		const place = places.find((p) => p.key === event.key);
 		if (place) goto(place.href);
+		// Nice to know has the 3 from before and a letter like its neighbours.
+		else if (event.key === 'N') goto('/feed');
+		else if (event.key === '?') keyHelp?.toggle();
 		else if (event.key === 'c') write();
 		else if (event.key === '/') {
 			event.preventDefault();
@@ -331,7 +338,7 @@
 								<span class="label">{place.label}</span>
 								<span class="hint">{place.hint}</span>
 								{#if place.badge}<span class="badge">{place.badge}</span>{/if}
-								{#if place.key}<kbd>{place.key}</kbd>{/if}
+								{#if place.key}<kbd>{keyLabel(place.key)}</kbd>{/if}
 							</a>
 						</li>
 					{/each}
@@ -393,6 +400,7 @@
 		<p class="who">
 			<span title={app.user.email}>{app.user.email}</span>
 			<button class="btn small quiet" onclick={logout}>Sign out</button>
+			<button class="btn small quiet keys" onclick={() => keyHelp?.toggle()}>Keyboard shortcuts <kbd>?</kbd></button>
 		</p>
 	</nav>
 	<main class="column" class:split={app.splitActive} class:stacked={app.splitActive && stacked}
@@ -431,6 +439,7 @@
 			{@render children()}
 		{/if}
 	</main>
+	<KeyHelp bind:this={keyHelp} />
 	{#if app.notice}
 		<div class="toast" role="status">{app.notice}</div>
 	{/if}

@@ -583,6 +583,36 @@ mod tests {
         // Trashing what is in the Trash already does nothing.
         let (_, _, body) = act(&cookie, json!({ "action": "trash", "thread_ids": [thread] })).await;
         assert_eq!(body["affected"], 0);
+
+        // While the mail is still on its way to the Trash on the server it cannot be taken out.
+        assert_eq!(detail["can_restore"], false);
+        let (status, _, _) = act(&cookie, json!({ "action": "untrash", "thread_ids": [thread] })).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+        // The next sync finds it in the Trash folder; then it can go back to the Inbox list.
+        sqlx::query("UPDATE messages SET uid = 77 WHERE id = ?")
+            .bind(message)
+            .execute(db)
+            .await
+            .unwrap();
+        let (_, _, detail) = call(&app, "GET", &format!("/api/threads/{thread}"), Some(&cookie), None).await;
+        assert_eq!(detail["can_restore"], true);
+        let (_, _, body) = act(&cookie, json!({ "action": "untrash", "thread_ids": [thread] })).await;
+        assert_eq!(body["affected"], 1);
+        assert_eq!(
+            (
+                listed("/api/threads?box=important").await,
+                listed("/api/threads?box=trash").await
+            ),
+            (1, 0)
+        );
+        let (_, _, detail) = call(&app, "GET", &format!("/api/threads/{thread}"), Some(&cookie), None).await;
+        assert_eq!(
+            (detail["can_trash"].as_bool(), detail["can_restore"].as_bool()),
+            (Some(true), Some(false))
+        );
+        // Untrashing what is not in the Trash is refused.
+        let (status, _, _) = act(&cookie, json!({ "action": "untrash", "thread_ids": [thread] })).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
     }
 
     #[tokio::test]

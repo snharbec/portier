@@ -1,5 +1,5 @@
-//! Actions on several selected mails at once: mark read or unread, archive, move to Trash, move to a
-//! folder.
+//! Actions on several selected mails at once: mark read or unread, archive, move to Trash and back,
+//! move to a folder.
 
 use std::collections::HashMap;
 
@@ -19,7 +19,7 @@ const MAX_SELECTION: usize = 1000;
 
 #[derive(Deserialize)]
 pub struct BulkInput {
-    /// read | unread | important | unimportant | delay | undelay | archive | trash | move
+    /// read | unread | important | unimportant | delay | undelay | archive | trash | untrash | move
     action: String,
     /// Whole conversations: every message in them is affected.
     #[serde(default)]
@@ -109,6 +109,19 @@ pub async fn apply(
         "trash" => {
             set_delay(&state, user.id, &targets, None).await?;
             file_away(&state, user.id, targets, Shelf::Trash).await?
+        }
+        "untrash" => {
+            // Back to where it came from: received mail to the inbox, your own to Sent.
+            let (sent, received): (Vec<Target>, Vec<Target>) = targets.into_iter().partition(|t| t.is_outgoing);
+            let moved = file_away(&state, user.id, received, Shelf::Inbox).await?
+                + file_away(&state, user.id, sent, Shelf::Sent).await?;
+            if moved == 0 {
+                // Just moved to the Trash and not yet seen there by the sync, or not in the Trash at all.
+                return Err(ApiError::bad_request(
+                    "Nothing to take out of the Trash yet. Mail that was just moved there needs a moment; try again.",
+                ));
+            }
+            moved
         }
         "move" => {
             let account_id = input
@@ -228,27 +241,35 @@ fn targets_without_uid(messages: &[(i64, Option<u32>)]) -> Vec<i64> {
         .collect()
 }
 
-/// The two mirrored folders mail is put away into.
+/// The mirrored folders mail is moved between.
 #[derive(Clone, Copy)]
 enum Shelf {
     /// Received mail from the inbox or Junk; sent copies of a conversation stay in Sent.
     Archive,
     /// Mail from anywhere.
     Trash,
+    /// Received mail out of the Trash.
+    Inbox,
+    /// Your own mail out of the Trash.
+    Sent,
 }
 
-/// Moves mail to the account's Archive or Trash folder. Unlike other moves the mail stays in
-/// Email Screen: both folders are mirrored and shown as their own lists.
+/// Moves mail to the account's Archive or Trash folder, or out of the Trash back to the inbox or
+/// Sent. Unlike other moves the mail stays in Email Screen: these folders are mirrored and shown
+/// as their own lists.
 async fn file_away(state: &AppState, user_id: i64, targets: Vec<Target>, shelf: Shelf) -> ApiResult<usize> {
     let (role, what) = match shelf {
         Shelf::Archive => ("archive", "Archive"),
         Shelf::Trash => ("trash", "Trash"),
+        Shelf::Inbox => ("inbox", "inbox"),
+        Shelf::Sent => ("sent", "Sent"),
     };
     let mut by_account: HashMap<i64, Vec<Target>> = HashMap::new();
     for target in targets {
         let movable = match shelf {
             Shelf::Archive => matches!(target.folder_role.as_str(), "inbox" | "junk"),
             Shelf::Trash => target.folder_role != "trash",
+            Shelf::Inbox | Shelf::Sent => target.folder_role == "trash",
         };
         if movable {
             by_account.entry(target.account_id).or_default().push(target);
@@ -266,6 +287,8 @@ async fn file_away(state: &AppState, user_id: i64, targets: Vec<Target>, shelf: 
         let folder_name = match shelf {
             Shelf::Archive => &account.archive_folder,
             Shelf::Trash => &account.trash_folder,
+            Shelf::Inbox => &account.inbox_folder,
+            Shelf::Sent => &account.sent_folder,
         };
         if folder_name.is_empty() {
             return Err(ApiError::bad_request(format!(
@@ -322,9 +345,9 @@ async fn file_away(state: &AppState, user_id: i64, targets: Vec<Target>, shelf: 
                 .await;
                 if let Err(e) = on_server {
                     // Nothing moved on the server, whatever the reason: show the mail where it still is.
-                    tracing::warn!(account_id, "archiving failed: {e:#}");
+                    tracing::warn!(account_id, "moving mail to {what} failed: {e:#}");
                     if let Err(e) = sync::restore_local(&task, &source, moved).await {
-                        tracing::error!(account_id, "archived mail could not be put back locally: {e:#}");
+                        tracing::error!(account_id, "moved mail could not be put back locally: {e:#}");
                     }
                     task.notify(user_id, "mail");
                 }

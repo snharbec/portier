@@ -18,7 +18,7 @@ export interface Target {
 
 /** Runs one of the server's mail actions, says what happened and reloads the lists. */
 export async function mailAction(
-	action: 'read' | 'unread' | 'important' | 'unimportant' | 'delay' | 'undelay' | 'archive' | 'trash' | 'move',
+	action: 'read' | 'unread' | 'important' | 'unimportant' | 'delay' | 'undelay' | 'archive' | 'trash' | 'untrash' | 'move',
 	target: Target,
 	done: string,
 	extra: Record<string, unknown> = {}

@@ -21,7 +21,7 @@
 
 <div class="page-head">
 	<h1>Trash</h1>
-	<p>Mail you deleted. It sits in the Trash folder of your mail account until the mail server empties it. To bring one back, move it to the folder INBOX.</p>
+	<p>Mail you deleted. It sits in the Trash folder of your mail account until the mail server empties it. To bring one back, open it or select it and choose "Move back to Inbox".</p>
 	{#if threads?.length}
 		<p class="tools"><a class="btn small" href="/read/trash">Read all on one page</a></p>
 	{/if}
@@ -51,6 +51,7 @@
 	list="other"
 	archivable={false}
 	trashable={false}
+	restorable
 	threadIds={picked.map((t) => t.id)}
 	accountIds={[...new Set(picked.map((t) => t.account_id))]}
 	total={threads?.length ?? 0}

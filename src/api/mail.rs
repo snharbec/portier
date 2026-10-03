@@ -540,10 +540,19 @@ pub async fn thread(State(state): State<AppState>, user: CurrentUser, Path(id): 
     .fetch_one(&state.db)
     .await?;
 
+    let can_restore: bool = sqlx::query_scalar(
+        "SELECT EXISTS (SELECT 1 FROM messages m JOIN folders f ON f.id = m.folder_id
+                        WHERE m.thread_id = ? AND f.role = 'trash' AND m.uid IS NOT NULL)",
+    )
+    .bind(id)
+    .fetch_one(&state.db)
+    .await?;
+
     Ok(Json(json!({
         "id": id,
         "can_archive": can_archive,
         "can_trash": can_trash,
+        "can_restore": can_restore,
         "important": flagged,
         "snoozed_until": snoozed_until,
         "subject": head.0,

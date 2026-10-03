@@ -80,8 +80,18 @@
 		attachments = await api.delete<DraftAttachment[]>(`/drafts/${id}/attachments/${attachmentId}`);
 	}
 
+	/** Ctrl+Return (or Cmd+Return) sends from anywhere in the composer, also from inside the text. */
+	function onkeydown(event: KeyboardEvent) {
+		if (event.key !== 'Enter' || !(event.ctrlKey || event.metaKey) || event.altKey || event.shiftKey) return;
+		if (document.querySelector('dialog[open]')) return;
+		// Before the editor sees it, which would add a line break.
+		event.preventDefault();
+		event.stopPropagation();
+		if (app.accounts.length > 0) send();
+	}
+
 	async function send() {
-		if (!detail) return;
+		if (!detail || sending) return;
 		sending = true;
 		error = '';
 		try {
@@ -112,6 +122,8 @@
 		else goto('/');
 	}
 </script>
+
+<svelte:window onkeydowncapture={onkeydown} />
 
 {#if !detail}
 	{#if error}
@@ -213,7 +225,7 @@
 		{#if error}<p class="error" role="alert">{error}</p>{/if}
 
 		<div class="actions">
-			<button class="btn primary" onclick={send} disabled={sending || app.accounts.length === 0}>
+			<button class="btn primary" onclick={send} disabled={sending || app.accounts.length === 0} title="Send (Ctrl+Return)">
 				{sending ? 'Sending' : 'Send'}
 			</button>
 			<label class="btn">

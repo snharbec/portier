@@ -131,6 +131,7 @@
 	<SelectionBar
 		archivable={box !== 'archive' && box !== 'trash'}
 		trashable={box !== 'trash'}
+		restorable={box === 'trash'}
 		list={box === 'flagged' ? 'important' : box === 'important' || box === 'feed' ? 'inbox' : 'other'}
 		messageIds={picked.map((m) => m.id)}
 		accountIds={[...new Set(picked.map((m) => m.account_id))]}

@@ -126,9 +126,10 @@
 	const delay = (days: number) =>
 		putAway('delay', `Delayed for ${days} ${days === 1 ? 'day' : 'days'}: 1 conversation`, { days });
 	const undelay = () => putAway('undelay', 'Back in the Inbox: 1 conversation');
+	const untrash = () => putAway('untrash', 'Moved back to the Inbox: 1 conversation');
 	let delayMenu: DelayMenu | undefined = $state();
 
-	type PutAway = 'trash' | 'archive' | 'important' | 'unimportant' | 'delay' | 'undelay';
+	type PutAway = 'trash' | 'untrash' | 'archive' | 'important' | 'unimportant' | 'delay' | 'undelay';
 
 	/** Takes the whole conversation out of the list it is in, then goes on to where the reader came from. */
 	async function putAway(action: PutAway, done: string, extra: Record<string, unknown> = {}) {
@@ -252,6 +253,11 @@
 			{#if hasReceived}
 				<button class="btn small" onclick={markUnread} disabled={trashing} title="Mark as unseen (u)">
 					Mark as unseen
+				</button>
+			{/if}
+			{#if thread.can_restore}
+				<button class="btn small" onclick={untrash} disabled={trashing} title="Take it out of the Trash">
+					Move back to Inbox
 				</button>
 			{/if}
 			{#if thread.can_trash}
