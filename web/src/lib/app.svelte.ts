@@ -17,9 +17,9 @@ export const app = $state({
 	swipe: { left: ['trash'], right: ['read'] } as { left: SwipeAction[]; right: SwipeAction[] },
 	/** Weeks after which read Inbox conversations are archived automatically; 0 is off. */
 	autoArchiveWeeks: 0,
-	/** The reader chose the split view: mail list on the left, the opened mail beside it. */
-	split: false,
-	/** Split view is chosen and possible right now (wide window, on a mail list). */
+	/** The split view the reader chose: the opened mail beside the mail list, or below it. */
+	split: 'off' as 'off' | 'beside' | 'below',
+	/** Split view is chosen and possible right now (on a mail list). */
 	splitActive: false,
 	/** Short message about the last action, shown for a few seconds. */
 	notice: '',

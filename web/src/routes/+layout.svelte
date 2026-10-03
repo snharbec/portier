@@ -65,7 +65,7 @@
 		runSearch();
 	}
 
-	// ---- Split view: mail list on the left, the opened mail beside it ----
+	// ---- Split view: the opened mail beside the mail list, or below it ----
 	const SPLIT_KEY = 'emscreen.split';
 	const listPages = ['/', '/important', '/delayed', '/feed', '/archive', '/sent', '/junk', '/trash'];
 	let roomy = $state(false);
@@ -74,12 +74,14 @@
 
 	onMount(() => {
 		try {
-			app.split = localStorage.getItem(SPLIT_KEY) === '1';
+			const stored = localStorage.getItem(SPLIT_KEY);
+			// '1' is what earlier versions stored for the only split there was.
+			app.split = stored === 'below' ? 'below' : stored === 'beside' || stored === '1' ? 'beside' : 'off';
 		} catch {
 			// No storage: the choice lasts until the page is reloaded.
 		}
-		// Two columns beside the side bar need a wide window.
-		const wide = window.matchMedia('(min-width: 75rem)');
+		// A list and a mail side by side need about 900 px; a narrower window stacks them instead.
+		const wide = window.matchMedia('(min-width: 56rem)');
 		const update = () => (roomy = wide.matches);
 		update();
 		wide.addEventListener('change', update);
@@ -87,17 +89,94 @@
 	});
 
 	$effect(() => {
-		app.splitActive = app.split && roomy && listPages.includes(page.url.pathname);
+		app.splitActive = app.split !== 'off' && listPages.includes(page.url.pathname);
 	});
+	const stacked = $derived(app.split === 'below' || !roomy);
 	const openId = $derived(app.splitActive ? page.url.searchParams.get('open') : null);
 
-	function toggleSplit() {
-		app.split = !app.split;
+	/** Choosing the split that is on turns it off again. */
+	function chooseSplit(choice: 'beside' | 'below') {
+		app.split = app.split === choice ? 'off' : choice;
 		try {
-			localStorage.setItem(SPLIT_KEY, app.split ? '1' : '0');
+			localStorage.setItem(SPLIT_KEY, app.split);
 		} catch {
 			// See above.
 		}
+	}
+
+	// ---- The divider between list and mail, dragged to give either more room ----
+	const SIZE_KEY = 'emscreen.split.size';
+	const DEFAULT_SIZE = { width: 432, share: 0.4 };
+	/** Width of the list beside the mail in pixels; share of the height it takes above the mail. */
+	let size = $state({ ...DEFAULT_SIZE });
+	let mainElement: HTMLElement | undefined = $state();
+	let dragging = $state(false);
+	/** Where on the divider it was grabbed, so it does not jump under the pointer. */
+	let grab = 0;
+
+	onMount(() => {
+		try {
+			const stored = JSON.parse(localStorage.getItem(SIZE_KEY) ?? '{}');
+			if (Number.isFinite(stored.width)) size.width = stored.width;
+			if (Number.isFinite(stored.share)) size.share = stored.share;
+		} catch {
+			// No storage, or nothing usable in it: the default sizes.
+		}
+	});
+
+	const clamp = (value: number, low: number, high: number) => Math.min(Math.max(value, low), Math.max(low, high));
+
+	/** Both parts keep enough room to stay usable. */
+	function resize(width: number, share: number) {
+		const room = mainElement?.clientWidth ?? 1200;
+		size.width = Math.round(clamp(width, 256, room - 336));
+		size.share = Math.round(clamp(share, 0.15, 0.8) * 1000) / 1000;
+	}
+
+	function saveSize() {
+		try {
+			localStorage.setItem(SIZE_KEY, JSON.stringify(size));
+		} catch {
+			// See above.
+		}
+	}
+
+	function dividerDown(event: PointerEvent) {
+		if (event.button !== 0) return;
+		event.preventDefault();
+		const divider = event.currentTarget as HTMLElement;
+		divider.setPointerCapture(event.pointerId);
+		const edge = divider.getBoundingClientRect();
+		grab = stacked ? event.clientY - edge.top : event.clientX - edge.left;
+		dragging = true;
+	}
+
+	function dividerMove(event: PointerEvent) {
+		if (!dragging || !mainElement) return;
+		const box = mainElement.getBoundingClientRect();
+		if (stacked) resize(size.width, (event.clientY - grab - box.top) / box.height);
+		else resize(event.clientX - grab - box.left, size.share);
+	}
+
+	function dividerUp() {
+		if (!dragging) return;
+		dragging = false;
+		saveSize();
+	}
+
+	function dividerKey(event: KeyboardEvent) {
+		const step = { ArrowLeft: -1, ArrowUp: -1, ArrowRight: 1, ArrowDown: 1 }[event.key];
+		if (!step) return;
+		event.preventDefault();
+		if (stacked) resize(size.width, size.share + step * 0.04);
+		else resize(size.width + step * 32, size.share);
+		saveSize();
+	}
+
+	function dividerReset() {
+		if (stacked) size.share = DEFAULT_SIZE.share;
+		else size.width = DEFAULT_SIZE.width;
+		saveSize();
 	}
 
 	/** Side bar entry a dragged conversation is over, for highlighting. */
@@ -169,17 +248,25 @@
 					spellcheck="false"
 				/>
 			</form>
-			{#if roomy}
+			<div class="view" role="group" aria-label="Split view">
+				<span>Split</span>
 				<button
-					class="btn small view"
-					aria-pressed={app.split}
-					onclick={toggleSplit}
+					aria-pressed={app.split === 'beside'}
+					onclick={() => chooseSplit('beside')}
 					title="Show the opened mail beside the list"
+					aria-label="Mail beside the list"
 				>
 					<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 5h16v14H4zM10 5v14" /></svg>
-					Split view
 				</button>
-			{/if}
+				<button
+					aria-pressed={app.split === 'below'}
+					onclick={() => chooseSplit('below')}
+					title="Show the opened mail below the list"
+					aria-label="Mail below the list"
+				>
+					<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 5h16v14H4zM4 11h16" /></svg>
+				</button>
+			</div>
 		</div>
 		{#if menuOpen}
 			<button class="scrim" aria-label="Close menu" onclick={() => (menuOpen = false)}></button>
@@ -259,9 +346,29 @@
 			<button class="btn small quiet" onclick={logout}>Sign out</button>
 		</p>
 	</nav>
-	<main class="column" class:split={app.splitActive} style="--top: {barHeight}px">
+	<main class="column" class:split={app.splitActive} class:stacked={app.splitActive && stacked}
+		class:dragging
+		bind:this={mainElement}
+		style="--top: {barHeight}px; --list: {size.width}px; --share: {size.share}"
+	>
 		{#if app.splitActive}
 			<div class="list">{@render children()}</div>
+			<!-- svelte-ignore a11y_no_noninteractive_tabindex, a11y_no_noninteractive_element_interactions -->
+			<div
+				class="divider"
+				role="separator"
+				tabindex="0"
+				aria-label="Size of the mail area"
+				aria-orientation={stacked ? 'horizontal' : 'vertical'}
+				aria-valuenow={stacked ? Math.round(size.share * 100) : size.width}
+				title="Drag to resize; double-click for the usual size"
+				onpointerdown={dividerDown}
+				onpointermove={dividerMove}
+				onpointerup={dividerUp}
+				onpointercancel={dividerUp}
+				onkeydown={dividerKey}
+				ondblclick={dividerReset}
+			></div>
 			<div class="pane">
 				{#if openId}
 					{#key openId}
@@ -291,12 +398,17 @@
 	}
 	.bar {
 		display: grid;
-		grid-template-columns: 1fr auto 1fr;
+		/* Write, the menu, the search field, and the Split view buttons. */
+		grid-template-columns: auto 1fr auto auto;
+		column-gap: 0.75rem;
 		align-items: center;
 		padding: 0.6rem 0;
 	}
 	.bar > :first-child {
 		justify-self: start;
+	}
+	.bar .place {
+		justify-self: center;
 	}
 	.bar > :last-child {
 		justify-self: end;
@@ -327,15 +439,16 @@
 	}
 	@media (max-width: 44rem) {
 		.bar {
-			grid-template-columns: auto 1fr;
+			grid-template-columns: auto 1fr auto;
 			row-gap: 0.5rem;
-		}
-		.bar .place {
-			justify-self: end;
 		}
 		.search {
 			grid-column: 1 / -1;
+			grid-row: 2;
 			width: 100%;
+		}
+		.view span {
+			display: none;
 		}
 	}
 	.place {
@@ -532,8 +645,8 @@
 	/* Split view: the list and the opened mail each scroll on their own, below the top bar. */
 	main.split {
 		display: grid;
-		grid-template-columns: minmax(20rem, 27rem) minmax(0, 1fr);
-		gap: 1.25rem;
+		/* The list as wide as the divider was dragged, but never crowding out the mail. */
+		grid-template-columns: min(var(--list), 100% - 21rem) auto minmax(0, 1fr);
 		/* Exactly the window below the top bar, so only the two columns scroll. */
 		height: calc(100dvh - var(--top));
 		padding-bottom: 0;
@@ -549,22 +662,103 @@
 		/* Page parts measure this column now, not the whole window. */
 		container: column / inline-size;
 	}
-	main.split .pane {
-		border-left: 1px solid var(--line);
-		padding-left: 1.25rem;
+	/* The line between the two parts; dragging it resizes them. */
+	.divider {
+		position: relative;
+		width: 1.5rem;
+		cursor: col-resize;
+		touch-action: none;
+	}
+	.divider::before {
+		content: '';
+		position: absolute;
+		inset: 0 calc(50% - 0.5px);
+		background: var(--line);
+	}
+	.divider:hover::before,
+	.divider:focus-visible::before,
+	main.dragging .divider::before {
+		inset: 0 calc(50% - 1.5px);
+		background: var(--important);
+	}
+	.divider:focus-visible {
+		outline: none;
+	}
+	/* While dragging, nothing gets selected and the mail's frame does not swallow the pointer. */
+	main.dragging {
+		user-select: none;
+		cursor: col-resize;
+	}
+	main.dragging.stacked {
+		cursor: row-resize;
+	}
+	main.dragging .pane {
+		pointer-events: none;
+	}
+	/* Mail below the list: the same two parts, stacked. */
+	main.split.stacked {
+		grid-template-columns: minmax(0, 1fr);
+		grid-template-rows: calc(var(--share) * 100%) auto minmax(0, 1fr);
+	}
+	main.split.stacked .list {
+		padding-bottom: 1rem;
+	}
+	main.split.stacked .divider {
+		width: auto;
+		height: 1.25rem;
+		cursor: row-resize;
+	}
+	main.split.stacked .divider::before {
+		inset: calc(50% - 0.5px) 0;
+	}
+	main.split.stacked .divider:hover::before,
+	main.split.stacked .divider:focus-visible::before,
+	main.dragging.stacked .divider::before {
+		inset: calc(50% - 1.5px) 0;
+	}
+	.view {
+		display: flex;
+		align-items: center;
+		gap: 0.2rem;
+		font-size: 0.875rem;
+		font-weight: 600;
+		color: var(--ink-soft);
+	}
+	.view span {
+		margin-right: 0.3rem;
+	}
+	.view button {
+		display: grid;
+		place-items: center;
+		width: 2.1rem;
+		height: 2.1rem;
+		border: 1px solid var(--line);
+		border-radius: 9px;
+		background: var(--surface);
+		color: var(--ink);
+		cursor: pointer;
+	}
+	.view button:hover {
+		border-color: var(--ink-soft);
 	}
 	.view svg {
-		width: 1.05rem;
-		height: 1.05rem;
+		width: 1.15rem;
+		height: 1.15rem;
 		fill: none;
 		stroke: currentColor;
 		stroke-width: 1.8;
 		stroke-linejoin: round;
 	}
-	.view[aria-pressed='true'] {
+	.view button[aria-pressed='true'] {
 		background: var(--ink);
 		border-color: var(--ink);
 		color: var(--paper);
+	}
+	@media (pointer: coarse) {
+		.view button {
+			width: 2.75rem;
+			height: 2.75rem;
+		}
 	}
 	.toast {
 		position: fixed;
