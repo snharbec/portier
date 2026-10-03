@@ -10,6 +10,17 @@
 	];
 	let open = $state(false);
 	let root: HTMLSpanElement;
+	/** Where the choices go: fixed to the window, below the button or above it. */
+	let place = $state('');
+
+	$effect(() => {
+		if (!open) return;
+		const box = root.getBoundingClientRect();
+		const left = Math.max(8, Math.min(box.left, window.innerWidth - 220));
+		place = up
+			? `left: ${left}px; bottom: ${window.innerHeight - box.top + 6}px`
+			: `left: ${left}px; top: ${box.bottom + 6}px`;
+	});
 
 	function pick(days: number) {
 		open = false;
@@ -50,8 +61,8 @@
 		Delay
 	</button>
 	{#if open}
-		<span class="choices" class:up role="menu" aria-label="Return to the inbox, unread, at 7:00 in">
-			<span class="hint">Back in the inbox at 7:00 in</span>
+		<span class="choices" style={place} role="menu" aria-label="Return to the Inbox, unseen, at 7:00 in">
+			<span class="hint">Back in the Inbox, unseen, at 7:00 in</span>
 			{#each choices as choice}
 				<button role="menuitem" onclick={() => pick(choice.days)}>{choice.label}</button>
 			{/each}
@@ -65,9 +76,7 @@
 		display: inline-block;
 	}
 	.choices {
-		position: absolute;
-		top: calc(100% + 0.3rem);
-		left: 0;
+		position: fixed;
 		z-index: 40;
 		display: grid;
 		min-width: 13rem;
@@ -77,10 +86,6 @@
 		background: var(--surface);
 		color: var(--ink);
 		box-shadow: 0 18px 40px -18px color-mix(in srgb, var(--ink) 60%, transparent);
-	}
-	.choices.up {
-		top: auto;
-		bottom: calc(100% + 0.3rem);
 	}
 	.hint {
 		padding: 0.3rem 0.6rem 0.4rem;

@@ -84,7 +84,7 @@
 	async function markUnread() {
 		if (!thread || !hasReceived || trashing) return;
 		try {
-			await mailAction('unread', { threadIds: [thread.id] }, 'Marked as unread: 1 conversation');
+			await mailAction('unread', { threadIds: [thread.id] }, 'Marked as unseen: 1 conversation');
 		} catch (e) {
 			notify((e as Error).message);
 			return;
@@ -182,7 +182,7 @@
 			</button>
 		</nav>
 	{/if}
-	<div class="page-head">
+	<div class="page-head stack reading">
 		<h1>{thread.subject || '(no subject)'}</h1>
 		{#if thread.snoozed_until}
 			<p class="delayed">Delayed. Returns to the Inbox {returnTime(thread.snoozed_until)}.</p>
@@ -203,38 +203,45 @@
 				<ClassifyButtons small current={thread.sender.category} onpick={pick} />
 			{/if}
 		{/if}
-		<p class="tools">
-			{#if hasReceived}
-				<button class="btn small" onclick={markUnread} disabled={trashing}>Mark as unread</button>
+		<div class="tools">
+			<button class="btn primary" onclick={() => draft('reply')} title="Reply (r)">Reply</button>
+			{#if last && last.to.length + last.cc.length > 1}
+				<button class="btn" onclick={() => draft('reply_all')} title="Reply to all (a)">Reply all</button>
 			{/if}
+			<button class="btn" onclick={() => draft('forward')} title="Forward (f)">Forward</button>
+			<span class="divider" aria-hidden="true"></span>
 			{#if thread.can_archive}
-				<button class="btn small" onclick={toggleImportant} disabled={trashing}>
-					{thread.important ? 'Move to Inbox' : 'Important'}
-				</button>
+				<button class="btn small" onclick={archive} disabled={trashing} title="Archive (e)">Archive</button>
 				{#if thread.snoozed_until}
 					<button class="btn small" onclick={undelay} disabled={trashing}>Back to Inbox now</button>
 				{:else}
-					<DelayMenu bind:this={delayMenu} onpick={delay} disabled={trashing} />
+					<span title="Delay (z)"><DelayMenu bind:this={delayMenu} onpick={delay} disabled={trashing} /></span>
 				{/if}
-				<button class="btn small" onclick={archive} disabled={trashing}>Archive</button>
+				<button class="btn small" onclick={toggleImportant} disabled={trashing} title="{thread.important ? 'Move to Inbox' : 'Move to Important'} (i)">
+					{thread.important ? 'Move to Inbox' : 'Move to Important'}
+				</button>
+			{/if}
+			{#if hasReceived}
+				<button class="btn small" onclick={markUnread} disabled={trashing} title="Mark as unseen (u)">
+					Mark as unseen
+				</button>
 			{/if}
 			{#if thread.can_trash}
-				<button class="btn small danger" onclick={trash} disabled={trashing}>Move to Trash</button>
+				<button class="btn small danger" onclick={trash} disabled={trashing} title="Move to Trash (d)">
+					Move to Trash
+				</button>
 			{/if}
-		</p>
+		</div>
 	</div>
 
 	{#each thread.messages as message, index (message.id)}
 		<MessageCard
 			{message}
 			open={index === thread.messages.length - 1 || unreadAtOpen.has(message.id) || message.id === hitMessage}
+			actions={thread.messages.length > 1}
 		/>
 	{/each}
 
-	<p class="muted keys">
-		Keys: <kbd>r</kbd> reply, <kbd>a</kbd> reply all, <kbd>f</kbd> forward, {#if hasReceived}<kbd>u</kbd> mark as unread, {/if}{#if thread.can_archive}<kbd>i</kbd> {thread.important ? 'move to Inbox' : 'important'}, <kbd>z</kbd> delay, <kbd>e</kbd> archive, {/if}{#if thread.can_trash}<kbd>d</kbd> move to Trash{/if}{#if hit >= 0}, <kbd>p</kbd> previous result,
-			<kbd>n</kbd> next result{/if}
-	</p>
 {/if}
 
 <style>
@@ -265,24 +272,20 @@
 		margin-bottom: 0.6rem;
 	}
 	.tools {
-		margin: 0.75rem 0 0;
+		margin: 0.9rem 0 0;
 		display: flex;
 		flex-wrap: wrap;
+		align-items: center;
 		gap: 0.5rem;
+	}
+	.divider {
+		width: 1px;
+		align-self: stretch;
+		margin-inline: 0.35rem;
+		background: var(--line);
 	}
 	.page-head .delayed {
 		color: var(--feed);
 		font-weight: 600;
-	}
-	.keys {
-		font-size: 0.85rem;
-		text-align: center;
-	}
-	kbd {
-		font: 600 0.8rem var(--body);
-		border: 1px solid var(--line);
-		border-radius: 5px;
-		padding: 0 0.35rem;
-		background: var(--surface);
 	}
 </style>

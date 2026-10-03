@@ -7,7 +7,7 @@ Screener until you put them in one of three places:
 - **Nice to know**: newsletters and updates, kept out of the way of the Inbox
 - **Junk**: hidden, and moved to the Junk folder of the mail account
 
-**Automatic archive** (Settings, off by default) archives read conversations of the Inbox once
+**Automatic archive** (Settings, off by default) archives seen conversations of the Inbox once
 their newest mail is older than a number of weeks you choose. Unseen, Important and delayed
 conversations and the other lists are left alone. It is checked hourly.
 
@@ -20,7 +20,7 @@ reading; the same ways lead back to the Inbox. It is stored as the mail server's
 so other mail programs show it as flag or star, and mail flagged there appears in Important.
 
 **Delay** takes a conversation out of the Inbox for 1, 2, 3 or 7 days. It waits in the Delayed
-list and returns at 7:00 (server time) on that day, unread and at the top. A new mail in the
+list and returns at 7:00 (server time) on that day, unseen and at the top. A new mail in the
 conversation ends the delay early. Delays are kept in Email Screen only.
 
 **Archive** files a mail away from any list or from the mail itself: it moves to the account's
@@ -37,12 +37,12 @@ Inbox and Nice to know, as a picture of its content: images as thumbnails, PDFs 
 first page. Selecting one opens the document on the page, with a link to its email.
 
 In Inbox, Nice to know, Junk, Sent and the search results you can tick several mails and
-mark them read or unread, move them to the account's Trash folder, or move them to any folder
+mark them seen or unseen, move them to the account's Trash folder, or move them to any folder
 on the mail server. Email Screen mirrors only Inbox, Sent, Junk, Archive and Trash, so mail moved elsewhere
 leaves its views and stays on the server.
 
 Rows in the mail lists and search results can also be slid left or right, by finger or mouse.
-Each direction's actions (read/unread, archive, move to folder, move to Trash) are chosen per user under
+Each direction's actions (seen/unseen, archive, move to folder, move to Trash) are chosen per user under
 Settings: one action is performed on release, several are offered as buttons.
 
 Connects to existing mailboxes over IMAP and SMTP (password or app password). Several users
@@ -130,5 +130,5 @@ each time, so `received:last month` keeps meaning the previous month.
 
 `c` write, `/` search field, `m` menu, `1` Inbox, `2` Screener, `3` Nice to know, `4` Attachments.
 In the attachment viewer the left and right arrows step through files and Escape closes it.
-In the Screener `i` / `k` / `j` decide the first sender. In a conversation `r` reply, `u` mark as unread, `i` important, `z` delay (then `1`, `2`, `3` or `7`), `e` archive, `d` move to Trash,
+In the Screener `i` / `k` / `j` decide the first sender. In a conversation `r` reply, `u` mark as unseen, `i` important, `z` delay (then `1`, `2`, `3` or `7`), `e` archive, `d` move to Trash,
 `a` reply all, `f` forward.

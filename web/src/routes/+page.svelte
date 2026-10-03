@@ -203,8 +203,16 @@
 		white-space: nowrap;
 	}
 	@media (max-width: 34rem) {
-		.ticket .go {
+		.ticket {
+			margin-top: 1rem;
+			padding-block: 0.6rem;
+		}
+		.ticket .go,
+		.ticket strong + span {
 			display: none;
+		}
+		.ticket .number {
+			font-size: 2rem;
 		}
 	}
 </style>

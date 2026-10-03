@@ -89,7 +89,35 @@ textarea {
 }
 
 .page-head {
-	padding: 2.5rem 0 1.25rem;
+	padding: 1.75rem 0 1rem;
+	/* Title on the left, the page's actions on its right; everything else below. */
+	display: grid;
+	grid-template-columns: 1fr auto;
+	align-items: center;
+	column-gap: 1rem;
+}
+.page-head > * {
+	grid-column: 1 / -1;
+}
+.page-head > h1 {
+	grid-column: 1;
+}
+.page-head.stack > h1 {
+	grid-column: 1 / -1;
+}
+.page-head > h1 + .tools,
+.page-head > h1 + form.tools {
+	grid-column: 2;
+	grid-row: 1;
+	margin-top: 0;
+}
+@media (max-width: 40rem) {
+	.page-head > h1 + .tools,
+	.page-head > h1 + form.tools {
+		grid-column: 1 / -1;
+		grid-row: auto;
+		margin-top: 0.75rem;
+	}
 }
 .page-head p {
 	margin: 0.4rem 0 0;
@@ -240,4 +268,26 @@ textarea {
 	height: 1.05rem;
 	accent-color: var(--important);
 	cursor: pointer;
+}
+
+/* Fingers need bigger targets than a mouse pointer. */
+@media (pointer: coarse) {
+	.btn,
+	.btn.small {
+		min-height: 2.75rem;
+		padding-inline: 1rem;
+	}
+}
+
+/* Keyboard shortcuts are of no use without a keyboard. */
+@media (hover: none) {
+	.keys,
+	kbd {
+		display: none;
+	}
+}
+
+/* A mail is read, not scanned: pages that show mail bodies keep a comfortable width. */
+main:has(> .reading) {
+	max-width: 64rem;
 }

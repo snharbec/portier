@@ -7,11 +7,9 @@
 		threadIds = [],
 		messageIds = [],
 		accountIds,
-		total,
 		archivable = true,
 		trashable = true,
 		list = 'inbox',
-		onselectall,
 		onclear,
 		ondone
 	}: {
@@ -20,8 +18,8 @@
 		messageIds?: number[];
 		/** Accounts the selection belongs to; moving to a folder needs exactly one. */
 		accountIds: number[];
-		/** How many items the view offers, for "Select all". */
-		total: number;
+		/** Unused since the list's own checkbox selects everything; kept so pages need not change. */
+		total?: number;
 		/** Off in the Archive list, where everything is archived already. */
 		archivable?: boolean;
 		/** Off in the Trash list. */
@@ -32,7 +30,7 @@
 		 * directions, 'other' (Junk, Sent, Archive) offers neither.
 		 */
 		list?: 'inbox' | 'important' | 'delayed' | 'mixed' | 'other';
-		onselectall: () => void;
+		onselectall?: () => void;
 		onclear: () => void;
 		/** Called after an action succeeded, to drop the selection and reload. */
 		ondone: () => void;
@@ -42,6 +40,8 @@
 	const things = $derived(`${count} ${threadIds.length ? 'conversation' : 'mail'}${count === 1 ? '' : 's'}`);
 
 	let busy = $state(false);
+	/** Height of the floating bar; the same room is kept free below the list so nothing hides under it. */
+	let barHeight = $state(0);
 	let error = $state('');
 	let picker: FolderPicker;
 
@@ -67,17 +67,18 @@
 </script>
 
 {#if count > 0}
-	<div class="bar" role="toolbar" aria-label="Actions for selected mail">
-		<strong>{things} selected</strong>
-		{#if count < total}
-			<button class="btn small quiet" onclick={onselectall}>Select all {total}</button>
-		{/if}
-		<span class="spacer"></span>
-		<button class="btn small" disabled={busy} onclick={() => run('read', 'Marked as read:')}>Mark as read</button>
-		<button class="btn small" disabled={busy} onclick={() => run('unread', 'Marked as unread:')}>Mark as unread</button>
+	<div class="room" style="height: {barHeight + 24}px"></div>
+	<div class="bar" role="toolbar" aria-label="Actions for selected mail" bind:offsetHeight={barHeight}>
+		<div class="summary">
+			<strong>{things} selected</strong>
+			<button class="btn small quiet" onclick={onclear}>Clear selection</button>
+		</div>
+		<div class="actions">
+		<button class="btn small" disabled={busy} onclick={() => run('read', 'Marked as seen:')}>Mark as seen</button>
+		<button class="btn small" disabled={busy} onclick={() => run('unread', 'Marked as unseen:')}>Mark as unseen</button>
 		{#if list === 'inbox' || list === 'mixed'}
 			<button class="btn small" disabled={busy} onclick={() => run('important', 'Moved to Important:')}>
-				Important
+				Move to Important
 			</button>
 		{/if}
 		{#if list === 'important' || list === 'mixed'}
@@ -101,7 +102,7 @@
 				Move to Trash
 			</button>
 		{/if}
-		<button class="btn small quiet" onclick={onclear}>Clear selection</button>
+		</div>
 		{#if error}<p class="error" role="alert">{error}</p>{/if}
 	</div>
 {/if}
@@ -109,41 +110,68 @@
 <FolderPicker bind:this={picker} />
 
 <style>
+	.room {
+		flex: none;
+	}
 	.bar {
 		position: fixed;
-		left: 50%;
+		/* Centred with margins, not a transform: a transform would trap the Delay menu inside the bar. */
+		left: 0;
+		right: 0;
+		margin-inline: auto;
 		bottom: 1rem;
-		transform: translateX(-50%);
 		z-index: 20;
-		width: min(var(--column), 100vw - 1.5rem);
-		display: flex;
-		flex-wrap: wrap;
-		align-items: center;
-		gap: 0.4rem;
+		width: max-content;
+		max-width: calc(100vw - 1.5rem);
+		display: grid;
+		grid-template-columns: minmax(0, 1fr);
+		gap: 0.45rem;
 		padding: 0.6rem 0.8rem;
+		/* Actions scroll sideways inside the bar; they must not poke out of its rounded corners. */
+		overflow: hidden;
 		border-radius: var(--radius);
 		background: var(--ink);
 		color: var(--paper);
 		box-shadow: 0 18px 40px -18px color-mix(in srgb, var(--ink) 70%, transparent);
 	}
-	.bar strong {
+	.summary,
+	.actions {
+		display: flex;
+		align-items: center;
+		gap: 0.4rem;
+		min-width: 0;
+	}
+	.summary {
+		flex-wrap: wrap;
+	}
+	/* On a narrow window the actions stay on one line and scroll sideways instead of stacking up. */
+	.actions {
+		overflow-x: auto;
+		scrollbar-width: none;
+		margin-inline: -0.8rem;
+		padding-inline: 0.8rem;
+	}
+	.actions::-webkit-scrollbar {
+		display: none;
+	}
+	.summary strong {
 		padding: 0 0.3rem;
+		margin-right: auto;
+		white-space: nowrap;
 	}
-	.bar .btn {
+	/* Buttons of child components (the Delay menu) are styled here too. */
+	.bar :global(.btn) {
 		color: var(--ink);
+		flex: none;
 	}
-	.bar .btn.quiet {
+	.bar :global(.btn.quiet) {
 		color: color-mix(in srgb, var(--paper) 80%, transparent);
 	}
-	.bar .btn.danger {
+	.bar :global(.btn.danger) {
 		color: var(--junk);
 	}
-	.spacer {
-		flex: 1;
-	}
 	.bar .error {
-		flex-basis: 100%;
-		margin: 0.2rem 0.3rem 0;
+		margin: 0 0.3rem;
 		color: #ffb3c4;
 	}
 </style>

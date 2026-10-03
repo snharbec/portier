@@ -66,8 +66,14 @@
 		<div class="body">
 			{#if message.from.address}
 				<p class="address">
-					<span>From {message.from.address}</span>
-					<button class="btn small quiet" onclick={() => copyText(message.from.address)}>Copy address</button>
+					<button
+						onclick={() => copyText(message.from.address)}
+						title="Copy address"
+						aria-label="Copy address {message.from.address}"
+					>
+						{message.from.address}
+						<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 9h10v11H9zM5 15V4h10" /></svg>
+					</button>
 				</p>
 			{/if}
 			{#if showSubject}
@@ -166,9 +172,33 @@
 		font-size: 0.875rem;
 		color: var(--ink-soft);
 	}
-	.address span {
+	.address button {
+		display: inline-flex;
+		align-items: center;
+		gap: 0.4rem;
+		padding: 0.1rem 0.4rem;
+		margin-left: 2.9rem;
+		border: 0;
+		border-radius: 6px;
+		background: none;
+		color: inherit;
+		font: inherit;
 		overflow-wrap: anywhere;
-		user-select: all;
+		text-align: left;
+		cursor: pointer;
+	}
+	.address button:hover {
+		background: var(--paper);
+		color: var(--ink);
+	}
+	.address svg {
+		flex: none;
+		width: 0.95rem;
+		height: 0.95rem;
+		fill: none;
+		stroke: currentColor;
+		stroke-width: 1.8;
+		stroke-linejoin: round;
 	}
 	h2 {
 		margin-bottom: 0.75rem;

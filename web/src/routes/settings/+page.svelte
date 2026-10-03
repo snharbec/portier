@@ -242,7 +242,16 @@
 
 <div class="page-head measure"><h1>Settings</h1></div>
 
-<section>
+<nav class="jump" aria-label="Sections of this page">
+	<a class="btn small" href="#accounts">Mail accounts</a>
+	<a class="btn small" href="#senders">Senders</a>
+	<a class="btn small" href="#sliding">Sliding</a>
+	<a class="btn small" href="#archive">Automatic archive</a>
+	{#if app.user?.is_admin}<a class="btn small" href="#users">Users</a>{/if}
+	<a class="btn small" href="#password">Password</a>
+</nav>
+
+<section id="accounts">
 	<h2>Mail accounts</h2>
 	{#if app.accounts.length === 0 && !form}
 		<p class="muted">No account connected yet. Email Screen works with any mailbox that offers IMAP and SMTP.</p>
@@ -336,14 +345,14 @@
 				<label class="field">User name <input bind:value={form.smtp_username} required /></label>
 			</div>
 
-			<h4>Folders</h4>
+			<h4>Folders on the mail server</h4>
 			<div class="grid">
-				<label class="field">Inbox <input bind:value={form.inbox_folder} /></label>
-				<label class="field">Junk <input bind:value={form.junk_folder} placeholder="Found automatically" /></label>
-				<label class="field">Sent <input bind:value={form.sent_folder} placeholder="Found automatically" /></label>
-				<label class="field">Trash <input bind:value={form.trash_folder} placeholder="Found automatically" /></label>
+				<label class="field">Inbox folder <input bind:value={form.inbox_folder} /></label>
+				<label class="field">Junk folder <input bind:value={form.junk_folder} placeholder="Found automatically" /></label>
+				<label class="field">Sent folder <input bind:value={form.sent_folder} placeholder="Found automatically" /></label>
+				<label class="field">Trash folder <input bind:value={form.trash_folder} placeholder="Found automatically" /></label>
 				<label class="field">
-					Archive <input bind:value={form.archive_folder} placeholder="Found automatically" />
+					Archive folder <input bind:value={form.archive_folder} placeholder="Found automatically" />
 				</label>
 			</div>
 			<label class="check">
@@ -374,7 +383,7 @@
 	{/if}
 </section>
 
-<section>
+<section id="senders">
 	<h2>Senders you decided on</h2>
 	<p class="muted">Changing a sender moves all of their mail, old and new. Leaving Junk brings back the last 90 days.</p>
 	<div class="filter">
@@ -407,7 +416,7 @@
 	{/if}
 </section>
 
-<section>
+<section id="sliding">
 	<h2>Sliding a mail</h2>
 	<p class="muted">
 		In the mail lists, slide a row left or right with a finger or the mouse. With one action chosen, sliding far
@@ -433,10 +442,10 @@
 	{#if swipeError}<p class="error" role="alert">{swipeError}</p>{/if}
 </section>
 
-<section>
+<section id="archive">
 	<h2>Automatic archive</h2>
 	<p class="muted">
-		Read conversations in the Inbox, the Seen area, move to the Archive folder by themselves once their newest mail
+		Seen conversations in the Inbox move to the Archive folder by themselves once their newest mail
 		is older than the age below. Unseen, Important and delayed conversations stay, and so do the other lists.
 		Checked once an hour.
 	</p>
@@ -467,7 +476,7 @@
 </section>
 
 {#if app.user?.is_admin}
-	<section>
+	<section id="users">
 		<h2>Users</h2>
 		<p class="muted">Each user has their own mail accounts and their own sender decisions.</p>
 		<ul class="sheet list">
@@ -501,7 +510,7 @@
 	</section>
 {/if}
 
-<section>
+<section id="password">
 	<h2>Your password</h2>
 	<form class="inline" onsubmit={changePassword}>
 		<label class="field">
@@ -525,6 +534,14 @@
 	}
 	section {
 		margin-bottom: 3rem;
+		/* Jump links must not park the heading under the fixed top bar. */
+		scroll-margin-top: 5rem;
+	}
+	.jump {
+		display: flex;
+		flex-wrap: wrap;
+		gap: 0.4rem;
+		margin-bottom: 2rem;
 	}
 	section > h2 {
 		margin-bottom: 0.6rem;

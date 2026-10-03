@@ -80,6 +80,7 @@
 			<a href="/thread/{thread.id}" class:unread={thread.unread > 0} onclick={opened}>
 				<Avatar
 					name={who}
+					size={36}
 					seed={thread.sender_address ?? thread.from_addr}
 					address={thread.is_outgoing && thread.sender_address ? thread.sender_address : thread.from_addr}
 				/>
@@ -206,6 +207,48 @@
 			stroke: var(--ink-soft);
 			stroke-width: 2.4;
 			stroke-linecap: round;
+		}
+	}
+	/* Wide windows: sender, subject with the start of the text, and date on a single line, so a
+	   screenful holds far more conversations and the eye runs along one row. */
+	@media (min-width: 69rem) {
+		a {
+			align-items: center;
+			padding-block: 0.5rem;
+		}
+		.main {
+			display: flex;
+			align-items: baseline;
+			gap: 0.75rem;
+		}
+		.top {
+			display: contents;
+		}
+		.who {
+			order: 1;
+			flex: 0 0 13rem;
+		}
+		.count {
+			order: 2;
+			flex: none;
+		}
+		.subject {
+			order: 3;
+			flex: 0 1 auto;
+			max-width: 45%;
+		}
+		.snippet {
+			order: 4;
+			flex: 1 1 0;
+			min-width: 0;
+		}
+		.returns {
+			order: 5;
+			flex: none;
+		}
+		time {
+			order: 6;
+			margin-left: 0;
 		}
 	}
 	.you {

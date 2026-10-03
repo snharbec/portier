@@ -5,7 +5,7 @@ export type SwipeAction = 'read' | 'archive' | 'move' | 'trash';
 
 /** Every action a slide can be given, in the order they are offered. */
 export const swipeActions: { id: SwipeAction; name: string }[] = [
-	{ id: 'read', name: 'Mark as read or unread' },
+	{ id: 'read', name: 'Mark as seen or unseen' },
 	{ id: 'archive', name: 'Archive' },
 	{ id: 'move', name: 'Move to folder' },
 	{ id: 'trash', name: 'Move to Trash' }
@@ -44,8 +44,8 @@ export async function swipeMail(
 ) {
 	try {
 		if (action === 'read') {
-			if (mail.unread) await mailAction('read', mail, `Marked as read: ${mail.what}`);
-			else await mailAction('unread', mail, `Marked as unread: ${mail.what}`);
+			if (mail.unread) await mailAction('read', mail, `Marked as seen: ${mail.what}`);
+			else await mailAction('unread', mail, `Marked as unseen: ${mail.what}`);
 		} else if (action === 'archive') {
 			await mailAction('archive', mail, `Archived: ${mail.what}`);
 		} else if (action === 'trash') {
@@ -65,7 +65,7 @@ export async function swipeMail(
 }
 
 export function swipeLabel(action: SwipeAction, unread: boolean): string {
-	if (action === 'read') return unread ? 'Mark as read' : 'Mark as unread';
+	if (action === 'read') return unread ? 'Mark as seen' : 'Mark as unseen';
 	if (action === 'archive') return 'Archive';
 	return action === 'trash' ? 'Move to Trash' : 'Move to folder';
 }

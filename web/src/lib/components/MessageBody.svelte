@@ -21,7 +21,27 @@
 		}
 	}
 	let frame: HTMLIFrameElement | undefined = $state();
-	let height = $state(120);
+	let height = $state(24);
+
+	// A mail that brings no layout or colours of its own (plain text, or just paragraphs and links)
+	// is shown in the app's colours and at a readable line length. Designed mails keep their white page.
+	const plain = $derived(!/<(table|img|style|font|center)\b|\sstyle=|\sbgcolor=|\sclass=/i.test(message.body_html));
+	const fallback = { ink: '#1a1f2e', soft: '#55607a', line: '#c9cfdd', link: '#2f4be0' };
+	let theme = $state(fallback);
+
+	// The app's colours as they are now (light or dark). Read once per mail; this must not read
+	// `theme` itself, or writing it would run the effect again without end.
+	$effect(() => {
+		message.id;
+		const css = getComputedStyle(document.documentElement);
+		const token = (name: string, otherwise: string) => css.getPropertyValue(name).trim() || otherwise;
+		theme = {
+			ink: token('--ink', fallback.ink),
+			soft: token('--ink-soft', fallback.soft),
+			line: token('--line', fallback.line),
+			link: token('--important', fallback.link)
+		};
+	});
 
 	const hasRemoteImages = $derived(/<img[^>]+src="https?:/i.test(message.body_html));
 
@@ -34,12 +54,13 @@
 <meta http-equiv="Content-Security-Policy" content="${csp}">
 <base target="_blank">
 <style>
-html{background:#fff;color:#1a1f2e}
-body{margin:0;padding:4px 2px;font:16px/1.5 system-ui,sans-serif;overflow-wrap:anywhere}
+html{background:${plain ? 'transparent' : '#fff'};color:${plain ? theme.ink : '#1a1f2e'};color-scheme:${plain ? 'light dark' : 'light'}}
+body{margin:0;padding:4px 2px;font:16px/1.55 system-ui,sans-serif;overflow-wrap:anywhere;${plain ? 'max-width:46rem' : ''}}
+${plain ? `a{color:${theme.link}}` : ''}
 img{max-width:100%;height:auto}
 table{max-width:100%}
 pre{white-space:pre-wrap;font:inherit;margin:0}
-blockquote{margin:0 0 0 .8ex;border-left:2px solid #c9cfdd;padding-left:1ex;color:#55607a}
+blockquote{margin:0 0 0 .8ex;border-left:2px solid ${plain ? theme.line : '#c9cfdd'};padding-left:1ex;color:${plain ? theme.soft : '#55607a'}}
 </style></head><body>${body}</body></html>`;
 	});
 
@@ -77,6 +98,7 @@ blockquote{margin:0 0 0 .8ex;border-left:2px solid #c9cfdd;padding-left:1ex;colo
 	bind:this={frame}
 	title="Message from {message.from.name || message.from.address}"
 	sandbox="allow-same-origin allow-popups allow-popups-to-escape-sandbox"
+	class:plain
 	{srcdoc}
 	{onload}
 	style="height: {height}px"
@@ -89,6 +111,9 @@ blockquote{margin:0 0 0 .8ex;border-left:2px solid #c9cfdd;padding-left:1ex;colo
 		border: 0;
 		border-radius: 8px;
 		background: #fff;
+	}
+	iframe.plain {
+		background: transparent;
 	}
 	.images {
 		margin: 0 0 0.75rem;

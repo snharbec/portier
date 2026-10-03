@@ -67,7 +67,7 @@
 			await mailAction(
 				'read',
 				{ messageIds: unread.map((m) => m.id) },
-				`Marked as read: ${count} mail${count === 1 ? '' : 's'}`
+				`Marked as seen: ${count} mail${count === 1 ? '' : 's'}`
 			);
 		} catch (e) {
 			error = (e as Error).message;
@@ -78,14 +78,14 @@
 {#if !list}
 	<p class="empty"><strong>There is no such list</strong><a class="btn" href="/">Go to Inbox</a></p>
 {:else}
-	<div class="page-head">
+	<div class="page-head reading">
 		<h1>{list.title}, all on one page</h1>
 		<p>Every mail of this list, opened, newest first.</p>
 		<p class="tools">
 			<a class="btn small" href={list.back}>Show as list</a>
 			{#if unread.length}
 				<button class="btn small" onclick={markAllRead}>
-					Mark {unread.length === 1 ? 'the unread mail' : `all ${unread.length} unread mails`} as read
+					Mark {unread.length === 1 ? 'the unseen mail' : `all ${unread.length} unseen mails`} as seen
 				</button>
 			{/if}
 		</p>
