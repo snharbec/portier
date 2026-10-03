@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { api, type ThreadSummary } from '#lib/api.ts';
 	import { app } from '#lib/app.svelte.ts';
+	import SelectAll from '#lib/components/SelectAll.svelte';
 	import SelectionBar from '#lib/components/SelectionBar.svelte';
 	import ThreadList from '#lib/components/ThreadList.svelte';
 	import { createSelection } from '#lib/selection.svelte.ts';
@@ -36,6 +37,12 @@
 		Conversations you wrote in appear here.
 	</div>
 {:else}
+	<SelectAll
+		selected={picked.length}
+		total={threads.length}
+		onall={() => selection.set((threads ?? []).map((t) => t.id))}
+		onnone={selection.clear}
+	/>
 	<ThreadList {threads} {selection} />
 {/if}
 

@@ -4,6 +4,7 @@
 	import { api, type Message } from '#lib/api.ts';
 	import { app } from '#lib/app.svelte.ts';
 	import MessageCard from '#lib/components/MessageCard.svelte';
+	import SelectAll from '#lib/components/SelectAll.svelte';
 	import SelectionBar from '#lib/components/SelectionBar.svelte';
 	import { createSelection } from '#lib/selection.svelte.ts';
 	import { mailAction } from '#lib/swipe.ts';
@@ -98,6 +99,12 @@
 			This list has no mail at the moment.
 		</div>
 	{:else}
+		<SelectAll
+			selected={picked.length}
+			total={messages.length}
+			onall={() => selection.set((messages ?? []).map((m) => m.id))}
+			onnone={selection.clear}
+		/>
 		{#each messages as message (message.id)}
 			<div class="row" class:unread={!message.seen && !message.is_outgoing}>
 				<label class="pick">

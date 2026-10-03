@@ -2,6 +2,7 @@
 	import type { SearchHit } from '#lib/api.ts';
 	import { displayName, shortDate } from '#lib/format.ts';
 	import FolderPicker from '#lib/components/FolderPicker.svelte';
+	import SelectAll from '#lib/components/SelectAll.svelte';
 	import SelectionBar from '#lib/components/SelectionBar.svelte';
 	import Swipeable from '#lib/components/Swipeable.svelte';
 	import { app } from '#lib/app.svelte.ts';
@@ -58,6 +59,12 @@
 {#if search.hits && search.hits.length === 0}
 	<p class="empty"><strong>No mail matches</strong>Try fewer or different words.</p>
 {:else if search.hits}
+	<SelectAll
+		selected={picked.length}
+		total={search.hits.length}
+		onall={() => selection.set((search.hits ?? []).map((h) => h.id))}
+		onnone={selection.clear}
+	/>
 	<ul class="sheet">
 		{#each search.hits as hit, index (hit.id)}
 			<li>
@@ -148,7 +155,7 @@
 	}
 	ul {
 		list-style: none;
-		margin: 1rem 0 0;
+		margin: 0;
 		padding: 0;
 	}
 	li + li {
