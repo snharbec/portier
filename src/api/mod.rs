@@ -36,6 +36,7 @@ pub fn router() -> Router<AppState> {
         .route("/senders/{id}/category", post(mail::set_category))
         .route("/senders/{id}/images", post(mail::set_images))
         .route("/contacts", get(mail::contacts))
+        .route("/avatar", get(mail::avatar))
         .route("/counts", get(mail::counts))
         .route("/threads", get(mail::threads))
         .route("/threads/{id}", get(mail::thread))
@@ -82,6 +83,12 @@ mod tests {
     use crate::{config::Config, crypto, state::AppState};
 
     async fn test_app() -> (Router, AppState) {
+        test_app_with(false).await
+    }
+
+    /// `avatars`: whether sender pictures may be looked up (tests never reach the internet:
+    /// they only use what is already in the cache).
+    async fn test_app_with(avatars: bool) -> (Router, AppState) {
         let data_dir = std::env::temp_dir().join(format!("emscreen-test-{}", crypto::random_token()));
         std::fs::create_dir_all(&data_dir).unwrap();
         let db = crate::open_database(&format!("sqlite://{}", data_dir.join("test.db").display()))
@@ -94,6 +101,7 @@ mod tests {
             open_registration: false,
             sync_max_per_folder: 100,
             soffice: None,
+            avatars,
         };
         let state = AppState::new(db, config);
         (crate::app(state.clone()), state)
@@ -919,6 +927,97 @@ mod tests {
             0,
             "returned only once"
         );
+    }
+
+    #[tokio::test]
+    async fn sender_pictures_come_from_the_cache_and_only_for_known_senders() {
+        let (app, state) = test_app_with(true).await;
+        let admin = json!({ "email": "admin@example.org", "password": "password1" });
+        let (_, cookie, _) = call(&app, "POST", "/api/register", None, Some(admin)).await;
+        let cookie = cookie.unwrap();
+        // A sender anna@example.com the user has mail from.
+        seed_mail(&state, 1).await;
+        let db = &state.db;
+        let cache = async |key: &str, mime: Option<&str>, data: Option<&[u8]>| {
+            sqlx::query("INSERT OR REPLACE INTO avatar_cache (key, mime, data, fetched_at) VALUES (?, ?, ?, ?)")
+                .bind(key)
+                .bind(mime)
+                .bind(data)
+                .bind(crate::state::now())
+                .execute(db)
+                .await
+                .unwrap();
+        };
+        // Status, content type, whether the sandboxing policy is set, body.
+        let get = async |address: &str, who: Option<&str>| {
+            let mut request = Request::builder().uri(format!("/api/avatar?address={address}"));
+            if let Some(cookie) = who {
+                request = request.header(header::COOKIE, cookie);
+            }
+            let response = app.clone().oneshot(request.body(Body::empty()).unwrap()).await.unwrap();
+            let status = response.status();
+            let header_text = |name: header::HeaderName| {
+                response
+                    .headers()
+                    .get(name)
+                    .and_then(|v| v.to_str().ok())
+                    .unwrap_or_default()
+                    .to_string()
+            };
+            let content_type = header_text(header::CONTENT_TYPE);
+            let sandboxed = header_text(header::CONTENT_SECURITY_POLICY).contains("sandbox");
+            let body = response.into_body().collect().await.unwrap().to_bytes().to_vec();
+            (status, content_type, sandboxed, body)
+        };
+
+        // Nothing found at either source (both cached as missing): initials are used.
+        cache("g:anna@example.com", None, None).await;
+        cache("b:example.com", None, None).await;
+        assert_eq!(get("anna@example.com", Some(&cookie)).await.0, StatusCode::NOT_FOUND);
+
+        // The domain's BIMI logo: served as SVG, sandboxed.
+        let logo = br#"<svg xmlns="http://www.w3.org/2000/svg"><circle r="4"/></svg>"#;
+        cache("b:example.com", Some("image/svg+xml"), Some(logo)).await;
+        let (status, content_type, sandboxed, body) = get("Anna@Example.com", Some(&cookie)).await;
+        assert_eq!(
+            (status, content_type.as_str(), sandboxed),
+            (StatusCode::OK, "image/svg+xml", true)
+        );
+        assert_eq!(body, logo);
+
+        // The person's own Gravatar wins over the domain's logo.
+        cache("g:anna@example.com", Some("image/png"), Some(b"png-bytes")).await;
+        let (status, content_type, _, body) = get("anna@example.com", Some(&cookie)).await;
+        assert_eq!(
+            (status, content_type.as_str(), body.as_slice()),
+            (StatusCode::OK, "image/png", &b"png-bytes"[..])
+        );
+
+        // An address the user has no mail from is not looked up, cached or not.
+        cache("g:stranger@example.com", Some("image/png"), Some(b"x")).await;
+        assert_eq!(
+            get("stranger@example.com", Some(&cookie)).await.0,
+            StatusCode::NOT_FOUND
+        );
+        // Not without logging in.
+        assert_eq!(get("anna@example.com", None).await.0, StatusCode::UNAUTHORIZED);
+
+        // Switched off: no pictures at all.
+        let (app_off, state_off) = test_app().await;
+        let admin = json!({ "email": "admin@example.org", "password": "password1" });
+        let (_, cookie_off, _) = call(&app_off, "POST", "/api/register", None, Some(admin)).await;
+        seed_mail(&state_off, 1).await;
+        sqlx::query("INSERT INTO avatar_cache (key, mime, data, fetched_at) VALUES ('g:anna@example.com', 'image/png', x'00', ?)")
+            .bind(crate::state::now())
+            .execute(&state_off.db)
+            .await
+            .unwrap();
+        let request = Request::builder()
+            .uri("/api/avatar?address=anna@example.com")
+            .header(header::COOKIE, cookie_off.unwrap())
+            .body(Body::empty())
+            .unwrap();
+        assert_eq!(app_off.oneshot(request).await.unwrap().status(), StatusCode::NOT_FOUND);
     }
 
     #[tokio::test]

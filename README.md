@@ -61,9 +61,21 @@ further users under Settings.
 | `EMSCREEN_OPEN_REGISTRATION` | off | `1` lets anyone create a user |
 | `EMSCREEN_SYNC_MAX_PER_FOLDER` | `5000` | Newest messages mirrored per folder |
 | `EMSCREEN_SOFFICE` | found automatically | Path to LibreOffice's `soffice`, or `off` |
+| `EMSCREEN_AVATARS` | on | `off` stops looking up sender pictures |
 
 Serve it behind HTTPS (reverse proxy) when it is reachable from other machines. Keep
 `master.key` with your backups: without it the stored account passwords cannot be read.
+
+## Sender pictures
+
+Instead of initials, a sender is shown with their Gravatar picture if they have one, otherwise
+with the BIMI logo their mail domain publishes in DNS. What is found, and that nothing was found,
+is cached in the database (pictures for 30 days, misses for 3), so each sender is looked up rarely.
+
+These lookups leave your server: Gravatar receives a hash of the sender's address, your DNS
+resolver sees the sender's domain, and the logo is fetched from the address the domain names.
+Logo addresses must be https and resolve to public addresses only. Set `EMSCREEN_AVATARS=off`
+to keep initials and make no such requests.
 
 ## Previews of Office documents
 

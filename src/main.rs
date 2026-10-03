@@ -1,6 +1,7 @@
 mod api;
 mod assets;
 mod auth;
+mod avatar;
 mod config;
 mod crypto;
 mod error;
@@ -49,6 +50,7 @@ async fn main() -> Result<()> {
         )
         .init();
 
+    avatar::install_crypto();
     let config = Config::from_env()?;
     let db_path = config.data_dir.join("emscreen.db");
     let db = open_database(&format!("sqlite://{}", db_path.display())).await?;

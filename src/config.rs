@@ -13,6 +13,8 @@ pub struct Config {
     pub sync_max_per_folder: usize,
     /// LibreOffice binary used to preview Office attachments, if there is one.
     pub soffice: Option<PathBuf>,
+    /// Look up sender pictures at Gravatar and through BIMI.
+    pub avatars: bool,
 }
 
 impl Config {
@@ -39,6 +41,7 @@ impl Config {
             open_registration,
             sync_max_per_folder,
             soffice: crate::mail::preview::find_soffice(),
+            avatars: std::env::var("EMSCREEN_AVATARS").as_deref() != Ok("off"),
         })
     }
 }

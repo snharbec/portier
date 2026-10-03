@@ -161,6 +161,58 @@ pub async fn contacts(
     ))
 }
 
+#[derive(Deserialize)]
+pub struct AvatarQuery {
+    address: String,
+}
+
+/// Picture of a sender (Gravatar or BIMI logo), or 404 so the page shows initials instead.
+/// Only for addresses the user actually has mail from, so this cannot be used to look up others.
+pub async fn avatar(
+    State(state): State<AppState>,
+    user: CurrentUser,
+    Query(q): Query<AvatarQuery>,
+) -> Result<(HeaderMap, Vec<u8>), (HeaderMap, ApiError)> {
+    // "Not found" may be cached by the browser for a while too.
+    let missing = || {
+        let mut headers = HeaderMap::new();
+        headers.insert(CACHE_CONTROL, HeaderValue::from_static("private, max-age=3600"));
+        (headers, ApiError::not_found())
+    };
+    if !state.config.avatars {
+        return Err(missing());
+    }
+    let address = q.address.trim().to_lowercase();
+    let known: bool = sqlx::query_scalar(
+        "SELECT EXISTS (SELECT 1 FROM senders WHERE user_id = ?1 AND address = ?2)
+             OR EXISTS (SELECT 1 FROM accounts WHERE user_id = ?1 AND lower(address) = ?2)",
+    )
+    .bind(user.id)
+    .bind(&address)
+    .fetch_one(&state.db)
+    .await
+    .map_err(|e| (HeaderMap::new(), e.into()))?;
+    if !known {
+        return Err(missing());
+    }
+    let found = crate::avatar::lookup(&state, &address)
+        .await
+        .map_err(|e| (HeaderMap::new(), e.into()))?;
+    let Some(picture) = found else {
+        return Err(missing());
+    };
+    let mut headers = HeaderMap::new();
+    headers.insert(CONTENT_TYPE, header(&picture.mime));
+    headers.insert(X_CONTENT_TYPE_OPTIONS, HeaderValue::from_static("nosniff"));
+    headers.insert(CACHE_CONTROL, HeaderValue::from_static("private, max-age=86400"));
+    // An SVG logo is a document; opened directly it must not be able to do anything on this origin.
+    headers.insert(
+        axum::http::header::CONTENT_SECURITY_POLICY,
+        HeaderValue::from_static("default-src 'none'; style-src 'unsafe-inline'; sandbox"),
+    );
+    Ok((headers, picture.data))
+}
+
 // ---- Thread lists ---------------------------------------------------------------------------
 
 #[derive(Deserialize)]

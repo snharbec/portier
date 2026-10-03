@@ -78,7 +78,11 @@
 				</label>
 			{/if}
 			<a href="/thread/{thread.id}" class:unread={thread.unread > 0} onclick={opened}>
-				<Avatar name={who} seed={thread.sender_address ?? thread.from_addr} />
+				<Avatar
+					name={who}
+					seed={thread.sender_address ?? thread.from_addr}
+					address={thread.is_outgoing && thread.sender_address ? thread.sender_address : thread.from_addr}
+				/>
 				<span class="main">
 					<span class="top">
 						<span class="who" title={thread.is_outgoing && thread.sender_address ? thread.sender_address : thread.from_addr}

@@ -50,7 +50,7 @@
 
 <article class="sheet" class:collapsed={!expanded}>
 	<button class="head" onclick={() => (expanded = !expanded)} aria-expanded={expanded}>
-		<Avatar name={who} seed={message.from.address} size={38} />
+		<Avatar name={who} seed={message.from.address} size={38} address={message.from.address} />
 		<span class="meta">
 			<span class="who" title={message.from.address}>{who}</span>
 			{#if expanded}

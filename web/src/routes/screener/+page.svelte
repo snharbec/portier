@@ -70,7 +70,7 @@
 		{@const who = displayName(entry.display_name, entry.address)}
 		<section class="sheet card">
 			<div class="who">
-				<Avatar name={who} seed={entry.address} size={52} />
+				<Avatar name={who} seed={entry.address} size={52} address={entry.address} />
 				<div>
 					<h2>{who}</h2>
 					<span class="muted">{entry.address}</span>

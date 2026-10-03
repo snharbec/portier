@@ -27,6 +27,8 @@ pub struct Inner {
     pub sync: Mutex<HashMap<i64, SyncHandle>>,
     /// Limits Office-to-PDF conversions to one at a time.
     pub convert: Semaphore,
+    /// Limits how many sender pictures are looked up on the internet at once.
+    pub avatar_slots: Semaphore,
 }
 
 #[derive(Clone)]
@@ -48,6 +50,7 @@ impl AppState {
             events,
             sync: Mutex::new(HashMap::new()),
             convert: Semaphore::new(1),
+            avatar_slots: Semaphore::new(6),
         }))
     }
 
