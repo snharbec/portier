@@ -52,7 +52,11 @@
 			<dt>received:01.09.2026..01.10.2026</dt>
 			<dd>between two days, both included; also 2026/09/01..2026/10/01, one day alone, or an open end</dd>
 		</dl>
-		<p>Combine them: <code>hallo from:carsten received:last month</code>. Put values with spaces in quotes: <code>from:"Carsten Meier"</code>.</p>
+		<p>
+			Different filters narrow the search together: <code>hallo from:carsten received:last month</code>. The same
+			filter given twice means either: <code>from:anna from:carsten</code> finds mail from Anna or Carsten. Put values
+			with spaces in quotes: <code>from:"Carsten Meier"</code>.
+		</p>
 	</div>
 {/if}
 

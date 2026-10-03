@@ -89,7 +89,9 @@ The field in the top bar searches subject, sender, recipients and text, and take
 | `received:last month` | also `today`, `yesterday`, `this week`, `last week`, `this month`, `this year`, `last year` |
 | `received:01.09.2026..01.10.2026` | from first to last day, both included; also `2026/09/01..2026/10/01`, a single day, or an open end |
 
-Filters combine with each other and with words: `hallo from:carsten received:last month`.
+Different filters and words narrow the search together: `hallo from:carsten received:last month`.
+The same filter given several times means either: `from:anna from:carsten` finds mail from Anna or
+from Carsten.
 Values with spaces go in quotes: `from:"Carsten Meier"`. Days are counted in the server's time zone.
 
 ## Keyboard

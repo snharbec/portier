@@ -579,6 +579,36 @@ mod tests {
             ("received:last month", "received:last%20month", 0),
             ("from:100% (wildcards are literal)", "from:100%25", 0),
             ("from:_nna (wildcards are literal)", "from:_nna", 0),
+            // The same filter twice is "either"; different filters are "both".
+            ("from:bob from:anna", "from:bob%20from:anna", 1),
+            ("from:bob from:carl", "from:bob%20from:carl", 0),
+            ("subject:nothing title:secr", "subject:nothing%20title:secr", 1),
+            ("from:anna subject:nothing", "from:anna%20subject:nothing", 0),
+            (
+                "from:bob from:anna subject:nothing subject:secr",
+                "from:bob%20from:anna%20subject:nothing%20subject:secr",
+                1,
+            ),
+            (
+                "received:2026/01/01.. received:..1971/01/01",
+                "received:2026/01/01..%20received:..1971/01/01",
+                1,
+            ),
+            (
+                "received:2026/01/01.. received:2025/01/01",
+                "received:2026/01/01..%20received:2025/01/01",
+                0,
+            ),
+            (
+                "attachment:true attachment:false",
+                "attachment:true%20attachment:false",
+                1,
+            ),
+            (
+                "confidential from:bob from:anna",
+                "confidential%20from:bob%20from:anna",
+                1,
+            ),
         ];
         for (typed, encoded, expected) in cases {
             let path = format!("/api/search?q={encoded}");

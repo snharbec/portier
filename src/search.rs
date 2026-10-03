@@ -1,5 +1,8 @@
 //! The search box language: free text plus `from:`, `to:`, `subject:` (or `title:`),
 //! `attachment:` and `received:` filters.
+//!
+//! Different filters narrow the search together (AND). The same filter given several times
+//! widens it (OR): `from:anna from:carsten` finds mail from either.
 
 use chrono::{Datelike, Days, Months, NaiveDate};
 
@@ -10,9 +13,13 @@ pub struct SearchQuery {
     pub from: Vec<String>,
     pub to: Vec<String>,
     pub subject: Vec<String>,
+    /// `None` when not asked for, or when both `true` and `false` were given (which is every mail).
     pub attachment: Option<bool>,
-    /// First and last day, both included. Either end may be open.
-    pub received: Option<(Option<NaiveDate>, Option<NaiveDate>)>,
+    /// Periods as first and last day, both included. Either end may be open.
+    pub received: Vec<(Option<NaiveDate>, Option<NaiveDate>)>,
+    /// A filter was given that ended up restricting nothing (`attachment:true attachment:false`).
+    /// The query then asks for every mail rather than for nothing.
+    pub unrestricted: bool,
 }
 
 impl SearchQuery {
@@ -132,6 +139,7 @@ fn period(value: &str, today: NaiveDate) -> Result<(Option<NaiveDate>, Option<Na
 /// Parses the search box. `today` is the user's current date, for words like "last month".
 pub fn parse(input: &str, today: NaiveDate) -> Result<SearchQuery, String> {
     let mut query = SearchQuery::default();
+    let (mut with_attachment, mut without_attachment) = (false, false);
     let mut tokens = tokens(input).into_iter().peekable();
     while let Some(token) = tokens.next() {
         let Some((key, value)) = token.split_once(':') else {
@@ -143,17 +151,15 @@ pub fn parse(input: &str, today: NaiveDate) -> Result<SearchQuery, String> {
             "from" if !value.is_empty() => query.from.push(value),
             "to" if !value.is_empty() => query.to.push(value),
             "subject" | "title" if !value.is_empty() => query.subject.push(value),
-            "attachment" | "attachments" => {
-                query.attachment = Some(match value.to_lowercase().as_str() {
-                    "true" | "yes" | "1" | "" => true,
-                    "false" | "no" | "0" => false,
-                    _ => {
-                        return Err(format!(
-                            "\"attachment:{value}\" must be attachment:true or attachment:false."
-                        ));
-                    }
-                });
-            }
+            "attachment" | "attachments" => match value.to_lowercase().as_str() {
+                "true" | "yes" | "1" | "" => with_attachment = true,
+                "false" | "no" | "0" => without_attachment = true,
+                _ => {
+                    return Err(format!(
+                        "\"attachment:{value}\" must be attachment:true or attachment:false."
+                    ));
+                }
+            },
             "received" => {
                 // `received:last month` without quotes: the period's second word is the next token.
                 let two_words = matches!(value.to_lowercase().as_str(), "last" | "this")
@@ -163,12 +169,18 @@ pub fn parse(input: &str, today: NaiveDate) -> Result<SearchQuery, String> {
                 if two_words {
                     value = format!("{value} {}", tokens.next().expect("peeked"));
                 }
-                query.received = Some(period(&value, today)?);
+                query.received.push(period(&value, today)?);
             }
             // Not a filter (a URL, a time like 10:30, an unknown key): search for it as written.
             _ => query.text.push(token),
         }
     }
+    query.attachment = match (with_attachment, without_attachment) {
+        (true, false) => Some(true),
+        (false, true) => Some(false),
+        _ => None,
+    };
+    query.unrestricted = with_attachment && without_attachment;
     Ok(query)
 }
 
@@ -185,7 +197,7 @@ mod tests {
         parse(input, day(TODAY.0, TODAY.1, TODAY.2)).unwrap()
     }
     fn received(input: &str) -> (Option<NaiveDate>, Option<NaiveDate>) {
-        q(input).received.unwrap()
+        q(input).received[0]
     }
 
     #[test]
@@ -256,10 +268,7 @@ mod tests {
         let query = q("received:last month hallo");
         assert_eq!(query.text, ["hallo"]);
         // January: last month is in the previous year.
-        let january = parse("received:last month", day(2026, 1, 15))
-            .unwrap()
-            .received
-            .unwrap();
+        let january = parse("received:last month", day(2026, 1, 15)).unwrap().received[0];
         assert_eq!(january, (Some(day(2025, 12, 1)), Some(day(2025, 12, 31))));
     }
 
@@ -288,6 +297,29 @@ mod tests {
             let error = parse(bad, day(2026, 10, 3)).unwrap_err();
             assert!(error.contains("last month"), "{bad}: {error}");
         }
+    }
+
+    #[test]
+    fn a_repeated_filter_collects_alternatives() {
+        let query = q("from:anna from:carsten subject:rechnung title:angebot hallo");
+        assert_eq!(query.from, ["anna", "carsten"]);
+        assert_eq!(query.subject, ["rechnung", "angebot"]);
+        assert_eq!(query.text, ["hallo"]);
+        assert_eq!(q("to:a to:b").to, ["a", "b"]);
+        let periods = q("received:last month received:2026/01/05").received;
+        assert_eq!(
+            periods,
+            [
+                (Some(day(2026, 9, 1)), Some(day(2026, 9, 30))),
+                (Some(day(2026, 1, 5)), Some(day(2026, 1, 5)))
+            ]
+        );
+        // With and without attachments together is every mail: no restriction.
+        assert_eq!(q("attachment:true attachment:false").attachment, None);
+        assert!(!q("attachment:true attachment:false").is_empty());
+        assert_eq!(q("attachment:true attachment:yes").attachment, Some(true));
+        // Still counts as a search, not as an empty field.
+        assert!(!q("received:today").is_empty());
     }
 
     #[test]

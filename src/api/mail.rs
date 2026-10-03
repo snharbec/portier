@@ -664,41 +664,52 @@ pub async fn search(
         .push(" AND m.user_id = ")
         .push_bind(user.id);
     }
-    for sender in &query.from {
-        sql.push(" AND (m.from_name LIKE ")
-            .push_bind(contains(sender))
-            .push(" ESCAPE '\\' OR m.from_addr LIKE ")
-            .push_bind(contains(sender))
-            .push(" ESCAPE '\\')");
-    }
-    for recipient in &query.to {
-        sql.push(" AND (m.to_addrs LIKE ")
-            .push_bind(contains(recipient))
-            .push(" ESCAPE '\\' OR m.cc_addrs LIKE ")
-            .push_bind(contains(recipient))
-            .push(" ESCAPE '\\')");
-    }
-    for subject in &query.subject {
-        sql.push(" AND m.subject LIKE ")
-            .push_bind(contains(subject))
-            .push(" ESCAPE '\\'");
+    // Values of one filter are alternatives (OR); the filters themselves all have to hold (AND).
+    let text_filters: [(&[String], &[&str]); 3] = [
+        (&query.from, &["m.from_name", "m.from_addr"]),
+        (&query.to, &["m.to_addrs", "m.cc_addrs"]),
+        (&query.subject, &["m.subject"]),
+    ];
+    for (values, columns) in text_filters {
+        if values.is_empty() {
+            continue;
+        }
+        sql.push(" AND (");
+        let mut first = true;
+        for value in values {
+            for column in columns {
+                sql.push(if first { "" } else { " OR " });
+                first = false;
+                sql.push(*column)
+                    .push(" LIKE ")
+                    .push_bind(contains(value))
+                    .push(" ESCAPE '\\'");
+            }
+        }
+        sql.push(")");
     }
     if let Some(wanted) = query.attachment {
         sql.push(" AND m.has_attachments = ").push_bind(wanted);
     }
-    if let Some((first, last)) = query.received {
+    if !query.received.is_empty() {
         // Midnight in the server's zone; a day that starts twice or not at all (clock change) still gets one.
         let midnight = |day: chrono::NaiveDate| {
             day.and_hms_opt(0, 0, 0)
                 .and_then(|t| t.and_local_timezone(chrono::Local).earliest())
                 .map(|t| t.timestamp())
         };
-        if let Some(from) = first.and_then(midnight) {
-            sql.push(" AND m.date >= ").push_bind(from);
+        sql.push(" AND (");
+        for (index, (first, last)) in query.received.iter().enumerate() {
+            sql.push(if index == 0 { "(1 = 1" } else { " OR (1 = 1" });
+            if let Some(from) = first.and_then(midnight) {
+                sql.push(" AND m.date >= ").push_bind(from);
+            }
+            if let Some(until) = last.and_then(|day| day.succ_opt()).and_then(midnight) {
+                sql.push(" AND m.date < ").push_bind(until);
+            }
+            sql.push(")");
         }
-        if let Some(until) = last.and_then(|day| day.succ_opt()).and_then(midnight) {
-            sql.push(" AND m.date < ").push_bind(until);
-        }
+        sql.push(")");
     }
     sql.push(" ORDER BY m.date DESC, m.id DESC LIMIT 200");
     Ok(Json(sql.build_query_as().fetch_all(&state.db).await?))
