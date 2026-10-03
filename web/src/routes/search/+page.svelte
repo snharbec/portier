@@ -74,7 +74,7 @@
 				</label>
 				<a href={resultPath(index)}>
 					<span class="top">
-						<strong>{displayName(hit.from_name, hit.from_addr)}</strong>
+						<strong title={hit.from_addr}>{displayName(hit.from_name, hit.from_addr)}</strong>
 						<time class="muted">{shortDate(hit.date)}</time>
 					</span>
 					<span>{hit.subject || '(no subject)'}</span>

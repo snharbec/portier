@@ -2,6 +2,7 @@
 	import { goto } from '$app/navigation';
 	import type { FileEntry, Message } from '#lib/api.ts';
 	import { app, startDraft } from '#lib/app.svelte.ts';
+	import { copyText } from '#lib/clipboard.ts';
 	import { displayName, fileSize, fullDate, shortDate } from '#lib/format.ts';
 	import { untrack } from 'svelte';
 	import Avatar from './Avatar.svelte';
@@ -51,7 +52,7 @@
 	<button class="head" onclick={() => (expanded = !expanded)} aria-expanded={expanded}>
 		<Avatar name={who} seed={message.from.address} size={38} />
 		<span class="meta">
-			<span class="who">{who}</span>
+			<span class="who" title={message.from.address}>{who}</span>
 			{#if expanded}
 				<span class="to">to {recipients || 'undisclosed recipients'}</span>
 			{:else}
@@ -63,6 +64,12 @@
 
 	{#if expanded}
 		<div class="body">
+			{#if message.from.address}
+				<p class="address">
+					<span>From {message.from.address}</span>
+					<button class="btn small quiet" onclick={() => copyText(message.from.address)}>Copy address</button>
+				</p>
+			{/if}
 			{#if showSubject}
 				<h2><a href="/thread/{message.thread_id}">{message.subject || '(no subject)'}</a></h2>
 			{/if}
@@ -149,6 +156,19 @@
 	}
 	.body {
 		padding: 0 1rem 1rem;
+	}
+	.address {
+		display: flex;
+		align-items: center;
+		flex-wrap: wrap;
+		gap: 0.25rem 0.5rem;
+		margin: -0.35rem 0 0.75rem;
+		font-size: 0.875rem;
+		color: var(--ink-soft);
+	}
+	.address span {
+		overflow-wrap: anywhere;
+		user-select: all;
 	}
 	h2 {
 		margin-bottom: 0.75rem;

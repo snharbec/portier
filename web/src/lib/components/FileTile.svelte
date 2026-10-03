@@ -54,7 +54,7 @@
 		{/if}
 	</span>
 	<span class="name">{file.filename}</span>
-	<span class="from">{caption ?? `${displayName(file.from_name, file.from_addr)}, ${shortDate(file.date)}`}</span>
+	<span class="from" title={caption ? undefined : file.from_addr}>{caption ?? `${displayName(file.from_name, file.from_addr)}, ${shortDate(file.date)}`}</span>
 </button>
 
 <style>

@@ -50,7 +50,9 @@
 				<Avatar name={who} seed={thread.sender_address ?? thread.from_addr} />
 				<span class="main">
 					<span class="top">
-						<span class="who">{who}</span>
+						<span class="who" title={thread.is_outgoing && thread.sender_address ? thread.sender_address : thread.from_addr}
+							>{who}</span
+						>
 						{#if thread.count > 1}<span class="count">{thread.count}</span>{/if}
 						<time>{shortDate(thread.date)}</time>
 					</span>

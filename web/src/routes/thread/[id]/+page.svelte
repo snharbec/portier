@@ -140,7 +140,7 @@
 		<h1>{thread.subject || '(no subject)'}</h1>
 		{#if thread.sender}
 			<p class="sender">
-				{displayName(thread.sender.display_name, thread.sender.address)}
+				<span title={thread.sender.address}>{displayName(thread.sender.display_name, thread.sender.address)}</span>
 				{#if thread.sender.category}
 					<span class="tag {thread.sender.category}">{categoryNames[thread.sender.category]}</span>
 				{:else}
