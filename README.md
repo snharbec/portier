@@ -7,6 +7,10 @@ Screener until you put them in one of three places:
 - **Nice to know**: newsletters and updates, kept out of the way of the Inbox
 - **Junk**: hidden, and moved to the Junk folder of the mail account
 
+**Automatic archive** (Settings, off by default) archives read conversations of the Inbox once
+their newest mail is older than a number of weeks you choose. Unseen, Important and delayed
+conversations and the other lists are left alone. It is checked hourly.
+
 **Trash** lists what you deleted: the newest 500 mails of the account's Trash folder. Mail in the
 Trash is left out of the other lists and of search. Moving it to the folder INBOX brings it back.
 

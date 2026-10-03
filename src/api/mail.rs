@@ -308,6 +308,39 @@ pub async fn threads(
     ))
 }
 
+/// Conversations in the Inbox's "Seen" area whose newest mail is older than `cutoff` (unix
+/// seconds): let in by the Screener, nothing unread, not Important, not delayed, and with mail
+/// still in the inbox to archive. A conversation that returned from a delay counts from its return.
+pub(crate) async fn seen_inbox_older_than(
+    state: &AppState,
+    user_id: i64,
+    cutoff: i64,
+    limit: i64,
+) -> ApiResult<Vec<i64>> {
+    let sql = format!(
+        "SELECT t.id FROM threads t
+         LEFT JOIN senders s ON s.id = t.sender_id
+         JOIN messages lm ON lm.id = (
+             SELECT id FROM messages WHERE thread_id = t.id ORDER BY date DESC, id DESC LIMIT 1)
+         WHERE t.user_id = ?1
+           AND (t.sender_id IS NULL OR s.category = 'important')
+           AND {RECEIVED} AND NOT {FLAGGED} AND NOT {DELAYED}
+           AND NOT EXISTS (SELECT 1 FROM messages um JOIN folders uf ON uf.id = um.folder_id
+                           WHERE um.thread_id = t.id AND um.seen = 0 AND um.is_outgoing = 0
+                             AND uf.role NOT IN ('archive', 'trash'))
+           AND EXISTS (SELECT 1 FROM messages am JOIN folders af ON af.id = am.folder_id
+                       WHERE am.thread_id = t.id AND af.role IN ('inbox', 'junk') AND am.uid IS NOT NULL)
+           AND MAX(lm.date, COALESCE(t.returned_at, 0)) < ?2
+         ORDER BY lm.date LIMIT ?3"
+    );
+    Ok(sqlx::query_scalar(sqlx::AssertSqlSafe(sql))
+        .bind(user_id)
+        .bind(cutoff)
+        .bind(limit)
+        .fetch_all(&state.db)
+        .await?)
+}
+
 pub async fn counts(State(state): State<AppState>, user: CurrentUser) -> ApiResult<Json<Value>> {
     let screener: i64 = sqlx::query_scalar(
         "SELECT COUNT(*) FROM senders s WHERE s.user_id = ? AND s.category IS NULL

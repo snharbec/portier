@@ -15,6 +15,8 @@ export const app = $state({
 	searches: [] as SavedSearch[],
 	/** What sliding a mail left or right does; set in Settings. */
 	swipe: { left: ['trash'], right: ['read'] } as { left: SwipeAction[]; right: SwipeAction[] },
+	/** Weeks after which read Inbox conversations are archived automatically; 0 is off. */
+	autoArchiveWeeks: 0,
 	/** Short message about the last action, shown for a few seconds. */
 	notice: '',
 	tick: 0
@@ -55,8 +57,13 @@ export async function refreshCounts() {
 }
 
 export async function refreshSettings() {
-	const settings = await api.get<{ swipe_left: SwipeAction[]; swipe_right: SwipeAction[] }>('/settings');
+	const settings = await api.get<{
+		swipe_left: SwipeAction[];
+		swipe_right: SwipeAction[];
+		auto_archive_weeks: number;
+	}>('/settings');
 	app.swipe = { left: settings.swipe_left, right: settings.swipe_right };
+	app.autoArchiveWeeks = settings.auto_archive_weeks;
 }
 
 let noticeTimer: ReturnType<typeof setTimeout> | undefined;

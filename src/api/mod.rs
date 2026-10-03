@@ -1,5 +1,6 @@
 mod accounts;
 mod auth;
+pub(crate) mod autoarchive;
 mod bulk;
 mod compose;
 mod files;
@@ -24,6 +25,8 @@ pub fn router() -> Router<AppState> {
         .route("/logout", post(auth::logout))
         .route("/password", post(auth::change_password))
         .route("/settings", get(auth::settings).put(auth::update_settings))
+        .route("/settings/auto-archive", put(autoarchive::update))
+        .route("/settings/auto-archive/preview", get(autoarchive::preview))
         .route("/users", get(auth::list_users).post(auth::create_user))
         .route("/users/{id}", delete(auth::delete_user))
         .route("/accounts", get(accounts::list).post(accounts::create))
@@ -594,15 +597,24 @@ mod tests {
         let bob_cookie = bob_cookie.unwrap();
 
         let (_, _, defaults) = call(&app, "GET", "/api/settings", Some(&cookie), None).await;
-        assert_eq!(defaults, json!({ "swipe_left": ["trash"], "swipe_right": ["read"] }));
+        assert_eq!(
+            defaults,
+            json!({ "swipe_left": ["trash"], "swipe_right": ["read"], "auto_archive_weeks": 0 })
+        );
 
         // Order and repeats in the request do not matter; an empty list turns a direction off.
         let change = json!({ "swipe_left": ["trash", "move", "trash"], "swipe_right": [] });
         let (status, _, saved) = call(&app, "PUT", "/api/settings", Some(&cookie), Some(change)).await;
         assert_eq!(status, StatusCode::OK);
-        assert_eq!(saved, json!({ "swipe_left": ["move", "trash"], "swipe_right": [] }));
+        assert_eq!(
+            (&saved["swipe_left"], &saved["swipe_right"]),
+            (&json!(["move", "trash"]), &json!([]))
+        );
         let (_, _, again) = call(&app, "GET", "/api/settings", Some(&cookie), None).await;
-        assert_eq!(again, saved);
+        assert_eq!(
+            (&again["swipe_left"], &again["swipe_right"]),
+            (&saved["swipe_left"], &saved["swipe_right"])
+        );
 
         let bad = json!({ "swipe_left": ["explode"], "swipe_right": [] });
         let (status, _, _) = call(&app, "PUT", "/api/settings", Some(&cookie), Some(bad)).await;
@@ -1070,6 +1082,141 @@ mod tests {
             .body(Body::empty())
             .unwrap();
         assert_eq!(app_off.oneshot(request).await.unwrap().status(), StatusCode::NOT_FOUND);
+    }
+
+    #[tokio::test]
+    async fn automatic_archive_takes_only_old_seen_inbox_conversations() {
+        let (app, state) = test_app().await;
+        let admin = json!({ "email": "admin@example.org", "password": "password1" });
+        let (_, cookie, _) = call(&app, "POST", "/api/register", None, Some(admin)).await;
+        let cookie = cookie.unwrap();
+        // Account 1 with inbox folder 1, sender anna, and one very old unread mail.
+        let (_, _, anna) = seed_mail(&state, 1).await;
+        let db = &state.db;
+        // Server moves stay pending: the mail server accepts the connection and says nothing.
+        let silent = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        sqlx::query(
+            "UPDATE accounts SET archive_folder = 'Archive', imap_host = '127.0.0.1', imap_port = ?, password_enc = ?",
+        )
+        .bind(silent.local_addr().unwrap().port())
+        .bind(crypto::encrypt(&state.config.master_key, "secret").unwrap())
+        .execute(db)
+        .await
+        .unwrap();
+        sqlx::query("UPDATE senders SET category = 'important' WHERE id = ?")
+            .bind(anna)
+            .execute(db)
+            .await
+            .unwrap();
+        let news: i64 = sqlx::query_scalar(
+            "INSERT INTO senders (user_id, address, category) VALUES (1, 'news@example.com', 'feed') RETURNING id",
+        )
+        .fetch_one(db)
+        .await
+        .unwrap();
+
+        let week = 7 * 24 * 3600;
+        let now = crate::state::now();
+        // (subject, sender, age in weeks, seen, flagged, delayed)
+        let mails = [
+            ("old seen", anna, 10, true, false, false),
+            ("old unseen", anna, 10, false, false, false),
+            ("old important", anna, 10, true, true, false),
+            ("old delayed", anna, 10, true, false, true),
+            ("recent seen", anna, 1, true, false, false),
+            ("old newsletter", news, 10, true, false, false),
+        ];
+        for (uid, (subject, sender, weeks, seen, flagged, delayed)) in mails.iter().enumerate() {
+            let thread: i64 = sqlx::query_scalar(
+                "INSERT INTO threads (user_id, subject, sender_id, snoozed_until) VALUES (1, ?, ?, ?) RETURNING id",
+            )
+            .bind(subject)
+            .bind(sender)
+            .bind(delayed.then_some(now + week))
+            .fetch_one(db)
+            .await
+            .unwrap();
+            sqlx::query(
+                "INSERT INTO messages (user_id, account_id, folder_id, uid, thread_id, sender_id, message_id,
+                     from_addr, subject, date, seen, flagged)
+                 VALUES (1, 1, 1, ?, ?, ?, ?, 'x@example.com', ?, ?, ?, ?)",
+            )
+            .bind(100 + uid as i64)
+            .bind(thread)
+            .bind(sender)
+            .bind(format!("auto{uid}@example.com"))
+            .bind(subject)
+            .bind(now - weeks * week)
+            .bind(seen)
+            .bind(flagged)
+            .execute(db)
+            .await
+            .unwrap();
+        }
+        let archived = async || -> Vec<String> {
+            sqlx::query_scalar(
+                "SELECT m.subject FROM messages m JOIN folders f ON f.id = m.folder_id
+                 WHERE f.role = 'archive' ORDER BY m.subject",
+            )
+            .fetch_all(db)
+            .await
+            .unwrap()
+        };
+        let preview = async |weeks: i64| {
+            let path = format!("/api/settings/auto-archive/preview?weeks={weeks}");
+            call(&app, "GET", &path, Some(&cookie), None).await
+        };
+
+        // Off by default, and the preview says what a setting would do without doing it.
+        let (_, _, settings) = call(&app, "GET", "/api/settings", Some(&cookie), None).await;
+        assert_eq!(settings["auto_archive_weeks"], 0);
+        assert_eq!(preview(4).await.2["count"], 1);
+        assert_eq!(preview(20).await.2["count"], 0, "nothing seen is that old");
+        assert_eq!(preview(0).await.2["count"], 0);
+        assert_eq!(preview(-1).await.0, StatusCode::BAD_REQUEST);
+        assert_eq!(preview(600).await.0, StatusCode::BAD_REQUEST);
+        assert!(archived().await.is_empty());
+
+        // Turning it on archives what is due at once: only the old, seen Inbox conversation.
+        let (status, _, body) = call(
+            &app,
+            "PUT",
+            "/api/settings/auto-archive",
+            Some(&cookie),
+            Some(json!({ "weeks": 4 })),
+        )
+        .await;
+        assert_eq!((status, body["archived"].as_i64()), (StatusCode::OK, Some(1)));
+        assert_eq!(archived().await, ["old seen"]);
+        let (_, _, settings) = call(&app, "GET", "/api/settings", Some(&cookie), None).await;
+        assert_eq!(settings["auto_archive_weeks"], 4);
+        assert_eq!(preview(4).await.2["count"], 0, "nothing left to do");
+
+        // A later run takes what has become due since: the recent mail, once it is old enough.
+        sqlx::query("UPDATE messages SET date = ? WHERE subject = 'recent seen'")
+            .bind(now - 5 * week)
+            .execute(db)
+            .await
+            .unwrap();
+        assert_eq!(crate::api::autoarchive::run_for_user(&state, 1, 4).await.unwrap(), 1);
+        assert_eq!(archived().await, ["old seen", "recent seen"]);
+
+        // Off again: nothing more is archived, whatever its age.
+        let (status, _, body) = call(
+            &app,
+            "PUT",
+            "/api/settings/auto-archive",
+            Some(&cookie),
+            Some(json!({ "weeks": 0 })),
+        )
+        .await;
+        assert_eq!((status, body["archived"].as_i64()), (StatusCode::OK, Some(0)));
+        sqlx::query("UPDATE messages SET seen = 1 WHERE subject = 'old unseen'")
+            .execute(db)
+            .await
+            .unwrap();
+        assert_eq!(crate::api::autoarchive::run_for_user(&state, 1, 0).await.unwrap(), 0);
+        assert_eq!(archived().await, ["old seen", "recent seen"]);
     }
 
     #[tokio::test]

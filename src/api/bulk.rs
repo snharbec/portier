@@ -45,16 +45,15 @@ struct Target {
     is_outgoing: bool,
 }
 
-pub async fn apply(
-    State(state): State<AppState>,
-    user: CurrentUser,
-    Json(input): Json<BulkInput>,
-) -> ApiResult<Json<Value>> {
-    if input.thread_ids.len() + input.message_ids.len() > MAX_SELECTION {
-        return Err(ApiError::bad_request("too many mails selected at once"));
-    }
+/// The messages a selection of conversations and single mails stands for, limited to the user's own.
+async fn targets_for(
+    state: &AppState,
+    user_id: i64,
+    thread_ids: &[i64],
+    message_ids: &[i64],
+) -> ApiResult<Vec<Target>> {
     // A message can exist twice (a copy in Sent and one in the inbox); selecting one means both.
-    let targets: Vec<Target> = sqlx::query_as(
+    Ok(sqlx::query_as(
         "SELECT m.id, m.thread_id, m.account_id, f.id AS folder_id, f.name AS folder_name, f.role AS folder_role, m.uid,
                 m.is_outgoing
          FROM messages m JOIN folders f ON f.id = m.folder_id
@@ -64,11 +63,29 @@ pub async fn apply(
                     SELECT account_id, message_id FROM messages
                     WHERE user_id = ?1 AND id IN (SELECT value FROM json_each(?3))))",
     )
-    .bind(user.id)
-    .bind(serde_json::to_string(&input.thread_ids).map_err(anyhow::Error::from)?)
-    .bind(serde_json::to_string(&input.message_ids).map_err(anyhow::Error::from)?)
+    .bind(user_id)
+    .bind(serde_json::to_string(thread_ids).map_err(anyhow::Error::from)?)
+    .bind(serde_json::to_string(message_ids).map_err(anyhow::Error::from)?)
     .fetch_all(&state.db)
-    .await?;
+    .await?)
+}
+
+/// Archives whole conversations, as the Archive action does. Used by the automatic archive.
+pub(crate) async fn archive_conversations(state: &AppState, user_id: i64, thread_ids: &[i64]) -> ApiResult<usize> {
+    let targets = targets_for(state, user_id, thread_ids, &[]).await?;
+    set_delay(state, user_id, &targets, None).await?;
+    file_away(state, user_id, targets, Shelf::Archive).await
+}
+
+pub async fn apply(
+    State(state): State<AppState>,
+    user: CurrentUser,
+    Json(input): Json<BulkInput>,
+) -> ApiResult<Json<Value>> {
+    if input.thread_ids.len() + input.message_ids.len() > MAX_SELECTION {
+        return Err(ApiError::bad_request("too many mails selected at once"));
+    }
+    let targets = targets_for(&state, user.id, &input.thread_ids, &input.message_ids).await?;
     if targets.is_empty() {
         return Ok(Json(json!({ "affected": 0 })));
     }

@@ -208,13 +208,16 @@ fn swipe_list(stored: &str) -> Vec<&str> {
 }
 
 pub async fn settings(State(state): State<AppState>, user: CurrentUser) -> ApiResult<Json<Value>> {
-    let (left, right): (String, String) = sqlx::query_as("SELECT swipe_left, swipe_right FROM users WHERE id = ?")
-        .bind(user.id)
-        .fetch_one(&state.db)
-        .await?;
-    Ok(Json(
-        json!({ "swipe_left": swipe_list(&left), "swipe_right": swipe_list(&right) }),
-    ))
+    let (left, right, weeks): (String, String, i64) =
+        sqlx::query_as("SELECT swipe_left, swipe_right, auto_archive_weeks FROM users WHERE id = ?")
+            .bind(user.id)
+            .fetch_one(&state.db)
+            .await?;
+    Ok(Json(json!({
+        "swipe_left": swipe_list(&left),
+        "swipe_right": swipe_list(&right),
+        "auto_archive_weeks": weeks,
+    })))
 }
 
 #[derive(Deserialize)]

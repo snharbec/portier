@@ -63,6 +63,7 @@ async fn main() -> Result<()> {
     let state = AppState::new(db, config);
     mail::sync::start_all(&state).await?;
     tokio::spawn(mail::delay::run(state.clone()));
+    tokio::spawn(api::autoarchive::run(state.clone()));
 
     let listener = tokio::net::TcpListener::bind(bind).await?;
     tracing::info!("emscreen listening on http://{bind}");

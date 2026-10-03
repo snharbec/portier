@@ -141,6 +141,56 @@
 		}
 	}
 
+	// ---- Automatic archive ----
+	let archiveOn = $state(app.autoArchiveWeeks > 0);
+	let archiveWeeks = $state(app.autoArchiveWeeks || 8);
+	let archiveDue = $state<number | null>(null);
+	let archiveError = $state('');
+	let archiveNote = $state('');
+	let archiveBusy = $state(false);
+	const archiveChanged = $derived((archiveOn ? archiveWeeks : 0) !== app.autoArchiveWeeks);
+
+	// The saved setting arrives a moment after the page; show it once it is there.
+	$effect(() => {
+		const saved = app.autoArchiveWeeks;
+		archiveOn = saved > 0;
+		if (saved > 0) archiveWeeks = saved;
+	});
+
+	// Before saving, say how much a new setting would archive right away.
+	$effect(() => {
+		const weeks = archiveOn ? archiveWeeks : 0;
+		archiveDue = null;
+		if (!archiveChanged || weeks < 1 || weeks > 520) return;
+		const timer = setTimeout(() => {
+			api.get<{ count: number }>(`/settings/auto-archive/preview?weeks=${weeks}`)
+				.then((result) => (archiveDue = result.count))
+				.catch(() => {});
+		}, 300);
+		return () => clearTimeout(timer);
+	});
+
+	async function saveArchive(event: SubmitEvent) {
+		event.preventDefault();
+		archiveBusy = true;
+		archiveError = archiveNote = '';
+		try {
+			const result = await api.put<{ auto_archive_weeks: number; archived: number }>('/settings/auto-archive', {
+				weeks: archiveOn ? archiveWeeks : 0
+			});
+			app.autoArchiveWeeks = result.auto_archive_weeks;
+			app.tick += 1;
+			archiveNote =
+				result.auto_archive_weeks === 0
+					? 'Automatic archive is off'
+					: `Saved. ${result.archived === 0 ? 'Nothing was due' : `Archived ${result.archived} ${result.archived === 1 ? 'mail' : 'mails'}`} just now.`;
+		} catch (e) {
+			archiveError = (e as Error).message;
+		} finally {
+			archiveBusy = false;
+		}
+	}
+
 	// ---- Users (admin) ----
 	let users = $state<User[]>([]);
 	let newUser = $state({ email: '', password: '' });
@@ -383,6 +433,39 @@
 	{#if swipeError}<p class="error" role="alert">{swipeError}</p>{/if}
 </section>
 
+<section>
+	<h2>Automatic archive</h2>
+	<p class="muted">
+		Read conversations in the Inbox, the Seen area, move to the Archive folder by themselves once their newest mail
+		is older than the age below. Unseen, Important and delayed conversations stay, and so do the other lists.
+		Checked once an hour.
+	</p>
+	<form class="auto" onsubmit={saveArchive}>
+		<label class="check">
+			<input type="checkbox" bind:checked={archiveOn} />
+			Archive seen mail automatically
+		</label>
+		<label class="age">
+			when older than
+			<input type="number" min="1" max="520" bind:value={archiveWeeks} disabled={!archiveOn} aria-label="Age in weeks" />
+			weeks
+		</label>
+		<button class="btn" disabled={archiveBusy || !archiveChanged}>Save</button>
+	</form>
+	{#if archiveChanged && archiveOn && archiveDue !== null}
+		<p class="due" role="status">
+			{#if archiveDue === 0}
+				Nothing in Seen is that old at the moment.
+			{:else}
+				Saving archives {archiveDue}
+				{archiveDue === 1 ? 'conversation' : 'conversations'} right away.
+			{/if}
+		</p>
+	{/if}
+	{#if archiveError}<p class="error" role="alert">{archiveError}</p>{/if}
+	{#if archiveNote}<p class="ok" role="status">{archiveNote}</p>{/if}
+</section>
+
 {#if app.user?.is_admin}
 	<section>
 		<h2>Users</h2>
@@ -493,6 +576,31 @@
 		.grid.server {
 			grid-template-columns: 1fr 1fr;
 		}
+	}
+	.auto {
+		display: flex;
+		flex-wrap: wrap;
+		align-items: center;
+		gap: 0.6rem 1rem;
+		margin-top: 0.75rem;
+	}
+	.auto .check {
+		margin: 0;
+	}
+	.age {
+		display: inline-flex;
+		align-items: center;
+		gap: 0.5rem;
+	}
+	.age input {
+		width: 5rem;
+		padding: 0.4rem 0.6rem;
+		border: 1px solid var(--line);
+		border-radius: 9px;
+		background: var(--surface);
+	}
+	.due {
+		font-weight: 600;
 	}
 	.swipe-grid {
 		display: grid;
