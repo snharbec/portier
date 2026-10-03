@@ -4,6 +4,7 @@ mod bulk;
 mod compose;
 mod files;
 mod mail;
+mod saved;
 
 use axum::{
     Router,
@@ -48,6 +49,8 @@ pub fn router() -> Router<AppState> {
         .route("/messages/{id}/attachments/{idx}/view", get(files::view))
         .route("/messages/{id}/attachments/{idx}/pdf", get(files::pdf))
         .route("/search", get(mail::search))
+        .route("/searches", get(saved::list).post(saved::create))
+        .route("/searches/{id}", put(saved::update).delete(saved::delete))
         .route("/events", get(mail::events))
         .route("/drafts", get(compose::list).post(compose::create))
         .route(
@@ -724,6 +727,89 @@ mod tests {
             ("inbox".to_string(), Some(1)),
             "mail is back in the inbox with its UID"
         );
+    }
+
+    #[tokio::test]
+    async fn saved_searches_are_per_user_and_count_unread_matches() {
+        let (app, state) = test_app().await;
+        let admin = json!({ "email": "admin@example.org", "password": "password1" });
+        let (_, cookie, _) = call(&app, "POST", "/api/register", None, Some(admin)).await;
+        let cookie = cookie.unwrap();
+        let bob = json!({ "email": "bob@example.org", "password": "password2" });
+        call(&app, "POST", "/api/users", Some(&cookie), Some(bob.clone())).await;
+        let (_, bob_cookie, _) = call(&app, "POST", "/api/login", None, Some(bob)).await;
+        let bob_cookie = bob_cookie.unwrap();
+        // One unread mail from anna@example.com with subject "Secret".
+        let (thread, _, _) = seed_mail(&state, 1).await;
+
+        let save = async |who: &str, name: &str, query: &str| {
+            let body = json!({ "name": name, "query": query });
+            call(&app, "POST", "/api/searches", Some(who), Some(body)).await
+        };
+        let (status, _, saved) = save(&cookie, "  From Anna ", "from:anna").await;
+        assert_eq!(status, StatusCode::OK);
+        let id = saved["id"].as_i64().unwrap();
+        save(&cookie, "Nobody", "from:nobody").await;
+        save(&cookie, "words", "confidential subject:secret").await;
+
+        // Refused: no name, nothing to search for, a date that cannot be read.
+        for (name, query) in [("", "from:anna"), ("Empty", "   "), ("Bad date", "received:sometime")] {
+            let (status, _, _) = save(&cookie, name, query).await;
+            assert_eq!(status, StatusCode::BAD_REQUEST, "{name:?} {query:?}");
+        }
+
+        // Listed by name, each with the unread mails it finds.
+        let (_, _, list) = call(&app, "GET", "/api/searches", Some(&cookie), None).await;
+        let summary: Vec<(&str, &str, i64)> = list
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|s| {
+                (
+                    s["name"].as_str().unwrap(),
+                    s["query"].as_str().unwrap(),
+                    s["unread"].as_i64().unwrap(),
+                )
+            })
+            .collect();
+        assert_eq!(
+            summary,
+            [
+                ("From Anna", "from:anna", 1),
+                ("Nobody", "from:nobody", 0),
+                ("words", "confidential subject:secret", 1)
+            ]
+        );
+
+        // Reading the mail brings the counts down.
+        let read = json!({ "action": "read", "thread_ids": [thread] });
+        call(&app, "POST", "/api/mail/actions", Some(&cookie), Some(read)).await;
+        let (_, _, list) = call(&app, "GET", "/api/searches", Some(&cookie), None).await;
+        assert!(list.as_array().unwrap().iter().all(|s| s["unread"] == 0));
+
+        // Another user sees none of them and cannot change them.
+        let (_, _, bobs) = call(&app, "GET", "/api/searches", Some(&bob_cookie), None).await;
+        assert_eq!(bobs, json!([]));
+        let path = format!("/api/searches/{id}");
+        let rename = json!({ "name": "Mine now", "query": "from:anna" });
+        let (status, _, _) = call(&app, "PUT", &path, Some(&bob_cookie), Some(rename.clone())).await;
+        assert_eq!(status, StatusCode::NOT_FOUND);
+        let (status, _, _) = call(&app, "DELETE", &path, Some(&bob_cookie), None).await;
+        assert_eq!(status, StatusCode::NOT_FOUND);
+
+        // The owner can rename and remove.
+        let (status, _, _) = call(&app, "PUT", &path, Some(&cookie), Some(rename)).await;
+        assert_eq!(status, StatusCode::OK);
+        let (status, _, _) = call(&app, "DELETE", &path, Some(&cookie), None).await;
+        assert_eq!(status, StatusCode::OK);
+        let (_, _, list) = call(&app, "GET", "/api/searches", Some(&cookie), None).await;
+        let names: Vec<&str> = list
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|s| s["name"].as_str().unwrap())
+            .collect();
+        assert_eq!(names, ["Nobody", "words"]);
     }
 
     #[tokio::test]

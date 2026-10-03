@@ -7,12 +7,54 @@
 	import Swipeable from '#lib/components/Swipeable.svelte';
 	import { app } from '#lib/app.svelte.ts';
 	import { swipeLabel, swipeMail, type SwipeAction } from '#lib/swipe.ts';
+	import { api } from '#lib/api.ts';
+	import { notify, refreshCounts } from '#lib/app.svelte.ts';
 	import { resultPath, runSearch, search } from '#lib/search.svelte.ts';
 	import { createSelection } from '#lib/selection.svelte.ts';
 
 	const selection = createSelection();
 	const picked = $derived(selection.visible(search.hits ?? [], (h) => h.id));
 	let picker: FolderPicker;
+
+	// ---- Saving the search under a name ----
+	const saved = $derived(app.searches.find((s) => s.query === search.answered.trim()));
+	let naming = $state(false);
+	let name = $state('');
+	let saveError = $state('');
+
+	function startNaming() {
+		name = saved?.name ?? '';
+		saveError = '';
+		naming = true;
+	}
+
+	async function save(event: SubmitEvent) {
+		event.preventDefault();
+		const body = { name, query: search.answered };
+		// Decided before saving: afterwards the search counts as saved either way.
+		const existing = saved;
+		try {
+			if (existing) await api.put(`/searches/${existing.id}`, body);
+			else await api.post('/searches', body);
+			await refreshCounts();
+			naming = false;
+			notify(existing ? `Renamed to ${name.trim()}` : `Saved as ${name.trim()}`);
+		} catch (e) {
+			saveError = (e as Error).message;
+		}
+	}
+
+	async function remove() {
+		if (!saved) return;
+		const removed = saved.name;
+		try {
+			await api.delete(`/searches/${saved.id}`);
+			await refreshCounts();
+			notify(`Removed ${removed} from the side bar`);
+		} catch (e) {
+			notify((e as Error).message);
+		}
+	}
 
 	async function slide(action: SwipeAction, hit: SearchHit) {
 		await swipeMail(
@@ -28,6 +70,23 @@
 	<h1>Search</h1>
 	{#if search.hits}
 		<p>{search.hits.length === 200 ? 'The newest 200 mails' : search.hits.length === 1 ? '1 mail' : `${search.hits.length} mails`} for “{search.answered}”</p>
+		{#if naming}
+			<form class="tools" onsubmit={save}>
+				<!-- svelte-ignore a11y_autofocus -->
+				<input class="input name" bind:value={name} placeholder="Name for the side bar" aria-label="Name of the saved search" maxlength="40" required autofocus />
+				<button class="btn small primary">{saved ? 'Rename' : 'Save search'}</button>
+				<button type="button" class="btn small quiet" onclick={() => (naming = false)}>Cancel</button>
+			</form>
+			{#if saveError}<p class="error" role="alert">{saveError}</p>{/if}
+		{:else if saved}
+			<p class="tools">
+				<span class="muted">Saved as “{saved.name}”</span>
+				<button class="btn small" onclick={startNaming}>Rename</button>
+				<button class="btn small quiet danger" onclick={remove}>Remove from side bar</button>
+			</p>
+		{:else}
+			<p class="tools"><button class="btn small" onclick={startNaming}>Save this search</button></p>
+		{/if}
 	{/if}
 </div>
 
@@ -116,6 +175,13 @@
 />
 
 <style>
+	.tools {
+		align-items: center;
+	}
+	.input.name {
+		width: min(18rem, 100%);
+		padding-block: 0.3rem;
+	}
 	.help {
 		padding: 1.1rem 1.3rem;
 		max-width: 46rem;

@@ -94,6 +94,10 @@ The same filter given several times means either: `from:anna from:carsten` finds
 from Carsten.
 Values with spaces go in quotes: `from:"Carsten Meier"`. Days are counted in the server's time zone.
 
+A search can be saved under a name with "Save this search" on the results page. Saved searches
+are listed in the side bar with the number of unread mails they currently find, and are run afresh
+each time, so `received:last month` keeps meaning the previous month.
+
 ## Keyboard
 
 `c` write, `/` search field, `m` menu, `1` Important, `2` Screener, `3` Nice to know, `4` Attachments.

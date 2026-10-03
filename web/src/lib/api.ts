@@ -147,6 +147,14 @@ export interface SearchHit {
 	excerpt: string;
 }
 
+export interface SavedSearch {
+	id: number;
+	name: string;
+	query: string;
+	/** Unread received mails the search finds right now. */
+	unread: number;
+}
+
 export interface Counts {
 	screener: number;
 	unread_important: number;

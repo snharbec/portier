@@ -634,35 +634,46 @@ fn contains(needle: &str) -> String {
     format!("%{escaped}%")
 }
 
-/// Search with the filters of `crate::search`. Dates are days in the server's time zone.
-pub async fn search(
-    State(state): State<AppState>,
-    user: CurrentUser,
-    Query(q): Query<ContactQuery>,
-) -> ApiResult<Json<Vec<SearchRow>>> {
-    let today = chrono::Local::now().date_naive();
-    let query = crate::search::parse(&q.q, today).map_err(ApiError::bad_request)?;
-    if query.is_empty() {
-        return Ok(Json(vec![]));
-    }
-    let fts = query.fts();
-    let columns = "m.id, m.thread_id, m.account_id, m.subject, m.from_name, m.from_addr, m.date, m.seen";
+/// What a search is asked to return.
+pub(crate) enum SearchOutput {
+    /// The matching mails with an excerpt.
+    Rows,
+    /// How many matching received mails are unread.
+    UnreadCount,
+}
 
-    let mut sql = sqlx::QueryBuilder::<sqlx::Sqlite>::new("SELECT ");
-    sql.push(columns);
-    if fts.is_empty() {
+/// Builds the SQL of a search up to and including its WHERE clause. Dates are days in the
+/// server's time zone.
+pub(crate) fn search_sql(
+    query: &crate::search::SearchQuery,
+    user_id: i64,
+    output: SearchOutput,
+) -> sqlx::QueryBuilder<sqlx::Sqlite> {
+    let fts = query.fts();
+    let select = match (&output, fts.is_empty()) {
+        (SearchOutput::UnreadCount, _) => "COUNT(*)",
         // Filters only: no text to match, so the stored preview stands in for the excerpt.
-        sql.push(", m.snippet AS excerpt FROM messages m WHERE m.user_id = ")
-            .push_bind(user.id);
+        (SearchOutput::Rows, true) => {
+            "m.id, m.thread_id, m.account_id, m.subject, m.from_name, m.from_addr, m.date, m.seen,
+             m.snippet AS excerpt"
+        }
+        (SearchOutput::Rows, false) => {
+            "m.id, m.thread_id, m.account_id, m.subject, m.from_name, m.from_addr, m.date, m.seen,
+             snippet(messages_fts, 4, '', '', '…', 16) AS excerpt"
+        }
+    };
+    let mut sql = sqlx::QueryBuilder::<sqlx::Sqlite>::new("SELECT ");
+    sql.push(select);
+    if fts.is_empty() {
+        sql.push(" FROM messages m WHERE m.user_id = ").push_bind(user_id);
     } else {
-        sql.push(
-            ", snippet(messages_fts, 4, '', '', '…', 16) AS excerpt
-             FROM messages_fts JOIN messages m ON m.id = messages_fts.rowid
-             WHERE messages_fts MATCH ",
-        )
-        .push_bind(fts)
-        .push(" AND m.user_id = ")
-        .push_bind(user.id);
+        sql.push(" FROM messages_fts JOIN messages m ON m.id = messages_fts.rowid WHERE messages_fts MATCH ")
+            .push_bind(fts)
+            .push(" AND m.user_id = ")
+            .push_bind(user_id);
+    }
+    if matches!(output, SearchOutput::UnreadCount) {
+        sql.push(" AND m.seen = 0 AND m.is_outgoing = 0");
     }
     // Values of one filter are alternatives (OR); the filters themselves all have to hold (AND).
     let text_filters: [(&[String], &[&str]); 3] = [
@@ -711,6 +722,21 @@ pub async fn search(
         }
         sql.push(")");
     }
+    sql
+}
+
+/// Search with the filters of `crate::search`.
+pub async fn search(
+    State(state): State<AppState>,
+    user: CurrentUser,
+    Query(q): Query<ContactQuery>,
+) -> ApiResult<Json<Vec<SearchRow>>> {
+    let today = chrono::Local::now().date_naive();
+    let query = crate::search::parse(&q.q, today).map_err(ApiError::bad_request)?;
+    if query.is_empty() {
+        return Ok(Json(vec![]));
+    }
+    let mut sql = search_sql(&query, user.id, SearchOutput::Rows);
     sql.push(" ORDER BY m.date DESC, m.id DESC LIMIT 200");
     Ok(Json(sql.build_query_as().fetch_all(&state.db).await?))
 }

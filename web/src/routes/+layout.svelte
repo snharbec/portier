@@ -3,6 +3,7 @@
 	import { goto } from '$app/navigation';
 	import { page } from '$app/state';
 	import { app, loadSession, logout, startDraft } from '#lib/app.svelte.ts';
+	import type { SavedSearch } from '#lib/api.ts';
 	import Login from '#lib/components/Login.svelte';
 	import { runSearch, search } from '#lib/search.svelte.ts';
 	import { onMount } from 'svelte';
@@ -43,6 +44,18 @@
 		clearTimeout(searchTimer);
 		runSearch();
 		if (page.url.pathname !== '/search') goto('/search', { reset: false });
+	}
+
+	const searchIcon = 'M10.5 4a6.5 6.5 0 1 0 0 13 6.5 6.5 0 0 0 0-13zM15.5 15.5 20 20';
+
+	/** A saved search is the one being shown when its query is what the results answer. */
+	const showing = (saved: SavedSearch) => page.url.pathname === '/search' && search.answered.trim() === saved.query;
+
+	function openSaved(saved: SavedSearch) {
+		menuOpen = false;
+		search.query = saved.query;
+		clearTimeout(searchTimer);
+		runSearch();
 	}
 
 	async function write() {
@@ -116,6 +129,15 @@
 							</a>
 						</li>
 					{/each}
+					{#each app.searches as saved (saved.id)}
+						<li>
+							<a href="/search" aria-current={showing(saved) ? 'page' : undefined} onclick={() => openSaved(saved)}>
+								<span class="label">{saved.name}</span>
+								<span class="hint">Saved search</span>
+								{#if saved.unread}<span class="badge">{saved.unread}</span>{/if}
+							</a>
+						</li>
+					{/each}
 					<li class="foot">
 						<span class="muted">{app.user.email}</span>
 						<button class="btn small" onclick={logout}>Sign out</button>
@@ -136,6 +158,25 @@
 				</li>
 			{/each}
 		</ul>
+		{#if app.searches.length}
+			<h2>Saved searches</h2>
+			<ul>
+				{#each app.searches as saved (saved.id)}
+					<li>
+						<a
+							href="/search"
+							title={saved.query}
+							aria-current={showing(saved) ? 'page' : undefined}
+							onclick={() => openSaved(saved)}
+						>
+							<svg viewBox="0 0 24 24" aria-hidden="true"><path d={searchIcon} /></svg>
+							<span class="name">{saved.name}</span>
+							{#if saved.unread}<span class="badge">{saved.unread}</span>{/if}
+						</a>
+					</li>
+				{/each}
+			</ul>
+		{/if}
 	</nav>
 	<main class="column">
 		{@render children()}
@@ -290,11 +331,24 @@
 			top: 5.5rem;
 			left: 1.25rem;
 			width: 10.5rem;
+			max-height: calc(100vh - 6.5rem);
+			overflow-y: auto;
 		}
 		main {
 			width: auto;
 			margin: 0 1.25rem 0 13rem;
 		}
+	}
+	.rail h2 {
+		margin: 1.1rem 0 0.3rem 0.75rem;
+		font: 600 0.8rem var(--body);
+		letter-spacing: 0;
+		color: var(--ink-soft);
+	}
+	.rail .name {
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
 	}
 	.rail ul {
 		list-style: none;

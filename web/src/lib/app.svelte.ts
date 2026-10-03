@@ -1,5 +1,5 @@
 import type { SwipeAction } from './swipe.ts';
-import { api, setUnauthorizedHandler, type Account, type Category, type Counts, type User } from './api.ts';
+import { api, setUnauthorizedHandler, type Account, type Category, type Counts, type SavedSearch, type User } from './api.ts';
 
 /** Session-wide state. `tick` changes whenever the server reports new or changed mail. */
 export const app = $state({
@@ -11,6 +11,8 @@ export const app = $state({
 	officePreviews: false,
 	counts: { screener: 0, unread_important: 0, drafts: 0 } as Counts,
 	accounts: [] as Account[],
+	/** Searches saved under a name, shown in the side bar. */
+	searches: [] as SavedSearch[],
 	/** What sliding a mail left or right does; set in Settings. */
 	swipe: { left: ['trash'], right: ['read'] } as { left: SwipeAction[]; right: SwipeAction[] },
 	/** Short message about the last action, shown for a few seconds. */
@@ -45,8 +47,11 @@ export async function loadSession() {
 	}
 }
 
+/** Everything the side bar counts: unread mail, waiting senders, drafts and saved searches. */
 export async function refreshCounts() {
-	app.counts = await api.get<Counts>('/counts');
+	const [counts, searches] = await Promise.all([api.get<Counts>('/counts'), api.get<SavedSearch[]>('/searches')]);
+	app.counts = counts;
+	app.searches = searches;
 }
 
 export async function refreshSettings() {
