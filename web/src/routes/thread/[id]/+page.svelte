@@ -76,6 +76,23 @@
 		if (last) goto(await startDraft(kind, last.id));
 	}
 
+	/** Only received mail has a read state. */
+	const hasReceived = $derived(thread?.messages.some((m) => !m.is_outgoing) ?? false);
+
+	/** Marks the conversation unread again and returns to the list, where it shows as new. */
+	async function markUnread() {
+		if (!thread || !hasReceived || trashing) return;
+		try {
+			await mailAction('unread', { threadIds: [thread.id] }, 'Marked as unread: 1 conversation');
+		} catch (e) {
+			notify((e as Error).message);
+			return;
+		}
+		if (hit >= 0) goto('/search');
+		else if (history.length > 1) history.back();
+		else goto('/');
+	}
+
 	let trashing = $state(false);
 
 	const trash = () => putAway('trash', 'Moved to Trash: 1 conversation');
@@ -120,6 +137,7 @@
 		else if (event.key === 'a') draft('reply_all');
 		else if (event.key === 'f') draft('forward');
 		else if (event.key === 'd') trash();
+		else if (event.key === 'u') markUnread();
 		else if (event.key === 'e' && thread?.can_archive) archive();
 		else if (hit >= 0 && event.key === 'p') toResult(hit - 1);
 		else if (hit >= 0 && event.key === 'n') toResult(hit + 1);
@@ -162,6 +180,9 @@
 			{/if}
 		{/if}
 		<p class="tools">
+			{#if hasReceived}
+				<button class="btn small" onclick={markUnread} disabled={trashing}>Mark as unread</button>
+			{/if}
 			{#if thread.can_archive}
 				<button class="btn small" onclick={archive} disabled={trashing}>Archive</button>
 			{/if}
@@ -177,7 +198,7 @@
 	{/each}
 
 	<p class="muted keys">
-		Keys: <kbd>r</kbd> reply, <kbd>a</kbd> reply all, <kbd>f</kbd> forward, {#if thread.can_archive}<kbd>e</kbd> archive, {/if}<kbd>d</kbd> move to Trash{#if hit >= 0}, <kbd>p</kbd> previous result,
+		Keys: <kbd>r</kbd> reply, <kbd>a</kbd> reply all, <kbd>f</kbd> forward, {#if hasReceived}<kbd>u</kbd> mark as unread, {/if}{#if thread.can_archive}<kbd>e</kbd> archive, {/if}<kbd>d</kbd> move to Trash{#if hit >= 0}, <kbd>p</kbd> previous result,
 			<kbd>n</kbd> next result{/if}
 	</p>
 {/if}
