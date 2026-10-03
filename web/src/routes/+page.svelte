@@ -39,7 +39,7 @@
 {:else if app.accounts.length === 0}
 	<div class="empty sheet">
 		<strong>Connect a mail account to begin</strong>
-		emscreen reads mail from accounts you already have.
+		Email Screen reads mail from accounts you already have.
 		<p><a class="btn primary" href="/settings">Add a mail account</a></p>
 	</div>
 {:else if threads.length === 0}

@@ -170,7 +170,7 @@
 <section>
 	<h2>Mail accounts</h2>
 	{#if app.accounts.length === 0 && !form}
-		<p class="muted">No account connected yet. emscreen works with any mailbox that offers IMAP and SMTP.</p>
+		<p class="muted">No account connected yet. Email Screen works with any mailbox that offers IMAP and SMTP.</p>
 	{/if}
 	{#if app.accounts.length}
 		<ul class="sheet list">
@@ -188,7 +188,7 @@
 						{/if}
 					</div>
 					{#if removing === account.id}
-						<span class="small">Remove this account and its mail from emscreen? The mailbox itself is untouched.</span>
+						<span class="small">Remove this account and its mail from Email Screen? The mailbox itself is untouched.</span>
 						<button class="btn small danger" onclick={() => removeAccount(account.id)}>Remove account</button>
 						<button class="btn small" onclick={() => (removing = null)}>Keep</button>
 					{:else}

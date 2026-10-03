@@ -24,7 +24,7 @@
 		{ href: '/junk', icon: 'M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18zM5.7 5.7l12.6 12.6', label: 'Junk', hint: 'Senders you turned away', key: '', badge: 0 },
 		{ href: '/settings', icon: 'M4 7h9M17 7h3M4 17h3M11 17h9M15 4.5v5M9 14.5v5', label: 'Settings', hint: 'Mail accounts, senders, users', key: '', badge: 0 }
 	]);
-	const here = $derived(places.find((p) => p.href === page.url.pathname)?.label ?? 'emscreen');
+	const here = $derived(places.find((p) => p.href === page.url.pathname)?.label ?? 'Email Screen');
 
 	async function write() {
 		goto(await startDraft('new'));
@@ -50,7 +50,7 @@
 <svelte:window {onkeydown} />
 
 {#if loadError}
-	<p class="empty"><strong>emscreen is not responding</strong>{loadError}</p>
+	<p class="empty"><strong>Email Screen is not responding</strong>{loadError}</p>
 {:else if !app.ready}
 	<p class="empty" aria-busy="true">Loading</p>
 {:else if !app.user}
