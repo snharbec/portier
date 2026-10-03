@@ -31,7 +31,7 @@
 
 <div class="page-head">
 	<h1>Attachments</h1>
-	<p>Files you received in the last four weeks from senders in Important and Nice to know.</p>
+	<p>Files you received in the last four weeks from senders in Inbox and Nice to know.</p>
 </div>
 
 {#if error}

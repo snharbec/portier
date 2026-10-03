@@ -36,7 +36,7 @@
 {/if}
 
 <div class="page-head">
-	<h1>Important</h1>
+	<h1>Inbox</h1>
 	{#if threads?.length}
 		<p class="tools"><a class="btn small" href="/read/important">Read all on one page</a></p>
 	{/if}
@@ -54,8 +54,8 @@
 	</div>
 {:else if threads.length === 0}
 	<div class="empty sheet">
-		<strong>Nothing important yet</strong>
-		Mail shows up here once you mark its sender as important in the Screener.
+		<strong>Your inbox is empty</strong>
+		Mail shows up here once you choose Inbox for its sender in the Screener.
 	</div>
 {:else}
 	<SelectAll

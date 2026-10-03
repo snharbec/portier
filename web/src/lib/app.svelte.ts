@@ -98,7 +98,7 @@ export async function classify(senderId: number, category: Category | null) {
 }
 
 export const categoryNames: Record<Category, string> = {
-	important: 'Important',
+	important: 'Inbox',
 	feed: 'Nice to know',
 	junk: 'Junk'
 };

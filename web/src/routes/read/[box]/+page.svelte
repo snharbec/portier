@@ -11,7 +11,7 @@
 
 	const PAGE = 20;
 	const lists: Record<string, { title: string; back: string }> = {
-		important: { title: 'Important', back: '/' },
+		important: { title: 'Inbox', back: '/' },
 		feed: { title: 'Nice to know', back: '/feed' },
 		junk: { title: 'Junk', back: '/junk' },
 		sent: { title: 'Sent', back: '/sent' },
@@ -74,7 +74,7 @@
 </script>
 
 {#if !list}
-	<p class="empty"><strong>There is no such list</strong><a class="btn" href="/">Go to Important</a></p>
+	<p class="empty"><strong>There is no such list</strong><a class="btn" href="/">Go to Inbox</a></p>
 {:else}
 	<div class="page-head">
 		<h1>{list.title}, all on one page</h1>

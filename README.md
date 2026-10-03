@@ -3,24 +3,24 @@
 Self-hosted web mail client that screens mail by sender. Each new sender waits in the
 Screener until you put them in one of three places:
 
-- **Important**: conversations you want to see, split into new and previously seen
-- **Nice to know**: newsletters and updates, kept out of the way of Important
+- **Inbox**: conversations you want to see, split into new and previously seen
+- **Nice to know**: newsletters and updates, kept out of the way of the Inbox
 - **Junk**: hidden, and moved to the Junk folder of the mail account
 
 **Archive** files a mail away from any list or from the mail itself: it moves to the account's
 Archive folder on the server and shows in the Archive list.
 
-Important, Nice to know, Junk and Sent are conversation lists. Each has "Read all on one page",
+Inbox, Nice to know, Junk and Sent are conversation lists. Each has "Read all on one page",
 which shows the list's mails opened one below the other.
 
 Images that a mail loads from the internet are hidden until you choose "Show images". That choice
 is remembered for the sender; "Hide images and ask again" undoes it.
 
 The **Attachments** page shows every file received in the last four weeks from senders in
-Important and Nice to know, as a picture of its content: images as thumbnails, PDFs by their
+Inbox and Nice to know, as a picture of its content: images as thumbnails, PDFs by their
 first page. Selecting one opens the document on the page, with a link to its email.
 
-In Important, Nice to know, Junk, Sent and the search results you can tick several mails and
+In Inbox, Nice to know, Junk, Sent and the search results you can tick several mails and
 mark them read or unread, move them to the account's Trash folder, or move them to any folder
 on the mail server. Email Screen mirrors only Inbox, Sent, Junk and Archive, so mail moved elsewhere
 leaves its views and stays on the server.
@@ -100,7 +100,7 @@ each time, so `received:last month` keeps meaning the previous month.
 
 ## Keyboard
 
-`c` write, `/` search field, `m` menu, `1` Important, `2` Screener, `3` Nice to know, `4` Attachments.
+`c` write, `/` search field, `m` menu, `1` Inbox, `2` Screener, `3` Nice to know, `4` Attachments.
 In the attachment viewer the left and right arrows step through files and Escape closes it.
-In the Screener `i` / `k` / `j` decide the first sender. In a conversation `r` reply, `e` archive, `d` move to Trash,
+In the Screener `i` / `k` / `j` decide the first sender. In a conversation `r` reply, `u` mark as unread, `e` archive, `d` move to Trash,
 `a` reply all, `f` forward.
