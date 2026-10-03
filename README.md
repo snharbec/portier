@@ -71,5 +71,5 @@ you do not want that.
 
 `c` write, `/` search, `m` menu, `1` Important, `2` Screener, `3` Nice to know, `4` Attachments.
 In the attachment viewer the left and right arrows step through files and Escape closes it.
-In the Screener `i` / `k` / `j` decide the first sender. In a conversation `r` reply,
+In the Screener `i` / `k` / `j` decide the first sender. In a conversation `r` reply, `d` move to Trash,
 `a` reply all, `f` forward.

@@ -2,11 +2,12 @@
 	import { goto } from '$app/navigation';
 	import { page } from '$app/state';
 	import { api, type Category, type Thread } from '#lib/api.ts';
-	import { app, categoryNames, classify, refreshCounts, startDraft } from '#lib/app.svelte.ts';
+	import { app, categoryNames, classify, notify, refreshCounts, startDraft } from '#lib/app.svelte.ts';
 	import ClassifyButtons from '#lib/components/ClassifyButtons.svelte';
 	import MessageCard from '#lib/components/MessageCard.svelte';
 	import { displayName } from '#lib/format.ts';
-	import { resultPath, search } from '#lib/search.svelte.ts';
+	import { rememberSearch, resultPath, search } from '#lib/search.svelte.ts';
+	import { mailAction } from '#lib/swipe.ts';
 
 	let thread = $state<Thread | null>(null);
 	let error = $state('');
@@ -16,19 +17,27 @@
 
 	const id = $derived(page.params.id);
 
+	/** Set once this conversation was moved to Trash: it no longer exists, so stop reloading it. */
+	let leaving = false;
+
 	async function load(firstLoad: boolean) {
+		const requested = id;
+		// An answer for a conversation the reader has already left must not touch the page.
+		const current = () => requested === id && !leaving;
 		try {
-			const loaded = await api.get<Thread>(`/threads/${id}`);
+			const loaded = await api.get<Thread>(`/threads/${requested}`);
+			if (!current()) return;
 			if (firstLoad) {
 				unreadAtOpen = new Set(loaded.messages.filter((m) => !m.seen).map((m) => m.id));
 				if (unreadAtOpen.size) {
-					await api.post(`/threads/${id}/seen`);
+					await api.post(`/threads/${requested}/seen`);
 					refreshCounts().catch(() => {});
 				}
 			}
 			thread = loaded;
+			error = '';
 		} catch (e) {
-			error = (e as Error).message;
+			if (current()) error = (e as Error).message;
 		}
 	}
 
@@ -37,7 +46,8 @@
 		app.tick;
 		const first = loadedId !== id;
 		loadedId = id ?? '';
-		load(first);
+		if (first) leaving = false;
+		if (!leaving) load(first);
 	});
 
 	async function pick(category: Category) {
@@ -65,6 +75,37 @@
 		if (last) goto(await startDraft(kind, last.id));
 	}
 
+	let trashing = $state(false);
+
+	/** Moves the whole conversation to Trash, then goes on to where the reader came from. */
+	async function trash() {
+		if (!thread || trashing) return;
+		trashing = true;
+		const threadId = thread.id;
+		const position = hit;
+		try {
+			leaving = true;
+			await mailAction('trash', { threadIds: [threadId] }, 'Moved to Trash: 1 conversation');
+		} catch (e) {
+			leaving = false;
+			notify((e as Error).message);
+			trashing = false;
+			return;
+		}
+		trashing = false;
+		if (position >= 0 && search.hits) {
+			// Opened from a search: drop its results and show the one that takes its place.
+			search.hits = search.hits.filter((h) => h.thread_id !== threadId);
+			rememberSearch();
+			const next = Math.min(position, search.hits.length - 1);
+			goto(next >= 0 ? resultPath(next) : '/search', { replaceState: true });
+		} else if (history.length > 1) {
+			history.back();
+		} else {
+			goto('/');
+		}
+	}
+
 	function onkeydown(event: KeyboardEvent) {
 		const typing = (event.target as HTMLElement).closest('input, textarea, [contenteditable="true"]');
 		if (typing || event.metaKey || event.ctrlKey || event.altKey) return;
@@ -72,6 +113,7 @@
 		if (event.key === 'r') draft('reply');
 		else if (event.key === 'a') draft('reply_all');
 		else if (event.key === 'f') draft('forward');
+		else if (event.key === 'd') trash();
 		else if (hit >= 0 && event.key === 'p') toResult(hit - 1);
 		else if (hit >= 0 && event.key === 'n') toResult(hit + 1);
 	}
@@ -112,6 +154,9 @@
 				<ClassifyButtons small current={thread.sender.category} onpick={pick} />
 			{/if}
 		{/if}
+		<p class="tools">
+			<button class="btn small danger" onclick={trash} disabled={trashing}>Move to Trash</button>
+		</p>
 	</div>
 
 	{#each thread.messages as message, index (message.id)}
@@ -122,7 +167,7 @@
 	{/each}
 
 	<p class="muted keys">
-		Keys: <kbd>r</kbd> reply, <kbd>a</kbd> reply all, <kbd>f</kbd> forward{#if hit >= 0}, <kbd>p</kbd> previous result,
+		Keys: <kbd>r</kbd> reply, <kbd>a</kbd> reply all, <kbd>f</kbd> forward, <kbd>d</kbd> move to Trash{#if hit >= 0}, <kbd>p</kbd> previous result,
 			<kbd>n</kbd> next result{/if}
 	</p>
 {/if}
@@ -153,6 +198,9 @@
 		flex-wrap: wrap;
 		gap: 0.6rem;
 		margin-bottom: 0.6rem;
+	}
+	.tools {
+		margin: 0.75rem 0 0;
 	}
 	.keys {
 		font-size: 0.85rem;
