@@ -20,10 +20,10 @@
 	});
 
 	const places = $derived([
-		{ group: 1, href: '/', icon: 'M4 13.5 6.5 5h11L20 13.5V19H4zM4 13.5h4.5l1 2.5h5l1-2.5H20', label: 'Inbox', hint: 'Mail from people you let in', key: '1', badge: app.counts.unread_important },
+		{ group: 1, href: '/', icon: 'M4 13.5 6.5 5h11L20 13.5V19H4zM4 13.5h4.5l1 2.5h5l1-2.5H20', label: 'Home', hint: 'Mail from people you let in', key: 'H', badge: app.counts.unread_important },
 		{ group: 1, href: '/important', icon: 'M12 3.5l2.6 5.3 5.9.9-4.3 4.1 1 5.8L12 16.9l-5.2 2.7 1-5.8L3.5 9.7l5.9-.9z', label: 'Important', hint: 'Conversations you set apart', key: 'I', badge: app.counts.unread_flagged },
-		{ group: 1, href: '/delayed', icon: 'M12 4a8 8 0 1 0 0 16 8 8 0 0 0 0-16zM12 8v4.5l3 2', label: 'Delayed', hint: 'Waiting to return to the Inbox', key: 'D', badge: 0 },
-		{ group: 1, href: '/feed', icon: 'M5 5h11v14H7a2 2 0 0 1-2-2zM16 9h3v8a2 2 0 0 1-2 2M8 9h5M8 12.5h5M8 16h3', label: 'Nice to know', hint: 'Newsletters and updates, ready to read', key: '3', badge: 0 },
+		{ group: 1, href: '/delayed', icon: 'M12 4a8 8 0 1 0 0 16 8 8 0 0 0 0-16zM12 8v4.5l3 2', label: 'Delayed', hint: 'Waiting to return to Home', key: 'D', badge: 0 },
+		{ group: 1, href: '/feed', icon: 'M5 5h11v14H7a2 2 0 0 1-2-2zM16 9h3v8a2 2 0 0 1-2 2M8 9h5M8 12.5h5M8 16h3', label: 'Nice to know', hint: 'Newsletters and updates, ready to read', key: 'N', badge: 0 },
 		{ group: 2, href: '/screener', icon: 'M4 5h16l-6 7.5V19l-4-2v-4.5z', label: 'Screener', hint: 'New senders waiting for your decision', key: '2', badge: app.counts.screener },
 		{ group: 3, href: '/files', icon: 'M20 11.5l-8.1 8.1a5 5 0 0 1-7.1-7.1l8.5-8.5a3.3 3.3 0 0 1 4.7 4.7l-8.5 8.5a1.7 1.7 0 0 1-2.4-2.4l7.8-7.8', label: 'Attachments', hint: 'Files from the last four weeks', key: '4', badge: 0 },
 		{ group: 4, href: '/archive', icon: 'M4 5h16v4H4zM5.5 9v10h13V9M10 13h4', label: 'Archive', hint: 'Mail you filed away', key: '', badge: 0 },
@@ -99,10 +99,14 @@
 	const openId = $derived(app.splitActive ? page.url.searchParams.get('open') : null);
 	let pane: HTMLElement | undefined = $state();
 
-	// Another mail starts at its top.
+	/** The mail area only takes room while a mail is open; without one the list has the page. */
+	const showPane = $derived(app.splitActive && openId !== null);
+
+	// Another mail starts at its top, and its row stays in view when the list gives up room for it.
 	$effect(() => {
-		openId;
+		if (!openId) return;
 		if (pane) pane.scrollTop = 0;
+		document.querySelector(`main a[data-row="${CSS.escape(openId)}"]`)?.scrollIntoView({ block: 'nearest' });
 	});
 
 	/**
@@ -125,7 +129,7 @@
 
 	/** Space and Backspace page through the mail: its pane in split view, otherwise the window. */
 	function pageMail(step: -1 | 1) {
-		if (app.splitActive) pane?.scrollBy({ top: step * pane.clientHeight * 0.9 });
+		if (showPane) pane?.scrollBy({ top: step * pane.clientHeight * 0.9 });
 		else window.scrollBy({ top: step * (window.innerHeight - barHeight) * 0.9 });
 	}
 
@@ -252,8 +256,9 @@
 		if (event.metaKey || event.ctrlKey || event.altKey) return;
 		const place = places.find((p) => p.key === event.key);
 		if (place) goto(place.href);
-		// Nice to know has the 3 from before and a letter like its neighbours.
-		else if (event.key === 'N') goto('/feed');
+		// Home and Nice to know keep the digits they had before their letters.
+		else if (event.key === '1') goto('/');
+		else if (event.key === '3') goto('/feed');
 		else if (event.key === '?') keyHelp?.toggle();
 		else if (event.key === 'c') write();
 		else if (event.key === '/') {
@@ -403,13 +408,15 @@
 			<button class="btn small quiet keys" onclick={() => keyHelp?.toggle()}>Keyboard shortcuts <kbd>?</kbd></button>
 		</p>
 	</nav>
-	<main class="column" class:split={app.splitActive} class:stacked={app.splitActive && stacked}
+	<main class="column" class:split={showPane} class:stacked={showPane && stacked}
 		class:dragging
 		bind:this={mainElement}
 		style="--top: {barHeight}px; --list: {size.width}px; --share: {size.share}"
 	>
 		{#if app.splitActive}
 			<div class="list">{@render children()}</div>
+		{/if}
+		{#if showPane && openId}
 			<!-- svelte-ignore a11y_no_noninteractive_tabindex, a11y_no_noninteractive_element_interactions -->
 			<div
 				class="divider"
@@ -427,15 +434,12 @@
 				ondblclick={dividerReset}
 			></div>
 			<div class="pane" bind:this={pane}>
-				{#if openId}
-					{#key openId}
-						<ThreadView id={openId} embedded />
-					{/key}
-				{:else}
-					<p class="empty"><strong>No mail opened</strong>Choose one from the list to read it here.</p>
-				{/if}
+				{#key openId}
+					<ThreadView id={openId} embedded />
+				{/key}
 			</div>
-		{:else}
+		{/if}
+		{#if !app.splitActive}
 			{@render children()}
 		{/if}
 	</main>

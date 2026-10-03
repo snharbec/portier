@@ -15,7 +15,7 @@
 				[['c'], 'Write a mail'],
 				[['/'], 'Search'],
 				[['m'], 'Open the menu'],
-				[['1'], 'Inbox'],
+				[['Shift', 'H'], 'Home (also 1)'],
 				[['Shift', 'I'], 'Important'],
 				[['Shift', 'D'], 'Delayed'],
 				[['Shift', 'N'], 'Nice to know (also 3)'],
@@ -40,12 +40,12 @@
 				[['Space'], 'Page down (also Ctrl ↓)'],
 				[['Backspace'], 'Page up (also Shift Space, Ctrl ↑)'],
 				[['r'], 'Reply'],
-				[['a'], 'Reply to all'],
+				[['Shift', 'R'], 'Reply to all'],
 				[['f'], 'Forward'],
-				[['e'], 'Archive'],
+				[['a'], 'Archive'],
 				[['d'], 'Move to Trash'],
 				[['u'], 'Mark as unseen'],
-				[['i'], 'Move to Important, or back to the Inbox'],
+				[['i'], 'Move to Important, or back to Home'],
 				[['z'], 'Delay, then 1, 2, 3 or 7 for the days'],
 				[['n'], 'Next search result'],
 				[['p'], 'Previous search result']
@@ -58,7 +58,7 @@
 		{
 			title: 'Screener',
 			keys: [
-				[['i'], 'First sender goes to the Inbox'],
+				[['i'], 'First sender goes to Home'],
 				[['k'], 'First sender is nice to know'],
 				[['j'], 'First sender is junk']
 			]

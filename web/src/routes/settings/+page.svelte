@@ -445,7 +445,7 @@
 <section id="archive">
 	<h2>Automatic archive</h2>
 	<p class="muted">
-		Seen conversations in the Inbox move to the Archive folder by themselves once their newest mail
+		Seen conversations in Home move to the Archive folder by themselves once their newest mail
 		is older than the age below. Unseen, Important and delayed conversations stay, and so do the other lists.
 		Checked once an hour.
 	</p>

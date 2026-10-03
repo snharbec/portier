@@ -4,7 +4,16 @@
 	import StarterKit from '@tiptap/starter-kit';
 	import { onMount } from 'svelte';
 
-	let { value = $bindable(''), onchange }: { value?: string; onchange?: () => void } = $props();
+	let {
+		value = $bindable(''),
+		onchange,
+		autofocus = false
+	}: {
+		value?: string;
+		onchange?: () => void;
+		/** Puts the cursor into the text as soon as the editor is there. */
+		autofocus?: boolean;
+	} = $props();
 
 	let element: HTMLDivElement;
 	let editor: Editor | undefined = $state();
@@ -15,6 +24,7 @@
 			element,
 			extensions: [StarterKit, Placeholder.configure({ placeholder: 'Write your message' })],
 			content: value,
+			autofocus: autofocus ? 'end' : false,
 			onUpdate: ({ editor }) => {
 				value = editor.isEmpty ? '' : editor.getHTML();
 				onchange?.();

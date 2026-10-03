@@ -21,7 +21,7 @@
 
 <div class="page-head">
 	<h1>Delayed</h1>
-	<p>Out of the way until the morning they return to the Inbox, unseen.</p>
+	<p>Out of the way until the morning they return to Home, unseen.</p>
 </div>
 
 {#if error}

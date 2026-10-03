@@ -281,9 +281,16 @@ textarea {
 	}
 }
 
+/* The keyboard shortcut of a button, after its label. */
+.btn .key {
+	font-weight: 400;
+	opacity: 0.6;
+}
+
 /* Keyboard shortcuts are of no use without a keyboard. */
 @media (hover: none) {
 	.keys,
+	.btn .key,
 	kbd {
 		display: none;
 	}

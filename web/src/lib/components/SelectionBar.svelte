@@ -29,7 +29,7 @@
 		restorable?: boolean;
 		/**
 		 * Which list the bar serves: 'inbox' offers Important and Delay, 'important' and 'delayed'
-		 * offer the way back, 'mixed' (the Inbox page, which also shows Important) offers both
+		 * offer the way back, 'mixed' (the Home page, which also shows Important) offers both
 		 * directions, 'other' (Junk, Sent, Archive) offers neither.
 		 */
 		list?: 'inbox' | 'important' | 'delayed' | 'mixed' | 'other';
@@ -127,20 +127,20 @@
 			</button>
 		{/if}
 		{#if list === 'important' || list === 'mixed'}
-			<button class="btn small" disabled={busy} onclick={() => run('unimportant', 'Moved to Inbox:')}>
-				Move to Inbox
+			<button class="btn small" disabled={busy} onclick={() => run('unimportant', 'Moved to Home:')}>
+				Move to Home
 			</button>
 		{:else if list === 'delayed'}
-			<button class="btn small" disabled={busy} onclick={() => run('undelay', 'Back in the Inbox:')}>
-				Back to Inbox now
+			<button class="btn small" disabled={busy} onclick={() => run('undelay', 'Back in Home:')}>
+				Back to Home now
 			</button>
 		{/if}
 		{#if list === 'inbox' || list === 'important' || list === 'mixed'}
 			<DelayMenu up disabled={busy} onpick={(days) => run('delay', `Delayed for ${days} ${days === 1 ? 'day' : 'days'}:`, { days })} />
 		{/if}
 		{#if restorable}
-			<button class="btn small" disabled={busy} onclick={() => run('untrash', 'Moved back to the Inbox:')}>
-				Move back to Inbox
+			<button class="btn small" disabled={busy} onclick={() => run('untrash', 'Moved back to Home:')}>
+				Move back to Home
 			</button>
 		{/if}
 		{#if archivable}

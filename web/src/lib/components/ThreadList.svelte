@@ -67,7 +67,7 @@
 				class="grip"
 				draggable="true"
 				ondragstart={(event) => dragged(event, thread)}
-				title="Drag to Inbox, Important or Archive in the side bar"
+				title="Drag to Home, Important or Archive in the side bar"
 				aria-hidden="true"
 			>
 				<svg viewBox="0 0 10 16"><path d="M2 2h.01M2 8h.01M2 14h.01M8 2h.01M8 8h.01M8 14h.01" /></svg>

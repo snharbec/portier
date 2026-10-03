@@ -7,7 +7,7 @@
 	import MessageCard from './MessageCard.svelte';
 	import DelayMenu from './DelayMenu.svelte';
 	import { displayName, returnTime } from '#lib/format.ts';
-	import { afterRemoving, neighbour } from '#lib/reading.ts';
+	import { afterRemoving, listPath, neighbour } from '#lib/reading.ts';
 	import { rememberSearch, resultPath, search } from '#lib/search.svelte.ts';
 	import { mailAction } from '#lib/swipe.ts';
 
@@ -110,23 +110,22 @@
 		}
 		if (embedded) closePane();
 		else if (hit >= 0) goto('/search');
-		else if (history.length > 1) history.back();
-		else goto('/');
+		else goto(listPath(), { replace: true });
 	}
 
 	let trashing = $state(false);
 
 	const trash = () => putAway('trash', 'Moved to Trash: 1 conversation');
 	const archive = () => putAway('archive', 'Archived: 1 conversation');
-	/** Important and Inbox are two lists; the key i moves the conversation to the other one. */
+	/** Important and Home are two lists; the key i moves the conversation to the other one. */
 	const toggleImportant = () =>
 		thread?.important
-			? putAway('unimportant', 'Moved to Inbox: 1 conversation')
+			? putAway('unimportant', 'Moved to Home: 1 conversation')
 			: putAway('important', 'Moved to Important: 1 conversation');
 	const delay = (days: number) =>
 		putAway('delay', `Delayed for ${days} ${days === 1 ? 'day' : 'days'}: 1 conversation`, { days });
-	const undelay = () => putAway('undelay', 'Back in the Inbox: 1 conversation');
-	const untrash = () => putAway('untrash', 'Moved back to the Inbox: 1 conversation');
+	const undelay = () => putAway('undelay', 'Back in Home: 1 conversation');
+	const untrash = () => putAway('untrash', 'Moved back to Home: 1 conversation');
 	let delayMenu: DelayMenu | undefined = $state();
 
 	type PutAway = 'trash' | 'untrash' | 'archive' | 'important' | 'unimportant' | 'delay' | 'undelay';
@@ -163,9 +162,7 @@
 			if (embedded) {
 				if (onward?.startsWith('/thread/')) openInPane(onward.slice('/thread/'.length));
 				else closePane();
-			} else if (onward) goto(onward, { replace: true });
-			else if (history.length > 1) history.back();
-			else goto('/');
+			} else goto(onward ?? listPath(), { replace: true });
 		}
 	}
 
@@ -174,7 +171,7 @@
 		if (typing || event.metaKey || event.ctrlKey || event.altKey) return;
 		if (document.querySelector('dialog[open]')) return;
 		if (event.key === 'r') draft('reply');
-		else if (event.key === 'a') draft('reply_all');
+		else if (event.key === 'R') draft('reply_all');
 		else if (event.key === 'f') draft('forward');
 		else if (event.key === 'd' && thread?.can_trash) trash();
 		else if (event.key === 'u') markUnread();
@@ -183,7 +180,7 @@
 			event.preventDefault();
 			delayMenu?.show();
 		}
-		else if (event.key === 'e' && thread?.can_archive) archive();
+		else if (event.key === 'a' && thread?.can_archive) archive();
 		// Beside a list the arrows step through the list's rows; the layout does that.
 		else if (!embedded && (event.key === 'ArrowDown' || event.key === 'ArrowUp')) {
 			event.preventDefault();
@@ -205,16 +202,16 @@
 		<nav class="results" aria-label="Search results">
 			<a class="btn small" href="/search">Back to results</a>
 			<span class="muted">Result {hit + 1} of {search.hits.length} for “{search.answered}”</span>
-			<button class="btn small" onclick={() => toResult(hit - 1)} disabled={hit === 0}>Previous</button>
+			<button class="btn small" onclick={() => toResult(hit - 1)} disabled={hit === 0}>Previous <span class="key">(p)</span></button>
 			<button class="btn small" onclick={() => toResult(hit + 1)} disabled={hit === search.hits.length - 1}>
-				Next
+				Next <span class="key">(n)</span>
 			</button>
 		</nav>
 	{/if}
 	<div class="page-head stack reading">
 		<h1>{thread.subject || '(no subject)'}</h1>
 		{#if thread.snoozed_until}
-			<p class="delayed">Delayed. Returns to the Inbox {returnTime(thread.snoozed_until)}.</p>
+			<p class="delayed">Delayed. Returns to Home {returnTime(thread.snoozed_until)}.</p>
 		{/if}
 		{#if thread.sender}
 			<p class="sender">
@@ -233,36 +230,36 @@
 			{/if}
 		{/if}
 		<div class="tools">
-			<button class="btn primary" onclick={() => draft('reply')} title="Reply (r)">Reply</button>
+			<button class="btn primary" onclick={() => draft('reply')}>Reply <span class="key">(r)</span></button>
 			{#if last && last.to.length + last.cc.length > 1}
-				<button class="btn" onclick={() => draft('reply_all')} title="Reply to all (a)">Reply all</button>
+				<button class="btn" onclick={() => draft('reply_all')}>Reply all <span class="key">(Shift r)</span></button>
 			{/if}
-			<button class="btn" onclick={() => draft('forward')} title="Forward (f)">Forward</button>
+			<button class="btn" onclick={() => draft('forward')}>Forward <span class="key">(f)</span></button>
 			<span class="divider" aria-hidden="true"></span>
 			{#if thread.can_archive}
-				<button class="btn small" onclick={archive} disabled={trashing} title="Archive (e)">Archive</button>
+				<button class="btn small" onclick={archive} disabled={trashing}>Archive <span class="key">(a)</span></button>
 				{#if thread.snoozed_until}
-					<button class="btn small" onclick={undelay} disabled={trashing}>Back to Inbox now</button>
+					<button class="btn small" onclick={undelay} disabled={trashing}>Back to Home now</button>
 				{:else}
-					<span title="Delay (z)"><DelayMenu bind:this={delayMenu} onpick={delay} disabled={trashing} /></span>
+					<DelayMenu bind:this={delayMenu} onpick={delay} disabled={trashing} key="z" />
 				{/if}
-				<button class="btn small" onclick={toggleImportant} disabled={trashing} title="{thread.important ? 'Move to Inbox' : 'Move to Important'} (i)">
-					{thread.important ? 'Move to Inbox' : 'Move to Important'}
+				<button class="btn small" onclick={toggleImportant} disabled={trashing}>
+					{thread.important ? 'Move to Home' : 'Move to Important'} <span class="key">(i)</span>
 				</button>
 			{/if}
 			{#if hasReceived}
-				<button class="btn small" onclick={markUnread} disabled={trashing} title="Mark as unseen (u)">
-					Mark as unseen
+				<button class="btn small" onclick={markUnread} disabled={trashing}>
+					Mark as unseen <span class="key">(u)</span>
 				</button>
 			{/if}
 			{#if thread.can_restore}
 				<button class="btn small" onclick={untrash} disabled={trashing} title="Take it out of the Trash">
-					Move back to Inbox
+					Move back to Home
 				</button>
 			{/if}
 			{#if thread.can_trash}
-				<button class="btn small danger" onclick={trash} disabled={trashing} title="Move to Trash (d)">
-					Move to Trash
+				<button class="btn small danger" onclick={trash} disabled={trashing}>
+					Move to Trash <span class="key">(d)</span>
 				</button>
 			{/if}
 			{#if embedded}

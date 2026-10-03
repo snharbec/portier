@@ -167,7 +167,7 @@ export interface SavedSearch {
 
 export interface Counts {
 	screener: number;
-	/** Unread conversations in the Inbox (named after its sender category). */
+	/** Unread conversations in Home (named after its sender category). */
 	unread_important: number;
 	/** Unread conversations in the Important list. */
 	unread_flagged: number;

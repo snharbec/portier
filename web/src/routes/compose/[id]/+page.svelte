@@ -2,7 +2,7 @@
 	import { goto } from '$app/navigation';
 	import { page } from '$app/state';
 	import { api, type Addr, type DraftAttachment, type DraftDetail } from '#lib/api.ts';
-	import { app, refreshCounts } from '#lib/app.svelte.ts';
+	import { app, draftReturnPath, refreshCounts } from '#lib/app.svelte.ts';
 	import Editor from '#lib/components/Editor.svelte';
 	import { displayName, fileSize } from '#lib/format.ts';
 	import { onMount } from 'svelte';
@@ -118,8 +118,7 @@
 
 	/** Back to where the draft was started: the conversation for a reply, otherwise the list. */
 	function leave() {
-		if (history.length > 1) history.back();
-		else goto('/');
+		goto(draftReturnPath(id), { replace: true });
 	}
 </script>
 
@@ -192,7 +191,12 @@
 			<input class="subject" bind:value={detail.draft.subject} oninput={changed} />
 		</label>
 
-		<Editor bind:value={detail.draft.body_html} onchange={changed} />
+		<!-- A reply has its recipients and subject already: writing starts in the text. -->
+		<Editor
+			bind:value={detail.draft.body_html}
+			onchange={changed}
+			autofocus={detail.draft.kind === 'reply' || detail.draft.kind === 'reply_all'}
+		/>
 
 		{#if detail.source}
 			<div class="source">

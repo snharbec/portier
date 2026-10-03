@@ -35,6 +35,9 @@ export function startReading(ids: number[], back: string) {
 	remember();
 }
 
+/** The list the conversation was opened from. */
+export const listPath = () => reading.back;
+
 /** The conversation before (-1) or after (1) this one in the list it was opened from. */
 export function neighbour(id: number, step: -1 | 1): number | undefined {
 	const index = reading.ids.indexOf(id);

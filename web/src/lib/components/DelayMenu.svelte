@@ -1,6 +1,16 @@
 <script lang="ts">
-	let { onpick, disabled = false, up = false }: { onpick: (days: number) => void; disabled?: boolean; up?: boolean } =
-		$props();
+	let {
+		onpick,
+		disabled = false,
+		up = false,
+		key = ''
+	}: {
+		onpick: (days: number) => void;
+		disabled?: boolean;
+		up?: boolean;
+		/** Keyboard shortcut that opens the menu, shown in the button. */
+		key?: string;
+	} = $props();
 
 	const choices = [
 		{ days: 1, label: '1 day' },
@@ -60,10 +70,11 @@
 <span class="delay" bind:this={root} {onkeydown}>
 	<button class="btn small" {disabled} aria-haspopup="menu" aria-expanded={open} onclick={() => (open = !open)}>
 		Delay
+		{#if key}<span class="key">({key})</span>{/if}
 	</button>
 	{#if open}
-		<span class="choices" style={place} role="menu" aria-label="Return to the Inbox, unseen, at 7:00 in">
-			<span class="hint">Back in the Inbox, unseen, at 7:00 in</span>
+		<span class="choices" style={place} role="menu" aria-label="Return to Home, unseen, at 7:00 in">
+			<span class="hint">Back in Home, unseen, at 7:00 in</span>
 			{#each choices as choice}
 				<button role="menuitem" onclick={() => pick(choice.days)}>{choice.label}</button>
 			{/each}

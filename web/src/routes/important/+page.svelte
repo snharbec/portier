@@ -21,7 +21,7 @@
 
 <div class="page-head">
 	<h1>Important</h1>
-	<p>Conversations you set apart from the Inbox. Other mail programs show them as flagged.</p>
+	<p>Conversations you set apart from Home. Other mail programs show them as flagged.</p>
 	{#if threads?.length}
 		<p class="tools"><a class="btn small" href="/read/flagged">Read all on one page</a></p>
 	{/if}
@@ -34,7 +34,7 @@
 {:else if threads.length === 0}
 	<div class="empty sheet">
 		<strong>Nothing marked important</strong>
-		Drag a conversation from the Inbox onto Important in the side bar, or press i while reading it.
+		Drag a conversation from Home onto Important in the side bar, or press i while reading it.
 	</div>
 {:else}
 	<SelectAll

@@ -5,7 +5,7 @@ import { notify } from './app.svelte.ts';
 export const DRAG_TYPE = 'application/x-emscreen-mail';
 
 export interface Dragged extends Target {
-	/** Page the drag started on; decides what dropping on Inbox undoes. */
+	/** Page the drag started on; decides what dropping on Home undoes. */
 	from: string;
 }
 
@@ -20,7 +20,7 @@ export function startDrag(event: DragEvent, dragged: Dragged, image?: Element) {
 
 /** What dropping mail on a side bar entry does, by the entry's address. */
 export const dropTargets: Record<string, string> = {
-	'/': 'Move to Inbox',
+	'/': 'Move to Home',
 	'/important': 'Move to Important',
 	'/archive': 'Archive',
 	'/trash': 'Move to Trash'
@@ -36,8 +36,8 @@ export async function dropOn(href: string, event: DragEvent) {
 		if (href === '/important') await mailAction('important', dragged, `Moved to Important: ${what}`);
 		else if (href === '/archive') await mailAction('archive', dragged, `Archived: ${what}`);
 		else if (href === '/trash') await mailAction('trash', dragged, `Moved to Trash: ${what}`);
-		else if (href === '/' && dragged.from === '/delayed') await mailAction('undelay', dragged, `Back in the Inbox: ${what}`);
-		else if (href === '/') await mailAction('unimportant', dragged, `Moved to Inbox: ${what}`);
+		else if (href === '/' && dragged.from === '/delayed') await mailAction('undelay', dragged, `Back in Home: ${what}`);
+		else if (href === '/') await mailAction('unimportant', dragged, `Moved to Home: ${what}`);
 	} catch (e) {
 		notify((e as Error).message);
 	}

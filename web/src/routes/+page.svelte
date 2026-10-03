@@ -6,7 +6,7 @@
 	import ThreadList from '#lib/components/ThreadList.svelte';
 	import { createSelection } from '#lib/selection.svelte.ts';
 
-	/** Conversations of the Inbox, and those set apart as Important (flagged). */
+	/** Conversations of Home, and those set apart as Important (flagged). */
 	let threads = $state<ThreadSummary[] | null>(null);
 	let flagged = $state<ThreadSummary[] | null>(null);
 	let error = $state('');
@@ -71,7 +71,7 @@
 {/if}
 
 <div class="page-head">
-	<h1>Inbox</h1>
+	<h1>Home</h1>
 	{#if threads?.length}
 		<p class="tools"><a class="btn small" href="/read/important">Read all on one page</a></p>
 	{/if}

@@ -15,7 +15,7 @@ export const app = $state({
 	searches: [] as SavedSearch[],
 	/** What sliding a mail left or right does; set in Settings. */
 	swipe: { left: ['trash'], right: ['read'] } as { left: SwipeAction[]; right: SwipeAction[] },
-	/** Weeks after which read Inbox conversations are archived automatically; 0 is off. */
+	/** Weeks after which read Home conversations are archived automatically; 0 is off. */
 	autoArchiveWeeks: 0,
 	/** The split view the reader chose: the opened mail beside the mail list, or below it. */
 	split: 'off' as 'off' | 'beside' | 'below',
@@ -109,7 +109,7 @@ export async function classify(senderId: number, category: Category | null) {
 }
 
 export const categoryNames: Record<Category, string> = {
-	important: 'Inbox',
+	important: 'Home',
 	feed: 'Nice to know',
 	junk: 'Junk'
 };
@@ -117,5 +117,33 @@ export const categoryNames: Record<Category, string> = {
 /** Starts a draft and returns the composer path for it. */
 export async function startDraft(kind: string, sourceMessage?: number, to?: string): Promise<string> {
 	const { id } = await api.post<{ id: number }>('/drafts', { kind, source_message: sourceMessage, to: to ?? '' });
+	rememberDraftReturn(id);
 	return `/compose/${id}`;
+}
+
+/** Notes the page a draft is opened from, for `draftReturnPath`. */
+export function rememberDraftReturn(id: number) {
+	try {
+		sessionStorage.setItem(RETURN_KEY + id, location.pathname + location.search);
+	} catch {
+		// No storage: the composer leaves to the Drafts list instead.
+	}
+}
+
+const RETURN_KEY = 'emscreen.compose.from.';
+
+/**
+ * The page a draft was started on, to go back to once it is sent or discarded. Named outright
+ * instead of stepping back in the browser's history: the frames that show mail bodies can leave
+ * entries of their own there, and stepping back then ends up somewhere else.
+ */
+export function draftReturnPath(id: string | undefined): string {
+	try {
+		const from = sessionStorage.getItem(RETURN_KEY + id);
+		sessionStorage.removeItem(RETURN_KEY + id);
+		if (from?.startsWith('/') && !from.startsWith('/compose')) return from;
+	} catch {
+		// See rememberDraftReturn().
+	}
+	return '/drafts';
 }

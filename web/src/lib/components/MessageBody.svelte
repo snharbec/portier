@@ -100,6 +100,9 @@ blockquote{margin:0 0 0 .8ex;border-left:2px solid ${plain ? theme.line : '#c9cf
 		<button class="btn small" onclick={() => setImages(false)}>Hide images and ask again</button>
 	</p>
 {/if}
+<!-- A changed mail gets a new frame: loading other content into the old one would add an entry
+     ("about:srcdoc") to the browser's history, and Back would then step through mail frames. -->
+{#key srcdoc}
 <iframe
 	bind:this={frame}
 	title="Message from {message.from.name || message.from.address}"
@@ -109,6 +112,7 @@ blockquote{margin:0 0 0 .8ex;border-left:2px solid ${plain ? theme.line : '#c9cf
 	{onload}
 	style="height: {height}px"
 ></iframe>
+{/key}
 
 <style>
 	iframe {

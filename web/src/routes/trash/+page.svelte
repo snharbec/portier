@@ -21,7 +21,7 @@
 
 <div class="page-head">
 	<h1>Trash</h1>
-	<p>Mail you deleted. It sits in the Trash folder of your mail account until the mail server empties it. To bring one back, open it or select it and choose "Move back to Inbox".</p>
+	<p>Mail you deleted. It sits in the Trash folder of your mail account until the mail server empties it. To bring one back, open it or select it and choose "Move back to Home".</p>
 	{#if threads?.length}
 		<p class="tools"><a class="btn small" href="/read/trash">Read all on one page</a></p>
 	{/if}

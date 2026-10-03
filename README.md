@@ -3,46 +3,46 @@
 Self-hosted web mail client that screens mail by sender. Each new sender waits in the
 Screener until you put them in one of three places:
 
-- **Inbox**: conversations you want to see, split into new and previously seen
-- **Nice to know**: newsletters and updates, kept out of the way of the Inbox
+- **Home**: conversations you want to see, split into new and previously seen
+- **Nice to know**: newsletters and updates, kept out of the way of Home
 - **Junk**: hidden, and moved to the Junk folder of the mail account
 
-**Automatic archive** (Settings, off by default) archives seen conversations of the Inbox once
+**Automatic archive** (Settings, off by default) archives seen conversations of Home once
 their newest mail is older than a number of weeks you choose. Unseen, Important and delayed
 conversations and the other lists are left alone. It is checked hourly.
 
 **Trash** lists what you deleted: the newest 500 mails of the account's Trash folder. Mail in the
-Trash is left out of the other lists and of search. "Move back to Inbox", on an opened
+Trash is left out of the other lists and of search. "Move back to Home", on an opened
 mail or for mails selected in the Trash list, brings it back: received mail to the inbox, your own to Sent.
 
-**Important** is a list below the Inbox for conversations you want set apart. Drag a row by its
+**Important** is a list below Home for conversations you want set apart. Drag a row by its
 handle onto Important in the side bar, use the button in the selection bar, or press `i` while
-reading; the same ways lead back to the Inbox. It is stored as the mail server's "flagged" mark,
+reading; the same ways lead back to Home. It is stored as the mail server's "flagged" mark,
 so other mail programs show it as flag or star, and mail flagged there appears in Important.
 
-**Delay** takes a conversation out of the Inbox for 1, 2, 3 or 7 days. It waits in the Delayed
+**Delay** takes a conversation out of Home for 1, 2, 3 or 7 days. It waits in the Delayed
 list and returns at 7:00 (server time) on that day, unseen and at the top. A new mail in the
 conversation ends the delay early. Delays are kept in Email Screen only.
 
 **Split view** (two buttons in the top bar) shows the opened mail together with the mail list:
-beside it, or below it. Each part scrolls on its own; drag the line between them to resize
+beside it, or below it; while no mail is open the list has the whole page. Each part scrolls on its own; drag the line between them to resize
 (double-click it for the usual size). Windows narrower than about 900 px have no
 room for the two side by side and stack them. The choice is kept per browser.
 
 **Archive** files a mail away from any list or from the mail itself: it moves to the account's
 Archive folder on the server and shows in the Archive list.
 
-Inbox, Nice to know, Junk and Sent are conversation lists. Each has "Read all on one page",
+Home, Nice to know, Junk and Sent are conversation lists. Each has "Read all on one page",
 which shows the list's mails opened one below the other.
 
 Images that a mail loads from the internet are hidden until you choose "Show images". That choice
 is remembered for the sender; "Hide images and ask again" undoes it.
 
 The **Attachments** page shows every file received in the last four weeks from senders in
-Inbox and Nice to know, as a picture of its content: images as thumbnails, PDFs by their
+Home and Nice to know, as a picture of its content: images as thumbnails, PDFs by their
 first page. Selecting one opens the document on the page, with a link to its email.
 
-In Inbox, Nice to know, Junk, Sent and the search results, "Select" above the list shows a
+In Home, Nice to know, Junk, Sent and the search results, "Select" above the list shows a
 checkbox on every mail (Escape or "Stop selecting" hides them again). Tick several mails and
 mark them seen or unseen, move them to the account's Trash folder, or move them to any folder
 on the mail server. Email Screen mirrors only Inbox, Sent, Junk, Archive and Trash, so mail moved elsewhere
@@ -135,12 +135,12 @@ each time, so `received:last month` keeps meaning the previous month.
 
 ## Keyboard
 
-`?` shows all keyboard shortcuts. `c` write, `/` search field, `m` menu, `1` Inbox, `Shift+I` Important,
+`?` shows all keyboard shortcuts. `c` write, `/` search field, `m` menu, `Shift+H` or `1` Home, `Shift+I` Important,
 `Shift+D` Delayed, `Shift+N` or `3` Nice to know, `2` Screener, `4` Attachments.
 In the composer `Ctrl+Return` (or `Cmd+Return`) sends the mail.
 In the attachment viewer the left and right arrows step through files and Escape closes it.
-In the Screener `i` / `k` / `j` decide the first sender. In a conversation `r` reply, `u` mark as unseen, `i` important, `z` delay (then `1`, `2`, `3` or `7`), `e` archive, `d` move to Trash,
-`a` reply all, `f` forward.
+In the Screener `i` / `k` / `j` decide the first sender. In a conversation `r` reply, `u` mark as unseen, `i` important, `z` delay (then `1`, `2`, `3` or `7`), `a` archive, `d` move to Trash,
+`Shift+R` reply all, `f` forward.
 Arrow down and up go to the next and previous mail: in a conversation, and on a list in split
 view; on a list without split view they move from row to row and Enter opens. Space pages down
 in the mail, Backspace (or Shift+Space) pages up; Ctrl+Down and Ctrl+Up do the same.

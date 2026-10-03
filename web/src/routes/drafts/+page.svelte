@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { api, type Draft } from '#lib/api.ts';
-	import { app, refreshCounts } from '#lib/app.svelte.ts';
+	import { app, refreshCounts, rememberDraftReturn } from '#lib/app.svelte.ts';
 	import { shortDate } from '#lib/format.ts';
 
 	let drafts = $state<Draft[] | null>(null);
@@ -38,7 +38,7 @@
 	<ul class="sheet">
 		{#each drafts as draft (draft.id)}
 			<li>
-				<a href="/compose/{draft.id}">
+				<a href="/compose/{draft.id}" onclick={() => rememberDraftReturn(draft.id)}>
 					<strong>{draft.subject || '(no subject)'}</strong>
 					<span class="muted">{draft.to_addrs ? `to ${draft.to_addrs}` : 'no recipient yet'}</span>
 				</a>

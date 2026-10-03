@@ -64,7 +64,7 @@
 	</div>
 {:else}
 	<p class="muted keys">
-		Keys for the first sender: <kbd>i</kbd> inbox, <kbd>k</kbd> nice to know, <kbd>j</kbd> junk
+		Keys for the first sender: <kbd>i</kbd> home, <kbd>k</kbd> nice to know, <kbd>j</kbd> junk
 	</p>
 	{#each entries as entry (entry.id)}
 		{@const who = displayName(entry.display_name, entry.address)}
