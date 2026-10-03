@@ -515,19 +515,71 @@ mod tests {
         assert_eq!(status, StatusCode::BAD_REQUEST);
         assert_eq!(remaining().await, 1);
 
-        // With a Trash folder the mail leaves the local store, and its empty conversation with it.
-        sqlx::query("UPDATE accounts SET trash_folder = 'Trash'")
+        // With a Trash folder the mail moves into the mirrored Trash: out of every other list and
+        // out of search, into the Trash list. (A mail server that accepts the connection and then
+        // says nothing keeps the server-side move pending, so this can be checked without a race.)
+        let silent = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        sqlx::query(
+            "UPDATE accounts SET trash_folder = 'Trash', imap_host = '127.0.0.1', imap_port = ?, password_enc = ?",
+        )
+        .bind(silent.local_addr().unwrap().port())
+        .bind(crypto::encrypt(&state.config.master_key, "secret").unwrap())
+        .execute(db)
+        .await
+        .unwrap();
+        sqlx::query("UPDATE senders SET category = 'important'")
             .execute(db)
             .await
             .unwrap();
+        let listed = async |path: &str| -> usize {
+            call(&app, "GET", path, Some(&cookie), None)
+                .await
+                .2
+                .as_array()
+                .unwrap()
+                .len()
+        };
+        assert_eq!(
+            (
+                listed("/api/threads?box=important").await,
+                listed("/api/threads?box=trash").await
+            ),
+            (1, 0)
+        );
+        assert_eq!(listed("/api/search?q=confidential").await, 1);
+
         let (status, _, body) = act(&cookie, json!({ "action": "trash", "thread_ids": [thread] })).await;
         assert_eq!((status, body["affected"].as_i64()), (StatusCode::OK, Some(1)));
-        assert_eq!(remaining().await, 0);
-        let threads: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM threads")
-            .fetch_one(db)
-            .await
-            .unwrap();
-        assert_eq!(threads, 0);
+        assert_eq!(remaining().await, 1, "kept locally, in the Trash folder");
+        let role: String =
+            sqlx::query_scalar("SELECT f.role FROM messages m JOIN folders f ON f.id = m.folder_id WHERE m.id = ?")
+                .bind(message)
+                .fetch_one(db)
+                .await
+                .unwrap();
+        assert_eq!(role, "trash");
+        assert_eq!(
+            (
+                listed("/api/threads?box=important").await,
+                listed("/api/threads?box=trash").await
+            ),
+            (0, 1)
+        );
+        assert_eq!(listed("/api/feed?box=trash").await, 1);
+        assert_eq!(listed("/api/feed?box=important").await, 0);
+        assert_eq!(
+            listed("/api/search?q=confidential").await,
+            0,
+            "the Trash is not searched"
+        );
+        let (_, _, detail) = call(&app, "GET", &format!("/api/threads/{thread}"), Some(&cookie), None).await;
+        assert_eq!(
+            (detail["can_trash"].as_bool(), detail["can_archive"].as_bool()),
+            (Some(false), Some(false))
+        );
+        // Trashing what is in the Trash already does nothing.
+        let (_, _, body) = act(&cookie, json!({ "action": "trash", "thread_ids": [thread] })).await;
+        assert_eq!(body["affected"], 0);
     }
 
     #[tokio::test]

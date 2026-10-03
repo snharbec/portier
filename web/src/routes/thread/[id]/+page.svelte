@@ -152,7 +152,7 @@
 		if (event.key === 'r') draft('reply');
 		else if (event.key === 'a') draft('reply_all');
 		else if (event.key === 'f') draft('forward');
-		else if (event.key === 'd') trash();
+		else if (event.key === 'd' && thread?.can_trash) trash();
 		else if (event.key === 'u') markUnread();
 		else if (event.key === 'i' && thread?.can_archive) toggleImportant();
 		else if (event.key === 'z' && thread?.can_archive && !thread.snoozed_until) {
@@ -218,7 +218,9 @@
 				{/if}
 				<button class="btn small" onclick={archive} disabled={trashing}>Archive</button>
 			{/if}
-			<button class="btn small danger" onclick={trash} disabled={trashing}>Move to Trash</button>
+			{#if thread.can_trash}
+				<button class="btn small danger" onclick={trash} disabled={trashing}>Move to Trash</button>
+			{/if}
 		</p>
 	</div>
 
@@ -230,7 +232,7 @@
 	{/each}
 
 	<p class="muted keys">
-		Keys: <kbd>r</kbd> reply, <kbd>a</kbd> reply all, <kbd>f</kbd> forward, {#if hasReceived}<kbd>u</kbd> mark as unread, {/if}{#if thread.can_archive}<kbd>i</kbd> {thread.important ? 'move to Inbox' : 'important'}, <kbd>z</kbd> delay, <kbd>e</kbd> archive, {/if}<kbd>d</kbd> move to Trash{#if hit >= 0}, <kbd>p</kbd> previous result,
+		Keys: <kbd>r</kbd> reply, <kbd>a</kbd> reply all, <kbd>f</kbd> forward, {#if hasReceived}<kbd>u</kbd> mark as unread, {/if}{#if thread.can_archive}<kbd>i</kbd> {thread.important ? 'move to Inbox' : 'important'}, <kbd>z</kbd> delay, <kbd>e</kbd> archive, {/if}{#if thread.can_trash}<kbd>d</kbd> move to Trash{/if}{#if hit >= 0}, <kbd>p</kbd> previous result,
 			<kbd>n</kbd> next result{/if}
 	</p>
 {/if}

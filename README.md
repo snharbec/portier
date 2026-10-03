@@ -7,6 +7,9 @@ Screener until you put them in one of three places:
 - **Nice to know**: newsletters and updates, kept out of the way of the Inbox
 - **Junk**: hidden, and moved to the Junk folder of the mail account
 
+**Trash** lists what you deleted: the newest 500 mails of the account's Trash folder. Mail in the
+Trash is left out of the other lists and of search. Moving it to the folder INBOX brings it back.
+
 **Important** is a list below the Inbox for conversations you want set apart. Drag a row by its
 handle onto Important in the side bar, use the button in the selection bar, or press `i` while
 reading; the same ways lead back to the Inbox. It is stored as the mail server's "flagged" mark,
@@ -31,7 +34,7 @@ first page. Selecting one opens the document on the page, with a link to its ema
 
 In Inbox, Nice to know, Junk, Sent and the search results you can tick several mails and
 mark them read or unread, move them to the account's Trash folder, or move them to any folder
-on the mail server. Email Screen mirrors only Inbox, Sent, Junk and Archive, so mail moved elsewhere
+on the mail server. Email Screen mirrors only Inbox, Sent, Junk, Archive and Trash, so mail moved elsewhere
 leaves its views and stays on the server.
 
 Rows in the mail lists and search results can also be slid left or right, by finger or mouse.

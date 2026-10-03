@@ -46,7 +46,7 @@
 		<p class="muted" aria-busy="true">Loading the folders of {account.label}</p>
 	{:else}
 		<p class="muted">
-			Folders of {account.label}. Mail moved out of Inbox, Sent, Junk and Archive no longer shows in Email Screen; it stays on
+			Folders of {account.label}. Mail moved out of Inbox, Sent, Junk, Archive and Trash no longer shows in Email Screen; it stays on
 			the mail server.
 		</p>
 		<ul>

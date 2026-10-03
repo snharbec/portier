@@ -68,6 +68,7 @@ pub async fn list(
          WHERE m.user_id = ?1 AND m.is_outgoing = 0 AND m.date >= ?2
            AND s.category IN ('important', 'feed')
            AND (a.inline = 0 OR a.content_id IS NULL)
+           AND m.folder_id NOT IN (SELECT id FROM folders WHERE role = 'trash')
            AND m.id IN (SELECT MIN(id) FROM messages WHERE user_id = ?1 GROUP BY message_id)
          ORDER BY m.date DESC, m.id DESC, a.idx
          LIMIT 500",

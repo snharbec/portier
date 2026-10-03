@@ -28,6 +28,7 @@
 		{ href: '/sent', icon: 'M21 3L10.5 13.5M21 3l-6.5 18-4-7.5-7.5-4z', label: 'Sent', hint: '', key: '', badge: 0 },
 		{ href: '/drafts', icon: 'M4 20l1-4.5L16.5 4a2.1 2.1 0 0 1 3 3L8 18.5zM14.5 6l3 3', label: 'Drafts', hint: '', key: '', badge: app.counts.drafts },
 		{ href: '/junk', icon: 'M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18zM5.7 5.7l12.6 12.6', label: 'Junk', hint: 'Senders you turned away', key: '', badge: 0 },
+		{ href: '/trash', icon: 'M5 7h14M10 7V4.5h4V7M7 7l.8 12h8.4L17 7M10.5 10.5v5M13.5 10.5v5', label: 'Trash', hint: 'Mail you deleted', key: '', badge: 0 },
 		{ href: '/settings', icon: 'M4 7h9M17 7h3M4 17h3M11 17h9M15 4.5v5M9 14.5v5', label: 'Settings', hint: 'Mail accounts, senders, users', key: '', badge: 0 }
 	]);
 	const here = $derived(places.find((p) => p.href === page.url.pathname)?.label ?? 'Email Screen');

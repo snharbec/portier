@@ -18,6 +18,7 @@ use crate::{
 const FETCH_BATCH: usize = 25;
 const FLAG_WINDOW: usize = 1000;
 const IDLE_SECONDS: u64 = 5 * 60;
+const TRASH_LIMIT: usize = 500;
 
 pub async fn load_account(state: &AppState, account_id: i64) -> Result<Option<Account>> {
     Ok(sqlx::query_as::<_, Account>("SELECT * FROM accounts WHERE id = ?")
@@ -111,12 +112,13 @@ async fn session_loop(state: &AppState, account_id: i64, wake: &Notify) -> Resul
     }
 
     // Forget folders that are no longer configured.
-    sqlx::query("DELETE FROM folders WHERE account_id = ? AND name NOT IN (?, ?, ?, ?, ?)")
+    sqlx::query("DELETE FROM folders WHERE account_id = ? AND name NOT IN (?, ?, ?, ?, ?, ?)")
         .bind(account.id)
         .bind(&account.inbox_folder)
         .bind(&account.junk_folder)
         .bind(&account.sent_folder)
         .bind(&account.archive_folder)
+        .bind(&account.trash_folder)
         .bind(LOCAL_SENT)
         .execute(&state.db)
         .await?;
@@ -134,6 +136,9 @@ async fn session_loop(state: &AppState, account_id: i64, wake: &Notify) -> Resul
     folders.extend(junk.clone());
     if !account.archive_folder.is_empty() {
         folders.push(store::ensure_folder(&state.db, account.id, &account.archive_folder, "archive").await?);
+    }
+    if !account.trash_folder.is_empty() {
+        folders.push(store::ensure_folder(&state.db, account.id, &account.trash_folder, "trash").await?);
     }
 
     loop {
@@ -207,7 +212,13 @@ async fn sync_folder(
     let server = imap::all_uids(session).await?;
     let mut wanted: Vec<u32> = server.iter().copied().collect();
     wanted.sort_unstable_by(|a, b| b.cmp(a));
-    wanted.truncate(state.config.sync_max_per_folder);
+    // Trash is kept for looking something up again, not as an archive: mirror only its newest part.
+    let limit = if folder.role == "trash" {
+        TRASH_LIMIT
+    } else {
+        usize::MAX
+    };
+    wanted.truncate(state.config.sync_max_per_folder.min(limit));
 
     let local: Vec<(i64, i64, bool, bool)> =
         sqlx::query_as("SELECT id, uid, seen, flagged FROM messages WHERE folder_id = ? AND uid IS NOT NULL")

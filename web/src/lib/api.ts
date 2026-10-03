@@ -104,6 +104,8 @@ export interface Thread {
 	id: number;
 	/** Some received mail of it is still in the inbox, so it can be archived. */
 	can_archive: boolean;
+	/** Some mail of it is not in the Trash yet. */
+	can_trash: boolean;
 	/** It is in the Important list (a mail of it is flagged). */
 	important: boolean;
 	/** Delayed until then, or null. */

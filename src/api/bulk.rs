@@ -87,9 +87,12 @@ pub async fn apply(
         "archive" => {
             // Filed away for good: a delay must not bring it back.
             set_delay(&state, user.id, &targets, None).await?;
-            archive(&state, user.id, targets).await?
+            file_away(&state, user.id, targets, Shelf::Archive).await?
         }
-        "trash" => relocate(&state, user.id, targets, None).await?,
+        "trash" => {
+            set_delay(&state, user.id, &targets, None).await?;
+            file_away(&state, user.id, targets, Shelf::Trash).await?
+        }
         "move" => {
             let account_id = input
                 .account_id
@@ -200,18 +203,42 @@ async fn account_for_task(state: &AppState, account_id: i64) -> anyhow::Result<A
         .ok_or_else(|| anyhow::anyhow!("account deleted"))
 }
 
-/// Moves received mail from the inbox (or Junk) to the account's Archive folder. Unlike other
-/// moves the mail stays in Email Screen: the Archive folder is mirrored and shown as its own list.
-/// Sent copies of a conversation stay in Sent.
-async fn archive(state: &AppState, user_id: i64, targets: Vec<Target>) -> ApiResult<usize> {
+fn targets_without_uid(messages: &[(i64, Option<u32>)]) -> Vec<i64> {
+    messages
+        .iter()
+        .filter(|(_, uid)| uid.is_none())
+        .map(|(id, _)| *id)
+        .collect()
+}
+
+/// The two mirrored folders mail is put away into.
+#[derive(Clone, Copy)]
+enum Shelf {
+    /// Received mail from the inbox or Junk; sent copies of a conversation stay in Sent.
+    Archive,
+    /// Mail from anywhere.
+    Trash,
+}
+
+/// Moves mail to the account's Archive or Trash folder. Unlike other moves the mail stays in
+/// Email Screen: both folders are mirrored and shown as their own lists.
+async fn file_away(state: &AppState, user_id: i64, targets: Vec<Target>, shelf: Shelf) -> ApiResult<usize> {
+    let (role, what) = match shelf {
+        Shelf::Archive => ("archive", "Archive"),
+        Shelf::Trash => ("trash", "Trash"),
+    };
     let mut by_account: HashMap<i64, Vec<Target>> = HashMap::new();
     for target in targets {
-        if matches!(target.folder_role.as_str(), "inbox" | "junk") && target.uid.is_some() {
+        let movable = match shelf {
+            Shelf::Archive => matches!(target.folder_role.as_str(), "inbox" | "junk"),
+            Shelf::Trash => target.folder_role != "trash",
+        };
+        if movable {
             by_account.entry(target.account_id).or_default().push(target);
         }
     }
 
-    // Resolve every Archive folder first, so nothing happens if one account has none.
+    // Resolve every destination first, so nothing happens if one account has none.
     let mut plans = Vec::new();
     for (account_id, targets) in by_account {
         let account: Account = sqlx::query_as("SELECT * FROM accounts WHERE id = ? AND user_id = ?")
@@ -219,26 +246,41 @@ async fn archive(state: &AppState, user_id: i64, targets: Vec<Target>) -> ApiRes
             .bind(user_id)
             .fetch_one(&state.db)
             .await?;
-        if account.archive_folder.is_empty() {
+        let folder_name = match shelf {
+            Shelf::Archive => &account.archive_folder,
+            Shelf::Trash => &account.trash_folder,
+        };
+        if folder_name.is_empty() {
             return Err(ApiError::bad_request(format!(
-                "No Archive folder is known for the account {}. Set it in Settings.",
+                "No {what} folder is known for the account {}. Set it in Settings.",
                 account.address
             )));
         }
-        let destination = store::ensure_folder(&state.db, account.id, &account.archive_folder, "archive").await?;
+        let destination = store::ensure_folder(&state.db, account.id, folder_name, role).await?;
         plans.push((account, destination, targets));
     }
 
     let mut affected = 0;
     for (account, destination, targets) in plans {
         let mut by_folder: HashMap<i64, (String, Vec<u32>)> = HashMap::new();
+        let mut by_folder_ids: Vec<(i64, Option<u32>)> = Vec::new();
         for target in targets {
             let entry = by_folder
                 .entry(target.folder_id)
                 .or_insert_with(|| (target.folder_name.clone(), Vec::new()));
             entry.1.extend(target.uid);
+            by_folder_ids.push((target.id, target.uid));
+        }
+        // Mail that exists only here (sent without a Sent folder on the server) has nothing to move.
+        let local_only: Vec<i64> = targets_without_uid(&by_folder_ids);
+        if matches!(shelf, Shelf::Trash) && !local_only.is_empty() {
+            affected += local_only.len();
+            store::delete_messages(state, &account, &local_only).await?;
         }
         for (folder_id, (name, uids)) in by_folder {
+            if uids.is_empty() {
+                continue;
+            }
             affected += uids.len();
             let source = Folder {
                 id: folder_id,

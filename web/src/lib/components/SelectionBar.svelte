@@ -9,6 +9,7 @@
 		accountIds,
 		total,
 		archivable = true,
+		trashable = true,
 		list = 'inbox',
 		onselectall,
 		onclear,
@@ -23,6 +24,8 @@
 		total: number;
 		/** Off in the Archive list, where everything is archived already. */
 		archivable?: boolean;
+		/** Off in the Trash list. */
+		trashable?: boolean;
 		/**
 		 * Which list the bar serves: 'inbox' offers Important and Delay, 'important' and 'delayed'
 		 * offer the way back, 'mixed' (the Inbox page, which also shows Important) offers both
@@ -93,9 +96,11 @@
 			<button class="btn small" disabled={busy} onclick={() => run('archive', 'Archived:')}>Archive</button>
 		{/if}
 		<button class="btn small" disabled={busy} onclick={move}>Move to folder</button>
-		<button class="btn small danger" disabled={busy} onclick={() => run('trash', 'Moved to Trash:')}>
-			Move to Trash
-		</button>
+		{#if trashable}
+			<button class="btn small danger" disabled={busy} onclick={() => run('trash', 'Moved to Trash:')}>
+				Move to Trash
+			</button>
+		{/if}
 		<button class="btn small quiet" onclick={onclear}>Clear selection</button>
 		{#if error}<p class="error" role="alert">{error}</p>{/if}
 	</div>

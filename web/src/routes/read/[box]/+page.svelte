@@ -16,7 +16,8 @@
 		feed: { title: 'Nice to know', back: '/feed' },
 		junk: { title: 'Junk', back: '/junk' },
 		sent: { title: 'Sent', back: '/sent' },
-		archive: { title: 'Archive', back: '/archive' }
+		archive: { title: 'Archive', back: '/archive' },
+		trash: { title: 'Trash', back: '/trash' }
 	};
 
 	const box = $derived(page.params.box ?? '');
@@ -125,7 +126,8 @@
 	{/if}
 
 	<SelectionBar
-		archivable={box !== 'archive'}
+		archivable={box !== 'archive' && box !== 'trash'}
+		trashable={box !== 'trash'}
 		list={box === 'flagged' ? 'important' : box === 'important' || box === 'feed' ? 'inbox' : 'other'}
 		messageIds={picked.map((m) => m.id)}
 		accountIds={[...new Set(picked.map((m) => m.account_id))]}
