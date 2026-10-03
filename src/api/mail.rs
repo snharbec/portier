@@ -437,7 +437,7 @@ pub async fn mark_seen(
     for ((account_id, folder), uids) in by_folder {
         sync::spawn_action(&state, account_id, "marking read", move |mut session| async move {
             session.select(&folder).await?;
-            imap::mark_seen(&mut session, &uids).await?;
+            imap::set_seen(&mut session, &uids, true).await?;
             let _ = session.logout().await;
             Ok(())
         });
@@ -539,6 +539,7 @@ pub async fn inline_image(
 pub struct SearchRow {
     id: i64,
     thread_id: i64,
+    account_id: i64,
     subject: String,
     from_name: String,
     from_addr: String,
@@ -567,7 +568,7 @@ pub async fn search(
     }
     Ok(Json(
         sqlx::query_as(
-            "SELECT m.id, m.thread_id, m.subject, m.from_name, m.from_addr, m.date,
+            "SELECT m.id, m.thread_id, m.account_id, m.subject, m.from_name, m.from_addr, m.date,
                     snippet(messages_fts, 4, '', '', '…', 16) AS excerpt
              FROM messages_fts JOIN messages m ON m.id = messages_fts.rowid
              WHERE messages_fts MATCH ? AND m.user_id = ?

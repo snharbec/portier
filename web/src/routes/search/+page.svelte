@@ -1,9 +1,13 @@
 <script lang="ts">
 	import { api, type SearchHit } from '#lib/api.ts';
 	import { displayName, shortDate } from '#lib/format.ts';
+	import SelectionBar from '#lib/components/SelectionBar.svelte';
 	import { rememberSearch, resultPath, search } from '#lib/search.svelte.ts';
+	import { createSelection } from '#lib/selection.svelte.ts';
 
 	let error = $state('');
+	const selection = createSelection();
+	const picked = $derived(selection.visible(search.hits ?? [], (h) => h.id));
 	let timer: ReturnType<typeof setTimeout>;
 
 	function oninput() {
@@ -38,7 +42,15 @@
 {:else if search.hits}
 	<ul class="sheet">
 		{#each search.hits as hit, index (hit.id)}
-			<li>
+			<li class:selected={selection.has(hit.id)}>
+				<label class="pick">
+					<input
+						type="checkbox"
+						checked={selection.has(hit.id)}
+						onchange={() => selection.toggle(hit.id)}
+						aria-label="Select {hit.subject || '(no subject)'} from {displayName(hit.from_name, hit.from_addr)}"
+					/>
+				</label>
 				<a href={resultPath(index)}>
 					<span class="top">
 						<strong>{displayName(hit.from_name, hit.from_addr)}</strong>
@@ -52,7 +64,25 @@
 	</ul>
 {/if}
 
+<SelectionBar
+	messageIds={picked.map((h) => h.id)}
+	accountIds={[...new Set(picked.map((h) => h.account_id))]}
+	total={search.hits?.length ?? 0}
+	onselectall={() => selection.set((search.hits ?? []).map((h) => h.id))}
+	onclear={selection.clear}
+	ondone={() => {
+		selection.clear();
+		run();
+	}}
+/>
+
 <style>
+	li {
+		display: flex;
+	}
+	li.selected {
+		background: color-mix(in srgb, var(--important) 9%, transparent);
+	}
 	ul {
 		list-style: none;
 		margin: 1rem 0 0;
@@ -63,6 +93,8 @@
 	}
 	a {
 		display: grid;
+		flex: 1;
+		min-width: 0;
 		padding: 0.8rem 1rem;
 		text-decoration: none;
 	}

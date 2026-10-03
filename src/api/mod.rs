@@ -1,5 +1,6 @@
 mod accounts;
 mod auth;
+mod bulk;
 mod compose;
 mod files;
 mod mail;
@@ -26,6 +27,8 @@ pub fn router() -> Router<AppState> {
         .route("/accounts", get(accounts::list).post(accounts::create))
         .route("/accounts/test", post(accounts::test))
         .route("/accounts/{id}", put(accounts::update).delete(accounts::delete))
+        .route("/accounts/{id}/folders", get(accounts::folders))
+        .route("/mail/actions", post(bulk::apply))
         .route("/screener", get(mail::screener))
         .route("/senders", get(mail::senders))
         .route("/senders/{id}/category", post(mail::set_category))
@@ -418,6 +421,83 @@ mod tests {
             let (status, _, _) = call(&app, "GET", &format!("{base}/{suffix}"), Some(&bob_cookie), None).await;
             assert_eq!(status, StatusCode::NOT_FOUND, "{suffix}");
         }
+    }
+
+    #[tokio::test]
+    async fn bulk_actions_change_only_the_users_own_mail() {
+        let (app, state) = test_app().await;
+        let admin = json!({ "email": "admin@example.org", "password": "password1" });
+        let (_, cookie, _) = call(&app, "POST", "/api/register", None, Some(admin)).await;
+        let cookie = cookie.unwrap();
+        let bob = json!({ "email": "bob@example.org", "password": "password2" });
+        call(&app, "POST", "/api/users", Some(&cookie), Some(bob.clone())).await;
+        let (_, bob_cookie, _) = call(&app, "POST", "/api/login", None, Some(bob)).await;
+        let bob_cookie = bob_cookie.unwrap();
+
+        let (thread, message, _) = seed_mail(&state, 1).await;
+        let db = &state.db;
+        let seen = async || -> bool {
+            sqlx::query_scalar("SELECT seen FROM messages WHERE id = ?")
+                .bind(message)
+                .fetch_one(db)
+                .await
+                .unwrap()
+        };
+        let remaining = async || -> i64 {
+            sqlx::query_scalar("SELECT COUNT(*) FROM messages")
+                .fetch_one(db)
+                .await
+                .unwrap()
+        };
+        let act = async |who: &str, body: Value| call(&app, "POST", "/api/mail/actions", Some(who), Some(body)).await;
+
+        // Another user's selection of this mail does nothing.
+        let (status, _, body) = act(&bob_cookie, json!({ "action": "read", "thread_ids": [thread] })).await;
+        assert_eq!((status, body["affected"].as_i64()), (StatusCode::OK, Some(0)));
+        assert!(!seen().await);
+        act(&bob_cookie, json!({ "action": "trash", "message_ids": [message] })).await;
+        assert_eq!(remaining().await, 1);
+
+        // Read and unread, by conversation and by single mail.
+        let (_, _, body) = act(&cookie, json!({ "action": "read", "thread_ids": [thread] })).await;
+        assert_eq!(body["affected"], 1);
+        assert!(seen().await);
+        act(&cookie, json!({ "action": "unread", "message_ids": [message] })).await;
+        assert!(!seen().await);
+
+        // No Trash folder known: refuse, and keep the mail.
+        let (status, _, body) = act(&cookie, json!({ "action": "trash", "thread_ids": [thread] })).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+        assert!(body["error"].as_str().unwrap().contains("No Trash folder"));
+        assert_eq!(remaining().await, 1);
+
+        // Moving needs a folder and the account the mail belongs to.
+        let (status, _, _) = act(
+            &cookie,
+            json!({ "action": "move", "thread_ids": [thread], "account_id": 1 }),
+        )
+        .await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+        let wrong_account = json!({ "action": "move", "thread_ids": [thread], "account_id": 99, "folder": "Archive" });
+        let (status, _, _) = act(&cookie, wrong_account).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+        let (status, _, _) = act(&cookie, json!({ "action": "explode", "thread_ids": [thread] })).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+        assert_eq!(remaining().await, 1);
+
+        // With a Trash folder the mail leaves the local store, and its empty conversation with it.
+        sqlx::query("UPDATE accounts SET trash_folder = 'Trash'")
+            .execute(db)
+            .await
+            .unwrap();
+        let (status, _, body) = act(&cookie, json!({ "action": "trash", "thread_ids": [thread] })).await;
+        assert_eq!((status, body["affected"].as_i64()), (StatusCode::OK, Some(1)));
+        assert_eq!(remaining().await, 0);
+        let threads: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM threads")
+            .fetch_one(db)
+            .await
+            .unwrap();
+        assert_eq!(threads, 0);
     }
 
     #[tokio::test]

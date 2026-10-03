@@ -2,9 +2,10 @@
 	import type { ThreadSummary } from '#lib/api.ts';
 	import { app } from '#lib/app.svelte.ts';
 	import { displayName, hue, shortDate } from '#lib/format.ts';
+	import type { Selection } from '#lib/selection.svelte.ts';
 	import Avatar from './Avatar.svelte';
 
-	let { threads }: { threads: ThreadSummary[] } = $props();
+	let { threads, selection }: { threads: ThreadSummary[]; selection?: Selection } = $props();
 
 	const accountLabel = (id: number) => app.accounts.find((a) => a.id === id)?.label ?? '';
 </script>
@@ -14,7 +15,17 @@
 		{@const who = thread.is_outgoing && thread.sender_address
 			? displayName(thread.sender_name, thread.sender_address)
 			: displayName(thread.from_name, thread.from_addr)}
-		<li>
+		<li class:selected={selection?.has(thread.id)}>
+			{#if selection}
+				<label class="pick">
+					<input
+						type="checkbox"
+						checked={selection.has(thread.id)}
+						onchange={() => selection.toggle(thread.id)}
+						aria-label="Select the conversation {thread.subject || '(no subject)'} with {who}"
+					/>
+				</label>
+			{/if}
 			<a href="/thread/{thread.id}" class:unread={thread.unread > 0}>
 				<Avatar name={who} seed={thread.sender_address ?? thread.from_addr} />
 				<span class="main">
@@ -44,16 +55,24 @@
 		margin: 0;
 		padding: 0;
 	}
+	li {
+		display: flex;
+		position: relative;
+	}
 	li + li {
 		border-top: 1px solid var(--line);
+	}
+	li.selected {
+		background: color-mix(in srgb, var(--important) 9%, transparent);
 	}
 	a {
 		display: flex;
 		gap: 0.9rem;
 		align-items: flex-start;
+		flex: 1;
+		min-width: 0;
 		padding: 0.85rem 1rem;
 		text-decoration: none;
-		position: relative;
 	}
 	a:hover {
 		background: color-mix(in srgb, var(--important) 6%, transparent);
@@ -103,7 +122,7 @@
 	.unread .subject {
 		font-weight: 700;
 	}
-	.unread::before {
+	li:has(.unread)::before {
 		content: '';
 		position: absolute;
 		left: 0;

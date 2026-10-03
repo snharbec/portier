@@ -115,10 +115,11 @@ async fn connect_inner(params: &ImapParams) -> Result<Session> {
 pub struct SpecialFolders {
     pub junk: Option<String>,
     pub sent: Option<String>,
+    pub trash: Option<String>,
     pub all: Vec<String>,
 }
 
-/// Finds Junk and Sent by SPECIAL-USE attribute, falling back to common names.
+/// Finds Junk, Sent and Trash by SPECIAL-USE attribute, falling back to common names.
 pub async fn discover_folders(session: &mut Session) -> Result<SpecialFolders> {
     let names: Vec<_> = session.list(Some(""), Some("*")).await?.try_collect().await?;
     let mut found = SpecialFolders::default();
@@ -131,6 +132,7 @@ pub async fn discover_folders(session: &mut Session) -> Result<SpecialFolders> {
             match attr {
                 NameAttribute::Junk => found.junk = Some(name.name().to_string()),
                 NameAttribute::Sent => found.sent = Some(name.name().to_string()),
+                NameAttribute::Trash => found.trash = Some(name.name().to_string()),
                 _ => {}
             }
         }
@@ -146,6 +148,9 @@ pub async fn discover_folders(session: &mut Session) -> Result<SpecialFolders> {
     }
     if found.sent.is_none() {
         found.sent = by_name(&["sent", "sent items", "sent messages", "sent mail", "gesendet"]).cloned();
+    }
+    if found.trash.is_none() {
+        found.trash = by_name(&["trash", "deleted items", "deleted messages", "bin", "papierkorb"]).cloned();
     }
     Ok(found)
 }
@@ -217,12 +222,17 @@ pub async fn move_uids(session: &mut Session, uids: &[u32], target: &str) -> Res
     Ok(())
 }
 
-pub async fn mark_seen(session: &mut Session, uids: &[u32]) -> Result<()> {
+pub async fn set_seen(session: &mut Session, uids: &[u32], seen: bool) -> Result<()> {
     if uids.is_empty() {
         return Ok(());
     }
+    let change = if seen {
+        "+FLAGS.SILENT (\\Seen)"
+    } else {
+        "-FLAGS.SILENT (\\Seen)"
+    };
     session
-        .uid_store(uid_set(uids), "+FLAGS.SILENT (\\Seen)")
+        .uid_store(uid_set(uids), change)
         .await?
         .try_collect::<Vec<_>>()
         .await?;

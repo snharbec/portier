@@ -11,6 +11,11 @@ The **Attachments** page shows every file received in the last four weeks from s
 Important and Nice to know, as a picture of its content: images as thumbnails, PDFs by their
 first page. Selecting one opens the document on the page, with a link to its email.
 
+In Important, Nice to know, Junk, Sent and the search results you can tick several mails and
+mark them read or unread, move them to the account's Trash folder, or move them to any folder
+on the mail server. Email Screen mirrors only Inbox, Sent and Junk, so mail moved elsewhere
+leaves its views and stays on the server.
+
 Connects to existing mailboxes over IMAP and SMTP (password or app password). Several users
 can share one installation; each has their own accounts and sender decisions.
 

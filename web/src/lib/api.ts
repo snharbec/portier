@@ -22,6 +22,7 @@ export interface Account {
 	inbox_folder: string;
 	junk_folder: string;
 	sent_folder: string;
+	trash_folder: string;
 	append_sent: boolean;
 	last_error: string | null;
 	last_sync_at: number | null;
@@ -133,6 +134,7 @@ export interface DraftDetail {
 export interface SearchHit {
 	id: number;
 	thread_id: number;
+	account_id: number;
 	subject: string;
 	from_name: string;
 	from_addr: string;

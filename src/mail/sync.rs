@@ -80,7 +80,7 @@ async fn session_loop(state: &AppState, account_id: i64, wake: &Notify) -> Resul
     let params = ImapParams::for_account(&account, &state.config.master_key)?;
     let mut session = imap::connect(&params).await?;
 
-    if account.junk_folder.is_empty() || account.sent_folder.is_empty() {
+    if account.junk_folder.is_empty() || account.sent_folder.is_empty() || account.trash_folder.is_empty() {
         let found = imap::discover_folders(&mut session).await?;
         if account.junk_folder.is_empty() {
             account.junk_folder = found.junk.unwrap_or_default();
@@ -88,9 +88,13 @@ async fn session_loop(state: &AppState, account_id: i64, wake: &Notify) -> Resul
         if account.sent_folder.is_empty() {
             account.sent_folder = found.sent.unwrap_or_default();
         }
-        sqlx::query("UPDATE accounts SET junk_folder = ?, sent_folder = ? WHERE id = ?")
+        if account.trash_folder.is_empty() {
+            account.trash_folder = found.trash.unwrap_or_default();
+        }
+        sqlx::query("UPDATE accounts SET junk_folder = ?, sent_folder = ?, trash_folder = ? WHERE id = ?")
             .bind(&account.junk_folder)
             .bind(&account.sent_folder)
+            .bind(&account.trash_folder)
             .bind(account.id)
             .execute(&state.db)
             .await?;

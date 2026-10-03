@@ -1,10 +1,14 @@
 <script lang="ts">
 	import { api, type ThreadSummary } from '#lib/api.ts';
 	import { app } from '#lib/app.svelte.ts';
+	import SelectionBar from '#lib/components/SelectionBar.svelte';
 	import ThreadList from '#lib/components/ThreadList.svelte';
+	import { createSelection } from '#lib/selection.svelte.ts';
 
 	let threads = $state<ThreadSummary[] | null>(null);
 	let error = $state('');
+	const selection = createSelection();
+	const picked = $derived(selection.visible(threads ?? [], (t) => t.id));
 
 	$effect(() => {
 		app.tick;
@@ -50,13 +54,22 @@
 {:else}
 	{#if fresh.length}
 		<h2 class="section-title">New for you</h2>
-		<ThreadList threads={fresh} />
+		<ThreadList threads={fresh} {selection} />
 	{/if}
 	{#if seen.length}
 		<h2 class="section-title">Previously seen</h2>
-		<ThreadList threads={seen} />
+		<ThreadList threads={seen} {selection} />
 	{/if}
 {/if}
+
+<SelectionBar
+	threadIds={picked.map((t) => t.id)}
+	accountIds={[...new Set(picked.map((t) => t.account_id))]}
+	total={threads?.length ?? 0}
+	onselectall={() => selection.set((threads ?? []).map((t) => t.id))}
+	onclear={selection.clear}
+	ondone={selection.clear}
+/>
 
 <style>
 	.ticket {

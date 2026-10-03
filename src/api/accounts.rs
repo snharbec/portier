@@ -34,6 +34,7 @@ pub struct AccountView {
     inbox_folder: String,
     junk_folder: String,
     sent_folder: String,
+    trash_folder: String,
     append_sent: bool,
     last_error: Option<String>,
     last_sync_at: Option<i64>,
@@ -41,7 +42,7 @@ pub struct AccountView {
 
 const VIEW_COLUMNS: &str = "id, label, address, display_name, imap_host, imap_port, imap_security,
     imap_username, smtp_host, smtp_port, smtp_security, smtp_username, inbox_folder, junk_folder,
-    sent_folder, append_sent, last_error, last_sync_at";
+    sent_folder, trash_folder, append_sent, last_error, last_sync_at";
 
 #[derive(Deserialize)]
 pub struct AccountInput {
@@ -68,6 +69,8 @@ pub struct AccountInput {
     junk_folder: String,
     #[serde(default)]
     sent_folder: String,
+    #[serde(default)]
+    trash_folder: String,
     #[serde(default = "default_true")]
     append_sent: bool,
 }
@@ -88,6 +91,7 @@ impl AccountInput {
             &mut self.inbox_folder,
             &mut self.junk_folder,
             &mut self.sent_folder,
+            &mut self.trash_folder,
         ] {
             *field = field.trim().to_string();
         }
@@ -192,6 +196,7 @@ pub async fn test(
         "smtp_error": smtp_error,
         "junk_folder": folders.junk,
         "sent_folder": folders.sent,
+        "trash_folder": folders.trash,
         "folders": folders.all,
     })))
 }
@@ -220,8 +225,8 @@ pub async fn create(
     let id: i64 = sqlx::query_scalar(
         "INSERT INTO accounts (user_id, label, address, display_name, imap_host, imap_port, imap_security,
              imap_username, smtp_host, smtp_port, smtp_security, smtp_username, password_enc, inbox_folder,
-             junk_folder, sent_folder, append_sent)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id",
+             junk_folder, sent_folder, trash_folder, append_sent)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id",
     )
     .bind(user.id)
     .bind(&input.label)
@@ -239,6 +244,7 @@ pub async fn create(
     .bind(&input.inbox_folder)
     .bind(&input.junk_folder)
     .bind(&input.sent_folder)
+    .bind(&input.trash_folder)
     .bind(input.append_sent)
     .fetch_one(&state.db)
     .await?;
@@ -261,7 +267,7 @@ pub async fn update(
         "UPDATE accounts SET label = ?, address = ?, display_name = ?, imap_host = ?, imap_port = ?,
              imap_security = ?, imap_username = ?, smtp_host = ?, smtp_port = ?, smtp_security = ?,
              smtp_username = ?, password_enc = ?, inbox_folder = ?, junk_folder = ?, sent_folder = ?,
-             append_sent = ?, last_error = NULL
+             trash_folder = ?, append_sent = ?, last_error = NULL
          WHERE id = ? AND user_id = ?",
     )
     .bind(&input.label)
@@ -279,6 +285,7 @@ pub async fn update(
     .bind(&input.inbox_folder)
     .bind(&input.junk_folder)
     .bind(&input.sent_folder)
+    .bind(&input.trash_folder)
     .bind(input.append_sent)
     .bind(id)
     .bind(user.id)
@@ -290,6 +297,27 @@ pub async fn update(
 
     sync::start(&state, id).await;
     Ok(Json(json!({ "id": id })))
+}
+
+/// The account's folders as the server lists them, for choosing where to move mail.
+pub async fn folders(State(state): State<AppState>, user: CurrentUser, Path(id): Path<i64>) -> ApiResult<Json<Value>> {
+    let account: crate::models::Account = sqlx::query_as("SELECT * FROM accounts WHERE id = ? AND user_id = ?")
+        .bind(id)
+        .bind(user.id)
+        .fetch_optional(&state.db)
+        .await?
+        .ok_or_else(ApiError::not_found)?;
+    let params = ImapParams::for_account(&account, &state.config.master_key)?;
+    let mut session = imap::connect(&params)
+        .await
+        .map_err(|e| ApiError(axum::http::StatusCode::BAD_GATEWAY, format!("{e:#}")))?;
+    let found = imap::discover_folders(&mut session).await;
+    let _ = session.logout().await;
+    let mut folders = found
+        .map_err(|e| ApiError(axum::http::StatusCode::BAD_GATEWAY, format!("{e:#}")))?
+        .all;
+    folders.sort_by_key(|name| name.to_lowercase());
+    Ok(Json(json!({ "folders": folders })))
 }
 
 pub async fn delete(State(state): State<AppState>, user: CurrentUser, Path(id): Path<i64>) -> ApiResult<Json<Value>> {

@@ -215,3 +215,19 @@ textarea {
 		animation: none !important;
 	}
 }
+
+/* Checkbox that selects a row for the actions bar. */
+.pick {
+	flex: none;
+	display: grid;
+	place-items: center;
+	width: 2.5rem;
+	align-self: stretch;
+	cursor: pointer;
+}
+.pick input {
+	width: 1.05rem;
+	height: 1.05rem;
+	accent-color: var(--important);
+	cursor: pointer;
+}
