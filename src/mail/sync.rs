@@ -209,38 +209,39 @@ async fn sync_folder(
     wanted.sort_unstable_by(|a, b| b.cmp(a));
     wanted.truncate(state.config.sync_max_per_folder);
 
-    let local: Vec<(i64, i64, bool)> =
-        sqlx::query_as("SELECT id, uid, seen FROM messages WHERE folder_id = ? AND uid IS NOT NULL")
+    let local: Vec<(i64, i64, bool, bool)> =
+        sqlx::query_as("SELECT id, uid, seen, flagged FROM messages WHERE folder_id = ? AND uid IS NOT NULL")
             .bind(folder.id)
             .fetch_all(db)
             .await?;
-    let local_by_uid: HashMap<u32, (i64, bool)> = local
+    let local_by_uid: HashMap<u32, (i64, bool, bool)> = local
         .iter()
-        .map(|(id, uid, seen)| (*uid as u32, (*id, *seen)))
+        .map(|(id, uid, seen, flagged)| (*uid as u32, (*id, *seen, *flagged)))
         .collect();
 
     // Deleted or moved away on the server.
     let gone: Vec<i64> = local_by_uid
         .iter()
         .filter(|(uid, _)| !server.contains(uid))
-        .map(|(_, (id, _))| *id)
+        .map(|(_, (id, _, _))| *id)
         .collect();
     if !gone.is_empty() {
         store::delete_messages(state, account, &gone).await?;
         state.notify(account.user_id, "mail");
     }
 
-    // Read state changed elsewhere.
+    // Read state or the flag changed elsewhere.
     let oldest = wanted.get(FLAG_WINDOW.min(wanted.len()).saturating_sub(1)).copied();
     if let Some(oldest) = oldest
         && !local_by_uid.is_empty()
     {
-        for (uid, seen) in imap::fetch_flags(session, oldest).await? {
-            if let Some((id, local_seen)) = local_by_uid.get(&uid)
-                && *local_seen != seen
+        for (uid, seen, flagged) in imap::fetch_flags(session, oldest).await? {
+            if let Some((id, local_seen, local_flagged)) = local_by_uid.get(&uid)
+                && (*local_seen != seen || *local_flagged != flagged)
             {
-                sqlx::query("UPDATE messages SET seen = ? WHERE id = ?")
+                sqlx::query("UPDATE messages SET seen = ?, flagged = ? WHERE id = ?")
                     .bind(seen)
+                    .bind(flagged)
                     .bind(id)
                     .execute(db)
                     .await?;
@@ -256,7 +257,17 @@ async fn sync_folder(
     let mut to_junk: Vec<u32> = Vec::new();
     for batch in missing.chunks(FETCH_BATCH) {
         for fetched in imap::fetch_full(session, batch).await? {
-            match store::store_message(state, account, folder, Some(fetched.uid), fetched.seen, &fetched.body).await {
+            match store::store_message(
+                state,
+                account,
+                folder,
+                Some(fetched.uid),
+                fetched.seen,
+                fetched.flagged,
+                &fetched.body,
+            )
+            .await
+            {
                 Ok(Some(stored)) if stored.junk_sender && folder.role == "inbox" => to_junk.push(fetched.uid),
                 Ok(_) => {}
                 Err(e) => tracing::warn!(account = account.id, uid = fetched.uid, "cannot store message: {e:#}"),

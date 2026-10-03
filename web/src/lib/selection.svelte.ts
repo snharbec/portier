@@ -11,6 +11,7 @@ export function createSelection() {
 			for (const id of all) ids.add(id);
 		},
 		clear: () => ids.clear(),
+		all: () => [...ids],
 		visible: <T,>(items: T[], idOf: (item: T) => number) => items.filter((item) => ids.has(idOf(item)))
 	};
 }

@@ -813,6 +813,115 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn important_and_delay_take_a_conversation_out_of_the_inbox() {
+        let (app, state) = test_app().await;
+        let admin = json!({ "email": "admin@example.org", "password": "password1" });
+        let (_, cookie, _) = call(&app, "POST", "/api/register", None, Some(admin)).await;
+        let cookie = cookie.unwrap();
+        let bob = json!({ "email": "bob@example.org", "password": "password2" });
+        call(&app, "POST", "/api/users", Some(&cookie), Some(bob.clone())).await;
+        let (_, bob_cookie, _) = call(&app, "POST", "/api/login", None, Some(bob)).await;
+        let bob_cookie = bob_cookie.unwrap();
+        let (thread, message, sender) = seed_mail(&state, 1).await;
+        let db = &state.db;
+        sqlx::query("UPDATE senders SET category = 'important' WHERE id = ?")
+            .bind(sender)
+            .execute(db)
+            .await
+            .unwrap();
+
+        // (inbox, important, delayed) list lengths
+        let lists = async || -> (usize, usize, usize) {
+            let mut lengths = Vec::new();
+            for mailbox in ["important", "flagged", "delayed"] {
+                let path = format!("/api/threads?box={mailbox}");
+                let (_, _, body) = call(&app, "GET", &path, Some(&cookie), None).await;
+                lengths.push(body.as_array().unwrap().len());
+            }
+            (lengths[0], lengths[1], lengths[2])
+        };
+        let act = async |who: &str, body: Value| call(&app, "POST", "/api/mail/actions", Some(who), Some(body)).await;
+        let counts = async || call(&app, "GET", "/api/counts", Some(&cookie), None).await.2;
+        assert_eq!(lists().await, (1, 0, 0));
+
+        // Another user cannot move it.
+        let (_, _, body) = act(&bob_cookie, json!({ "action": "important", "thread_ids": [thread] })).await;
+        assert_eq!(body["affected"], 0);
+        let (_, _, body) = act(
+            &bob_cookie,
+            json!({ "action": "delay", "thread_ids": [thread], "days": 1 }),
+        )
+        .await;
+        assert_eq!(body["affected"], 0);
+        assert_eq!(lists().await, (1, 0, 0));
+
+        // Important: leaves the inbox, and the unread count goes with it.
+        act(&cookie, json!({ "action": "important", "thread_ids": [thread] })).await;
+        assert_eq!(lists().await, (0, 1, 0));
+        let c = counts().await;
+        assert_eq!(
+            (c["unread_important"].as_i64(), c["unread_flagged"].as_i64()),
+            (Some(0), Some(1))
+        );
+        let (_, _, detail) = call(&app, "GET", &format!("/api/threads/{thread}"), Some(&cookie), None).await;
+        assert_eq!(detail["important"], true);
+        let (_, _, page) = call(&app, "GET", "/api/feed?box=flagged", Some(&cookie), None).await;
+        assert_eq!(page.as_array().unwrap().len(), 1);
+        // And back, here by single mail as from a search result.
+        act(&cookie, json!({ "action": "unimportant", "message_ids": [message] })).await;
+        assert_eq!(lists().await, (1, 0, 0));
+
+        // Delay: only the offered numbers of days.
+        let (status, _, _) = act(&cookie, json!({ "action": "delay", "thread_ids": [thread], "days": 5 })).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+        let (status, _, _) = act(&cookie, json!({ "action": "delay", "thread_ids": [thread] })).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+        act(&cookie, json!({ "action": "read", "thread_ids": [thread] })).await;
+        act(&cookie, json!({ "action": "delay", "thread_ids": [thread], "days": 2 })).await;
+        assert_eq!(lists().await, (0, 0, 1));
+        assert_eq!(counts().await["delayed"], 1);
+        let until: i64 = sqlx::query_scalar("SELECT snoozed_until FROM threads WHERE id = ?")
+            .bind(thread)
+            .fetch_one(db)
+            .await
+            .unwrap();
+        let ahead = until - crate::state::now();
+        assert!(ahead > 86_400 && ahead <= 3 * 86_400, "returns in {ahead} s");
+        let (_, _, detail) = call(&app, "GET", &format!("/api/threads/{thread}"), Some(&cookie), None).await;
+        assert_eq!(detail["snoozed_until"], until);
+
+        // Brought back early: in the inbox again, still read.
+        act(&cookie, json!({ "action": "undelay", "thread_ids": [thread] })).await;
+        assert_eq!(lists().await, (1, 0, 0));
+        assert_eq!(counts().await["unread_important"], 0);
+
+        // The delay runs out: back in the inbox, unread, marked as returned.
+        act(&cookie, json!({ "action": "delay", "thread_ids": [thread], "days": 1 })).await;
+        assert_eq!(crate::mail::delay::wake_due(&state).await.unwrap(), 0, "not due yet");
+        sqlx::query("UPDATE threads SET snoozed_until = ? WHERE id = ?")
+            .bind(crate::state::now() - 5)
+            .bind(thread)
+            .execute(db)
+            .await
+            .unwrap();
+        assert_eq!(crate::mail::delay::wake_due(&state).await.unwrap(), 1);
+        assert_eq!(lists().await, (1, 0, 0));
+        assert_eq!(counts().await["unread_important"], 1);
+        let (snoozed, returned): (Option<i64>, Option<i64>) =
+            sqlx::query_as("SELECT snoozed_until, returned_at FROM threads WHERE id = ?")
+                .bind(thread)
+                .fetch_one(db)
+                .await
+                .unwrap();
+        assert!(snoozed.is_none() && returned.is_some());
+        assert_eq!(
+            crate::mail::delay::wake_due(&state).await.unwrap(),
+            0,
+            "returned only once"
+        );
+    }
+
+    #[tokio::test]
     async fn classifying_moves_threads_between_views() {
         let (app, state) = test_app().await;
         let admin = json!({ "email": "admin@example.org", "password": "password1" });

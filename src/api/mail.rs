@@ -184,7 +184,19 @@ pub struct ThreadRow {
     has_attachments: bool,
     sender_name: Option<String>,
     sender_address: Option<String>,
+    /// When a delayed conversation returns to the inbox.
+    snoozed_until: Option<i64>,
 }
+
+/// SQL conditions on a thread `t`, shared by the lists, the counts and the one-page views.
+/// Received mail of it that is not archived:
+const RECEIVED: &str = "EXISTS (SELECT 1 FROM messages rm JOIN folders rf ON rf.id = rm.folder_id
+    WHERE rm.thread_id = t.id AND rm.is_outgoing = 0 AND rf.role != 'archive')";
+/// A flagged mail of it sits in the inbox: the conversation is in Important.
+const FLAGGED: &str = "EXISTS (SELECT 1 FROM messages fm JOIN folders ff ON ff.id = fm.folder_id
+    WHERE fm.thread_id = t.id AND fm.flagged = 1 AND ff.role = 'inbox')";
+/// It is delayed and has not come back yet.
+const DELAYED: &str = "(t.snoozed_until IS NOT NULL AND t.snoozed_until > unixepoch())";
 
 pub async fn threads(
     State(state): State<AppState>,
@@ -192,29 +204,28 @@ pub async fn threads(
     Query(q): Query<BoxQuery>,
 ) -> ApiResult<Json<Vec<ThreadRow>>> {
     let condition = match q.mailbox.as_str() {
-        // Threads the user started count as important once somebody answers.
-        "important" => {
-            "(t.sender_id IS NULL OR s.category = 'important')
-             AND EXISTS (SELECT 1 FROM messages m JOIN folders f ON f.id = m.folder_id
-                         WHERE m.thread_id = t.id AND m.is_outgoing = 0 AND f.role != 'archive')"
-        }
+        // Internally the Inbox is still called "important", after its sender category.
+        // Threads the user started belong to it once somebody answers.
+        "important" => format!(
+            "(t.sender_id IS NULL OR s.category = 'important') AND {RECEIVED} AND NOT {FLAGGED} AND NOT {DELAYED}"
+        ),
         // A conversation leaves its list once every received message of it is archived.
-        "feed" => {
-            "s.category = 'feed'
-             AND EXISTS (SELECT 1 FROM messages m JOIN folders f ON f.id = m.folder_id
-                         WHERE m.thread_id = t.id AND m.is_outgoing = 0 AND f.role != 'archive')"
-        }
-        "junk" => {
-            "s.category = 'junk'
-             AND EXISTS (SELECT 1 FROM messages m JOIN folders f ON f.id = m.folder_id
-                         WHERE m.thread_id = t.id AND m.is_outgoing = 0 AND f.role != 'archive')"
-        }
-        "archive" => {
-            "EXISTS (SELECT 1 FROM messages m JOIN folders f ON f.id = m.folder_id
-                     WHERE m.thread_id = t.id AND f.role = 'archive')"
-        }
-        "sent" => "EXISTS (SELECT 1 FROM messages m WHERE m.thread_id = t.id AND m.is_outgoing = 1)",
+        "feed" => format!("s.category = 'feed' AND {RECEIVED} AND NOT {FLAGGED} AND NOT {DELAYED}"),
+        "junk" => format!("s.category = 'junk' AND {RECEIVED}"),
+        // The Important list: conversations with a flagged mail in the inbox, whoever sent them.
+        "flagged" => format!("{FLAGGED} AND NOT {DELAYED}"),
+        "delayed" => DELAYED.to_string(),
+        "archive" => "EXISTS (SELECT 1 FROM messages m JOIN folders f ON f.id = m.folder_id
+                              WHERE m.thread_id = t.id AND f.role = 'archive')"
+            .to_string(),
+        "sent" => "EXISTS (SELECT 1 FROM messages m WHERE m.thread_id = t.id AND m.is_outgoing = 1)".to_string(),
         _ => return Err(ApiError::bad_request("unknown box")),
+    };
+    // A conversation that came back from a delay sorts by the moment it returned.
+    let order = if q.mailbox == "delayed" {
+        "t.snoozed_until, lm.date DESC"
+    } else {
+        "MAX(lm.date, COALESCE(t.returned_at, 0)) DESC, lm.id DESC"
     };
     let sql = format!(
         "SELECT t.id, t.subject,
@@ -222,13 +233,13 @@ pub async fn threads(
                 (SELECT COUNT(*) FROM messages m WHERE m.thread_id = t.id AND m.seen = 0 AND m.is_outgoing = 0) AS unread,
                 lm.date, lm.snippet, lm.from_name, lm.from_addr, lm.is_outgoing, lm.account_id,
                 EXISTS (SELECT 1 FROM messages m WHERE m.thread_id = t.id AND m.has_attachments = 1) AS has_attachments,
-                s.display_name AS sender_name, s.address AS sender_address
+                s.display_name AS sender_name, s.address AS sender_address, t.snoozed_until
          FROM threads t
          JOIN messages lm ON lm.id = (
              SELECT id FROM messages WHERE thread_id = t.id ORDER BY date DESC, id DESC LIMIT 1)
          LEFT JOIN senders s ON s.id = t.sender_id
          WHERE t.user_id = ? AND {condition}
-         ORDER BY lm.date DESC LIMIT 300"
+         ORDER BY {order} LIMIT 300"
     );
     Ok(Json(
         sqlx::query_as(sqlx::AssertSqlSafe(sql))
@@ -247,13 +258,26 @@ pub async fn counts(State(state): State<AppState>, user: CurrentUser) -> ApiResu
     .bind(user.id)
     .fetch_one(&state.db)
     .await?;
-    let unread: i64 = sqlx::query_scalar(
-        "SELECT COUNT(DISTINCT t.id) FROM threads t
+    let unread_threads = "SELECT COUNT(DISTINCT t.id) FROM threads t
          LEFT JOIN senders s ON s.id = t.sender_id
          JOIN messages m ON m.thread_id = t.id AND m.seen = 0 AND m.is_outgoing = 0
          JOIN folders f ON f.id = m.folder_id AND f.role != 'archive'
-         WHERE t.user_id = ? AND (t.sender_id IS NULL OR s.category = 'important')",
-    )
+         WHERE t.user_id = ?";
+    let unread: i64 = sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
+        "{unread_threads} AND (t.sender_id IS NULL OR s.category = 'important') AND NOT {FLAGGED} AND NOT {DELAYED}"
+    )))
+    .bind(user.id)
+    .fetch_one(&state.db)
+    .await?;
+    let unread_flagged: i64 = sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
+        "{unread_threads} AND {FLAGGED} AND NOT {DELAYED}"
+    )))
+    .bind(user.id)
+    .fetch_one(&state.db)
+    .await?;
+    let delayed: i64 = sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
+        "SELECT COUNT(*) FROM threads t WHERE t.user_id = ? AND {DELAYED}"
+    )))
     .bind(user.id)
     .fetch_one(&state.db)
     .await?;
@@ -261,9 +285,13 @@ pub async fn counts(State(state): State<AppState>, user: CurrentUser) -> ApiResu
         .bind(user.id)
         .fetch_one(&state.db)
         .await?;
-    Ok(Json(
-        json!({ "screener": screener, "unread_important": unread, "drafts": drafts }),
-    ))
+    Ok(Json(json!({
+        "screener": screener,
+        "unread_important": unread,
+        "unread_flagged": unread_flagged,
+        "delayed": delayed,
+        "drafts": drafts,
+    })))
 }
 
 // ---- Messages -------------------------------------------------------------------------------
@@ -405,9 +433,18 @@ pub async fn thread(State(state): State<AppState>, user: CurrentUser, Path(id): 
     .fetch_one(&state.db)
     .await?;
 
+    let (flagged, snoozed_until): (bool, Option<i64>) = sqlx::query_as(sqlx::AssertSqlSafe(format!(
+        "SELECT {FLAGGED}, CASE WHEN {DELAYED} THEN t.snoozed_until END FROM threads t WHERE t.id = ?"
+    )))
+    .bind(id)
+    .fetch_one(&state.db)
+    .await?;
+
     Ok(Json(json!({
         "id": id,
         "can_archive": can_archive,
+        "important": flagged,
+        "snoozed_until": snoozed_until,
         "subject": head.0,
         "sender": head.1.map(|sender_id| json!({
             "id": sender_id, "address": head.2, "display_name": head.3, "category": head.4,
@@ -438,7 +475,7 @@ pub async fn message(
 
 #[derive(Deserialize)]
 pub struct Page {
-    /// important | feed | junk | sent | archive
+    /// important (the Inbox) | flagged (Important) | feed | junk | sent | archive
     #[serde(rename = "box", default = "default_box")]
     mailbox: String,
     #[serde(default)]
@@ -458,13 +495,17 @@ pub async fn feed(
     Query(page): Query<Page>,
 ) -> ApiResult<Json<Vec<MessageView>>> {
     let condition = match page.mailbox.as_str() {
-        "important" => {
-            "m.is_outgoing = 0 AND f.role != 'archive' AND (t.sender_id IS NULL OR ts.category = 'important')"
-        }
-        "feed" => "m.is_outgoing = 0 AND f.role != 'archive' AND ts.category = 'feed'",
-        "junk" => "m.is_outgoing = 0 AND f.role != 'archive' AND ts.category = 'junk'",
-        "sent" => "m.is_outgoing = 1",
-        "archive" => "f.role = 'archive'",
+        "important" => format!(
+            "m.is_outgoing = 0 AND f.role != 'archive' AND (t.sender_id IS NULL OR ts.category = 'important')
+             AND NOT {FLAGGED} AND NOT {DELAYED}"
+        ),
+        "feed" => format!(
+            "m.is_outgoing = 0 AND f.role != 'archive' AND ts.category = 'feed' AND NOT {FLAGGED} AND NOT {DELAYED}"
+        ),
+        "junk" => "m.is_outgoing = 0 AND f.role != 'archive' AND ts.category = 'junk'".to_string(),
+        "flagged" => format!("m.is_outgoing = 0 AND f.role != 'archive' AND {FLAGGED} AND NOT {DELAYED}"),
+        "sent" => "m.is_outgoing = 1".to_string(),
+        "archive" => "f.role = 'archive'".to_string(),
         _ => return Err(ApiError::bad_request("unknown box")),
     };
     let rows: Vec<MessageRow> = sqlx::query_as(sqlx::AssertSqlSafe(format!(

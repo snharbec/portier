@@ -489,7 +489,7 @@ pub async fn send(State(state): State<AppState>, user: CurrentUser, Path(id): Pa
     };
     match store::ensure_folder(&state.db, account.id, sent_name, "sent").await {
         Ok(folder) => {
-            if let Err(e) = store::store_message(&state, &account, &folder, None, true, &raw).await {
+            if let Err(e) = store::store_message(&state, &account, &folder, None, true, false, &raw).await {
                 tracing::warn!("sent message not stored locally: {e:#}");
             }
         }

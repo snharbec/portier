@@ -13,18 +13,15 @@
 
 	$effect(() => {
 		app.tick;
-		api.get<ThreadSummary[]>('/threads?box=sent')
+		api.get<ThreadSummary[]>('/threads?box=delayed')
 			.then((list) => (threads = list))
 			.catch((e) => (error = e.message));
 	});
 </script>
 
 <div class="page-head">
-	<h1>Sent</h1>
-	<p></p>
-	{#if threads?.length}
-		<p class="tools"><a class="btn small" href="/read/sent">Read all on one page</a></p>
-	{/if}
+	<h1>Delayed</h1>
+	<p>Out of the way until the morning they return to the Inbox, unread.</p>
 </div>
 
 {#if error}
@@ -33,8 +30,8 @@
 	<p class="empty" aria-busy="true">Loading</p>
 {:else if threads.length === 0}
 	<div class="empty sheet">
-		<strong>Nothing sent yet</strong>
-		Conversations you wrote in appear here.
+		<strong>Nothing is delayed</strong>
+		Delay a conversation by 1, 2, 3 or 7 days and it waits here until then.
 	</div>
 {:else}
 	<SelectAll
@@ -47,7 +44,7 @@
 {/if}
 
 <SelectionBar
-	list="other"
+	list="delayed"
 	threadIds={picked.map((t) => t.id)}
 	accountIds={[...new Set(picked.map((t) => t.account_id))]}
 	total={threads?.length ?? 0}

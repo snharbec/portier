@@ -28,6 +28,18 @@ export function fullDate(timestamp: number): string {
 	});
 }
 
+/** Day and time a delayed conversation returns, e.g. "Mon, 7:00" or "12 Oct, 7:00". */
+export function returnTime(timestamp: number): string {
+	const date = new Date(timestamp * 1000);
+	const time = date.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' });
+	const days = (date.getTime() - Date.now()) / 86_400_000;
+	const day =
+		days < 6
+			? date.toLocaleDateString(undefined, { weekday: 'long' })
+			: date.toLocaleDateString(undefined, { day: 'numeric', month: 'short' });
+	return `${day}, ${time}`;
+}
+
 export function fileSize(bytes: number): string {
 	if (bytes < 1024) return `${bytes} B`;
 	if (bytes < 1024 * 1024) return `${Math.round(bytes / 1024)} KB`;

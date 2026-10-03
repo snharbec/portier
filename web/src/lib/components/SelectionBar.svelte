@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { mailAction } from '#lib/swipe.ts';
+	import DelayMenu from './DelayMenu.svelte';
 	import FolderPicker from './FolderPicker.svelte';
 
 	let {
@@ -8,6 +9,7 @@
 		accountIds,
 		total,
 		archivable = true,
+		list = 'inbox',
 		onselectall,
 		onclear,
 		ondone
@@ -21,6 +23,12 @@
 		total: number;
 		/** Off in the Archive list, where everything is archived already. */
 		archivable?: boolean;
+		/**
+		 * Which list the bar serves: 'inbox' offers Important and Delay, 'important' and 'delayed'
+		 * offer the way back, 'mixed' (the Inbox page, which also shows Important) offers both
+		 * directions, 'other' (Junk, Sent, Archive) offers neither.
+		 */
+		list?: 'inbox' | 'important' | 'delayed' | 'mixed' | 'other';
 		onselectall: () => void;
 		onclear: () => void;
 		/** Called after an action succeeded, to drop the selection and reload. */
@@ -34,7 +42,9 @@
 	let error = $state('');
 	let picker: FolderPicker;
 
-	async function run(action: 'read' | 'unread' | 'archive' | 'trash' | 'move', done: string, extra: Record<string, unknown> = {}) {
+	type Action = 'read' | 'unread' | 'important' | 'unimportant' | 'delay' | 'undelay' | 'archive' | 'trash' | 'move';
+
+	async function run(action: Action, done: string, extra: Record<string, unknown> = {}) {
 		busy = true;
 		error = '';
 		try {
@@ -62,6 +72,23 @@
 		<span class="spacer"></span>
 		<button class="btn small" disabled={busy} onclick={() => run('read', 'Marked as read:')}>Mark as read</button>
 		<button class="btn small" disabled={busy} onclick={() => run('unread', 'Marked as unread:')}>Mark as unread</button>
+		{#if list === 'inbox' || list === 'mixed'}
+			<button class="btn small" disabled={busy} onclick={() => run('important', 'Moved to Important:')}>
+				Important
+			</button>
+		{/if}
+		{#if list === 'important' || list === 'mixed'}
+			<button class="btn small" disabled={busy} onclick={() => run('unimportant', 'Moved to Inbox:')}>
+				Move to Inbox
+			</button>
+		{:else if list === 'delayed'}
+			<button class="btn small" disabled={busy} onclick={() => run('undelay', 'Back in the Inbox:')}>
+				Back to Inbox now
+			</button>
+		{/if}
+		{#if list === 'inbox' || list === 'important' || list === 'mixed'}
+			<DelayMenu up disabled={busy} onpick={(days) => run('delay', `Delayed for ${days} ${days === 1 ? 'day' : 'days'}:`, { days })} />
+		{/if}
 		{#if archivable}
 			<button class="btn small" disabled={busy} onclick={() => run('archive', 'Archived:')}>Archive</button>
 		{/if}

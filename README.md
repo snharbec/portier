@@ -7,6 +7,15 @@ Screener until you put them in one of three places:
 - **Nice to know**: newsletters and updates, kept out of the way of the Inbox
 - **Junk**: hidden, and moved to the Junk folder of the mail account
 
+**Important** is a list below the Inbox for conversations you want set apart. Drag a row by its
+handle onto Important in the side bar, use the button in the selection bar, or press `i` while
+reading; the same ways lead back to the Inbox. It is stored as the mail server's "flagged" mark,
+so other mail programs show it as flag or star, and mail flagged there appears in Important.
+
+**Delay** takes a conversation out of the Inbox for 1, 2, 3 or 7 days. It waits in the Delayed
+list and returns at 7:00 (server time) on that day, unread and at the top. A new mail in the
+conversation ends the delay early. Delays are kept in Email Screen only.
+
 **Archive** files a mail away from any list or from the mail itself: it moves to the account's
 Archive folder on the server and shows in the Archive list.
 
@@ -102,5 +111,5 @@ each time, so `received:last month` keeps meaning the previous month.
 
 `c` write, `/` search field, `m` menu, `1` Inbox, `2` Screener, `3` Nice to know, `4` Attachments.
 In the attachment viewer the left and right arrows step through files and Escape closes it.
-In the Screener `i` / `k` / `j` decide the first sender. In a conversation `r` reply, `u` mark as unread, `e` archive, `d` move to Trash,
+In the Screener `i` / `k` / `j` decide the first sender. In a conversation `r` reply, `u` mark as unread, `i` important, `z` delay (then `1`, `2`, `3` or `7`), `e` archive, `d` move to Trash,
 `a` reply all, `f` forward.

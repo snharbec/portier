@@ -47,6 +47,7 @@
 {/if}
 
 <SelectionBar
+	list="other"
 	archivable={false}
 	threadIds={picked.map((t) => t.id)}
 	accountIds={[...new Set(picked.map((t) => t.account_id))]}

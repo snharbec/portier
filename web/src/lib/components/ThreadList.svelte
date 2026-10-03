@@ -2,7 +2,8 @@
 	import type { ThreadSummary } from '#lib/api.ts';
 	import { app } from '#lib/app.svelte.ts';
 	import { page } from '$app/state';
-	import { displayName, hue, shortDate } from '#lib/format.ts';
+	import { startDrag } from '#lib/drag.ts';
+	import { displayName, hue, returnTime, shortDate } from '#lib/format.ts';
 	import { startReading } from '#lib/reading.ts';
 	import type { Selection } from '#lib/selection.svelte.ts';
 	import { swipeLabel, swipeMail, type SwipeAction } from '#lib/swipe.ts';
@@ -28,6 +29,13 @@
 
 	let picker: FolderPicker;
 
+	/** Dragging a ticked row takes every ticked conversation along; otherwise just that one. */
+	function dragged(event: DragEvent, thread: ThreadSummary) {
+		const ticked = selection?.has(thread.id) ? selection.all() : [];
+		const row = (event.currentTarget as HTMLElement).closest('li') ?? undefined;
+		startDrag(event, { threadIds: ticked.length ? ticked : [thread.id], from: page.url.pathname }, row);
+	}
+
 	function slide(action: SwipeAction, thread: ThreadSummary) {
 		swipeMail(
 			action,
@@ -50,6 +58,15 @@
 				onaction={(action) => slide(action, thread)}
 				tinted={selection?.has(thread.id)}
 			>
+			<span
+				class="grip"
+				draggable="true"
+				ondragstart={(event) => dragged(event, thread)}
+				title="Drag to Inbox, Important or Archive in the side bar"
+				aria-hidden="true"
+			>
+				<svg viewBox="0 0 10 16"><path d="M2 2h.01M2 8h.01M2 14h.01M8 2h.01M8 8h.01M8 14h.01" /></svg>
+			</span>
 			{#if selection}
 				<label class="pick">
 					<input
@@ -71,6 +88,9 @@
 						<time>{shortDate(thread.date)}</time>
 					</span>
 					<span class="subject">{thread.subject || '(no subject)'}</span>
+					{#if thread.snoozed_until}
+						<span class="returns">Returns {returnTime(thread.snoozed_until)}</span>
+					{/if}
 					<span class="snippet">
 						{#if thread.is_outgoing}<span class="you">You:</span>{/if}
 						{thread.snippet}
@@ -150,6 +170,39 @@
 	.snippet {
 		color: var(--ink-soft);
 		font-size: 0.925rem;
+	}
+	.returns {
+		font-size: 0.85rem;
+		font-weight: 600;
+		color: var(--feed);
+	}
+	/* Handle for dragging a row to the side bar; only where the side bar and a mouse exist. */
+	.grip {
+		display: none;
+	}
+	@media (min-width: 69rem) and (hover: hover) {
+		.grip {
+			flex: none;
+			display: grid;
+			place-items: center;
+			width: 1.1rem;
+			margin-right: -0.55rem;
+			cursor: grab;
+			opacity: 0;
+		}
+		li:hover .grip {
+			opacity: 0.55;
+		}
+		.grip:hover {
+			opacity: 1 !important;
+		}
+		.grip svg {
+			width: 0.6rem;
+			fill: none;
+			stroke: var(--ink-soft);
+			stroke-width: 2.4;
+			stroke-linecap: round;
+		}
 	}
 	.you {
 		font-weight: 600;

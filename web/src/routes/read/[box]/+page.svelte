@@ -12,6 +12,7 @@
 	const PAGE = 20;
 	const lists: Record<string, { title: string; back: string }> = {
 		important: { title: 'Inbox', back: '/' },
+		flagged: { title: 'Important', back: '/important' },
 		feed: { title: 'Nice to know', back: '/feed' },
 		junk: { title: 'Junk', back: '/junk' },
 		sent: { title: 'Sent', back: '/sent' },
@@ -125,6 +126,7 @@
 
 	<SelectionBar
 		archivable={box !== 'archive'}
+		list={box === 'flagged' ? 'important' : box === 'important' || box === 'feed' ? 'inbox' : 'other'}
 		messageIds={picked.map((m) => m.id)}
 		accountIds={[...new Set(picked.map((m) => m.account_id))]}
 		total={messages?.length ?? 0}

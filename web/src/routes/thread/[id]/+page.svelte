@@ -5,7 +5,8 @@
 	import { app, categoryNames, classify, notify, refreshCounts, startDraft } from '#lib/app.svelte.ts';
 	import ClassifyButtons from '#lib/components/ClassifyButtons.svelte';
 	import MessageCard from '#lib/components/MessageCard.svelte';
-	import { displayName } from '#lib/format.ts';
+	import DelayMenu from '#lib/components/DelayMenu.svelte';
+	import { displayName, returnTime } from '#lib/format.ts';
 	import { afterRemoving } from '#lib/reading.ts';
 	import { rememberSearch, resultPath, search } from '#lib/search.svelte.ts';
 	import { mailAction } from '#lib/swipe.ts';
@@ -97,16 +98,27 @@
 
 	const trash = () => putAway('trash', 'Moved to Trash: 1 conversation');
 	const archive = () => putAway('archive', 'Archived: 1 conversation');
+	/** Important and Inbox are two lists; the key i moves the conversation to the other one. */
+	const toggleImportant = () =>
+		thread?.important
+			? putAway('unimportant', 'Moved to Inbox: 1 conversation')
+			: putAway('important', 'Moved to Important: 1 conversation');
+	const delay = (days: number) =>
+		putAway('delay', `Delayed for ${days} ${days === 1 ? 'day' : 'days'}: 1 conversation`, { days });
+	const undelay = () => putAway('undelay', 'Back in the Inbox: 1 conversation');
+	let delayMenu: DelayMenu | undefined = $state();
 
-	/** Moves the whole conversation to Trash or the Archive, then goes on to where the reader came from. */
-	async function putAway(action: 'trash' | 'archive', done: string) {
+	type PutAway = 'trash' | 'archive' | 'important' | 'unimportant' | 'delay' | 'undelay';
+
+	/** Takes the whole conversation out of the list it is in, then goes on to where the reader came from. */
+	async function putAway(action: PutAway, done: string, extra: Record<string, unknown> = {}) {
 		if (!thread || trashing) return;
 		trashing = true;
 		const threadId = thread.id;
 		const position = hit;
 		try {
 			leaving = true;
-			await mailAction(action, { threadIds: [threadId] }, done);
+			await mailAction(action, { threadIds: [threadId] }, done, extra);
 		} catch (e) {
 			leaving = false;
 			notify((e as Error).message);
@@ -114,7 +126,11 @@
 			return;
 		}
 		trashing = false;
-		if (position >= 0 && search.hits) {
+		const gone = action === 'trash';
+		if (position >= 0 && search.hits && !gone) {
+			// Still findable: stay in the results and move on to the next one.
+			goto(position + 1 < search.hits.length ? resultPath(position + 1) : '/search', { replace: true });
+		} else if (position >= 0 && search.hits) {
 			// Opened from a search: drop its results and show the one that takes its place.
 			search.hits = search.hits.filter((h) => h.thread_id !== threadId);
 			rememberSearch();
@@ -138,6 +154,11 @@
 		else if (event.key === 'f') draft('forward');
 		else if (event.key === 'd') trash();
 		else if (event.key === 'u') markUnread();
+		else if (event.key === 'i' && thread?.can_archive) toggleImportant();
+		else if (event.key === 'z' && thread?.can_archive && !thread.snoozed_until) {
+			event.preventDefault();
+			delayMenu?.show();
+		}
 		else if (event.key === 'e' && thread?.can_archive) archive();
 		else if (hit >= 0 && event.key === 'p') toResult(hit - 1);
 		else if (hit >= 0 && event.key === 'n') toResult(hit + 1);
@@ -163,6 +184,9 @@
 	{/if}
 	<div class="page-head">
 		<h1>{thread.subject || '(no subject)'}</h1>
+		{#if thread.snoozed_until}
+			<p class="delayed">Delayed. Returns to the Inbox {returnTime(thread.snoozed_until)}.</p>
+		{/if}
 		{#if thread.sender}
 			<p class="sender">
 				<span title={thread.sender.address}>{displayName(thread.sender.display_name, thread.sender.address)}</span>
@@ -184,6 +208,14 @@
 				<button class="btn small" onclick={markUnread} disabled={trashing}>Mark as unread</button>
 			{/if}
 			{#if thread.can_archive}
+				<button class="btn small" onclick={toggleImportant} disabled={trashing}>
+					{thread.important ? 'Move to Inbox' : 'Important'}
+				</button>
+				{#if thread.snoozed_until}
+					<button class="btn small" onclick={undelay} disabled={trashing}>Back to Inbox now</button>
+				{:else}
+					<DelayMenu bind:this={delayMenu} onpick={delay} disabled={trashing} />
+				{/if}
 				<button class="btn small" onclick={archive} disabled={trashing}>Archive</button>
 			{/if}
 			<button class="btn small danger" onclick={trash} disabled={trashing}>Move to Trash</button>
@@ -198,7 +230,7 @@
 	{/each}
 
 	<p class="muted keys">
-		Keys: <kbd>r</kbd> reply, <kbd>a</kbd> reply all, <kbd>f</kbd> forward, {#if hasReceived}<kbd>u</kbd> mark as unread, {/if}{#if thread.can_archive}<kbd>e</kbd> archive, {/if}<kbd>d</kbd> move to Trash{#if hit >= 0}, <kbd>p</kbd> previous result,
+		Keys: <kbd>r</kbd> reply, <kbd>a</kbd> reply all, <kbd>f</kbd> forward, {#if hasReceived}<kbd>u</kbd> mark as unread, {/if}{#if thread.can_archive}<kbd>i</kbd> {thread.important ? 'move to Inbox' : 'important'}, <kbd>z</kbd> delay, <kbd>e</kbd> archive, {/if}<kbd>d</kbd> move to Trash{#if hit >= 0}, <kbd>p</kbd> previous result,
 			<kbd>n</kbd> next result{/if}
 	</p>
 {/if}
@@ -233,7 +265,12 @@
 	.tools {
 		margin: 0.75rem 0 0;
 		display: flex;
+		flex-wrap: wrap;
 		gap: 0.5rem;
+	}
+	.page-head .delayed {
+		color: var(--feed);
+		font-weight: 600;
 	}
 	.keys {
 		font-size: 0.85rem;

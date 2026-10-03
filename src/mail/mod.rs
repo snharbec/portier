@@ -1,4 +1,5 @@
 pub mod classify;
+pub mod delay;
 pub mod imap;
 pub mod parse;
 pub mod preview;

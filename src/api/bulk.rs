@@ -10,7 +10,7 @@ use serde_json::{Value, json};
 use crate::{
     auth::CurrentUser,
     error::{ApiError, ApiResult},
-    mail::{imap, store, sync},
+    mail::{delay, imap, store, sync},
     models::{Account, Folder},
     state::AppState,
 };
@@ -19,7 +19,7 @@ const MAX_SELECTION: usize = 1000;
 
 #[derive(Deserialize)]
 pub struct BulkInput {
-    /// read | unread | archive | trash | move
+    /// read | unread | important | unimportant | delay | undelay | archive | trash | move
     action: String,
     /// Whole conversations: every message in them is affected.
     #[serde(default)]
@@ -29,11 +29,14 @@ pub struct BulkInput {
     /// For `move`: the account whose folder is the target.
     account_id: Option<i64>,
     folder: Option<String>,
+    /// For `delay`: 1, 2, 3 or 7.
+    days: Option<i64>,
 }
 
 #[derive(sqlx::FromRow)]
 struct Target {
     id: i64,
+    thread_id: i64,
     account_id: i64,
     folder_id: i64,
     folder_name: String,
@@ -52,7 +55,7 @@ pub async fn apply(
     }
     // A message can exist twice (a copy in Sent and one in the inbox); selecting one means both.
     let targets: Vec<Target> = sqlx::query_as(
-        "SELECT m.id, m.account_id, f.id AS folder_id, f.name AS folder_name, f.role AS folder_role, m.uid,
+        "SELECT m.id, m.thread_id, m.account_id, f.id AS folder_id, f.name AS folder_name, f.role AS folder_role, m.uid,
                 m.is_outgoing
          FROM messages m JOIN folders f ON f.id = m.folder_id
          WHERE m.user_id = ?1
@@ -73,7 +76,19 @@ pub async fn apply(
     let affected = match input.action.as_str() {
         "read" => set_seen(&state, &targets, true).await?,
         "unread" => set_seen(&state, &targets, false).await?,
-        "archive" => archive(&state, user.id, targets).await?,
+        "important" => set_flagged(&state, &targets, true).await?,
+        "unimportant" => set_flagged(&state, &targets, false).await?,
+        "delay" => {
+            let days = input.days.filter(|d| delay::CHOICES.contains(d));
+            let days = days.ok_or_else(|| ApiError::bad_request("choose a delay of 1, 2, 3 or 7 days"))?;
+            set_delay(&state, user.id, &targets, Some(delay::return_time_from_now(days))).await?
+        }
+        "undelay" => set_delay(&state, user.id, &targets, None).await?,
+        "archive" => {
+            // Filed away for good: a delay must not bring it back.
+            set_delay(&state, user.id, &targets, None).await?;
+            archive(&state, user.id, targets).await?
+        }
         "trash" => relocate(&state, user.id, targets, None).await?,
         "move" => {
             let account_id = input
@@ -94,6 +109,54 @@ pub async fn apply(
     };
     state.notify(user.id, "mail");
     Ok(Json(json!({ "affected": affected })))
+}
+
+/// Important is the server's flag on mail in the inbox; other mail programs show it as flag or star.
+async fn set_flagged(state: &AppState, targets: &[Target], flagged: bool) -> ApiResult<usize> {
+    let in_inbox: Vec<&Target> = targets.iter().filter(|t| t.folder_role == "inbox").collect();
+    let ids: Vec<i64> = in_inbox.iter().map(|t| t.id).collect();
+    sqlx::query("UPDATE messages SET flagged = ? WHERE id IN (SELECT value FROM json_each(?))")
+        .bind(flagged)
+        .bind(serde_json::to_string(&ids).map_err(anyhow::Error::from)?)
+        .execute(&state.db)
+        .await?;
+
+    let mut by_folder: HashMap<(i64, String), Vec<u32>> = HashMap::new();
+    for target in &in_inbox {
+        if let Some(uid) = target.uid {
+            by_folder
+                .entry((target.account_id, target.folder_name.clone()))
+                .or_default()
+                .push(uid);
+        }
+    }
+    for ((account_id, folder), uids) in by_folder {
+        sync::spawn_action(state, account_id, "changing the flag", move |mut session| async move {
+            session.select(&folder).await?;
+            imap::set_flagged(&mut session, &uids, flagged).await?;
+            let _ = session.logout().await;
+            Ok(())
+        });
+    }
+    Ok(ids.len())
+}
+
+/// Delays the conversations of the selection until `until`, or ends their delay with `None`.
+/// Kept in Email Screen only: on the mail server nothing changes until the mail returns.
+async fn set_delay(state: &AppState, user_id: i64, targets: &[Target], until: Option<i64>) -> ApiResult<usize> {
+    let mut threads: Vec<i64> = targets.iter().map(|t| t.thread_id).collect();
+    threads.sort_unstable();
+    threads.dedup();
+    let result = sqlx::query(
+        "UPDATE threads SET snoozed_until = ?1, returned_at = CASE WHEN ?1 IS NULL THEN returned_at END
+         WHERE user_id = ?2 AND id IN (SELECT value FROM json_each(?3))",
+    )
+    .bind(until)
+    .bind(user_id)
+    .bind(serde_json::to_string(&threads).map_err(anyhow::Error::from)?)
+    .execute(&state.db)
+    .await?;
+    Ok(result.rows_affected() as usize)
 }
 
 /// Received mail only: your own sent messages have no unread state.

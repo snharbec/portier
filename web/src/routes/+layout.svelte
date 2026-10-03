@@ -5,6 +5,7 @@
 	import { app, loadSession, logout, startDraft } from '#lib/app.svelte.ts';
 	import type { SavedSearch } from '#lib/api.ts';
 	import Login from '#lib/components/Login.svelte';
+	import { carriesMail, dropOn, dropTargets } from '#lib/drag.ts';
 	import { runSearch, search } from '#lib/search.svelte.ts';
 	import { onMount } from 'svelte';
 
@@ -18,6 +19,8 @@
 
 	const places = $derived([
 		{ href: '/', icon: 'M4 13.5 6.5 5h11L20 13.5V19H4zM4 13.5h4.5l1 2.5h5l1-2.5H20', label: 'Inbox', hint: 'Mail from people you let in', key: '1', badge: app.counts.unread_important },
+		{ href: '/important', icon: 'M12 3.5l2.6 5.3 5.9.9-4.3 4.1 1 5.8L12 16.9l-5.2 2.7 1-5.8L3.5 9.7l5.9-.9z', label: 'Important', hint: 'Conversations you set apart', key: '', badge: app.counts.unread_flagged },
+		{ href: '/delayed', icon: 'M12 4a8 8 0 1 0 0 16 8 8 0 0 0 0-16zM12 8v4.5l3 2', label: 'Delayed', hint: 'Waiting to return to the Inbox', key: '', badge: 0 },
 		{ href: '/screener', icon: 'M4 5h16l-6 7.5V19l-4-2v-4.5z', label: 'Screener', hint: 'New senders waiting for your decision', key: '2', badge: app.counts.screener },
 		{ href: '/feed', icon: 'M5 5h11v14H7a2 2 0 0 1-2-2zM16 9h3v8a2 2 0 0 1-2 2M8 9h5M8 12.5h5M8 16h3', label: 'Nice to know', hint: 'Newsletters and updates, ready to read', key: '3', badge: 0 },
 		{ href: '/files', icon: 'M20 11.5l-8.1 8.1a5 5 0 0 1-7.1-7.1l8.5-8.5a3.3 3.3 0 0 1 4.7 4.7l-8.5 8.5a1.7 1.7 0 0 1-2.4-2.4l7.8-7.8', label: 'Attachments', hint: 'Files from the last four weeks', key: '4', badge: 0 },
@@ -56,6 +59,23 @@
 		search.query = saved.query;
 		clearTimeout(searchTimer);
 		runSearch();
+	}
+
+	/** Side bar entry a dragged conversation is over, for highlighting. */
+	let dropAt = $state<string | null>(null);
+
+	function dragover(event: DragEvent, href: string) {
+		if (!dropTargets[href] || !carriesMail(event)) return;
+		event.preventDefault();
+		event.dataTransfer!.dropEffect = 'move';
+		dropAt = href;
+	}
+
+	function drop(event: DragEvent, href: string) {
+		if (!dropTargets[href] || !carriesMail(event)) return;
+		event.preventDefault();
+		dropAt = null;
+		dropOn(href, event);
 	}
 
 	async function write() {
@@ -150,7 +170,14 @@
 		<ul>
 			{#each places as place}
 				<li>
-					<a href={place.href} aria-current={place.href === page.url.pathname ? 'page' : undefined}>
+					<a
+						href={place.href}
+						aria-current={place.href === page.url.pathname ? 'page' : undefined}
+						class:drop={dropAt === place.href}
+						ondragover={(event) => dragover(event, place.href)}
+						ondragleave={() => (dropAt = null)}
+						ondrop={(event) => drop(event, place.href)}
+					>
 						<svg viewBox="0 0 24 24" aria-hidden="true"><path d={place.icon} /></svg>
 						<span class="name">{place.label}</span>
 						{#if place.badge}<span class="badge">{place.badge}</span>{/if}
@@ -383,6 +410,11 @@
 	.rail a:hover {
 		color: var(--ink);
 		background: var(--surface);
+	}
+	.rail a.drop {
+		color: var(--ink);
+		background: var(--signal);
+		box-shadow: none;
 	}
 	.rail a[aria-current='page'] {
 		color: var(--ink);

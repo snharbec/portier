@@ -75,6 +75,7 @@ pub async fn store_message(
     folder: &Folder,
     uid: Option<u32>,
     seen: bool,
+    flagged: bool,
     raw: &[u8],
 ) -> Result<Option<Stored>> {
     let Some(mut p) = parse::parse(raw) else {
@@ -99,9 +100,10 @@ pub async fn store_message(
         .fetch_optional(db)
         .await?;
         if let Some(id) = pending {
-            sqlx::query("UPDATE messages SET uid = ?, seen = ? WHERE id = ?")
+            sqlx::query("UPDATE messages SET uid = ?, seen = ?, flagged = ? WHERE id = ?")
                 .bind(uid)
                 .bind(seen)
+                .bind(flagged)
                 .bind(id)
                 .execute(db)
                 .await?;
@@ -149,7 +151,16 @@ pub async fn store_message(
     }
 
     let thread_id = match find_thread(db, account.user_id, &p).await? {
-        Some(id) => id,
+        Some(id) => {
+            // A new mail in a delayed conversation ends the delay: the answer should not stay hidden.
+            if !is_outgoing {
+                sqlx::query("UPDATE threads SET snoozed_until = NULL WHERE id = ? AND snoozed_until IS NOT NULL")
+                    .bind(id)
+                    .execute(db)
+                    .await?;
+            }
+            id
+        }
         None => {
             sqlx::query_scalar("INSERT INTO threads (user_id, subject, sender_id) VALUES (?, ?, ?) RETURNING id")
                 .bind(account.user_id)
@@ -164,8 +175,8 @@ pub async fn store_message(
     let id: i64 = sqlx::query_scalar(
         "INSERT INTO messages (user_id, account_id, folder_id, uid, thread_id, sender_id, message_id,
              in_reply_to, refs, from_name, from_addr, to_addrs, cc_addrs, subject, date, snippet, seen,
-             is_outgoing, has_attachments, body_text, body_html)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id",
+             is_outgoing, has_attachments, body_text, body_html, flagged)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id",
     )
     .bind(account.user_id)
     .bind(account.id)
@@ -188,6 +199,7 @@ pub async fn store_message(
     .bind(visible_attachments)
     .bind(&p.body_text)
     .bind(&p.body_html)
+    .bind(flagged)
     .fetch_one(db)
     .await?;
 

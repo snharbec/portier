@@ -167,6 +167,7 @@ pub fn uid_set(uids: &[u32]) -> String {
 pub struct Fetched {
     pub uid: u32,
     pub seen: bool,
+    pub flagged: bool,
     pub body: Vec<u8>,
 }
 
@@ -182,14 +183,15 @@ pub async fn fetch_full(session: &mut Session, uids: &[u32]) -> Result<Vec<Fetch
             Some(Fetched {
                 uid: f.uid?,
                 seen: f.flags().any(|flag| flag == Flag::Seen),
+                flagged: f.flags().any(|flag| flag == Flag::Flagged),
                 body: f.body()?.to_vec(),
             })
         })
         .collect())
 }
 
-/// Returns (uid, seen) for every message with UID >= `from_uid`.
-pub async fn fetch_flags(session: &mut Session, from_uid: u32) -> Result<Vec<(u32, bool)>> {
+/// Returns (uid, seen, flagged) for every message with UID >= `from_uid`.
+pub async fn fetch_flags(session: &mut Session, from_uid: u32) -> Result<Vec<(u32, bool, bool)>> {
     let fetches: Vec<_> = session
         .uid_fetch(format!("{from_uid}:*"), "(UID FLAGS)")
         .await?
@@ -197,7 +199,13 @@ pub async fn fetch_flags(session: &mut Session, from_uid: u32) -> Result<Vec<(u3
         .await?;
     Ok(fetches
         .iter()
-        .filter_map(|f| Some((f.uid?, f.flags().any(|flag| flag == Flag::Seen))))
+        .filter_map(|f| {
+            Some((
+                f.uid?,
+                f.flags().any(|flag| flag == Flag::Seen),
+                f.flags().any(|flag| flag == Flag::Flagged),
+            ))
+        })
         .collect())
 }
 
@@ -224,6 +232,24 @@ pub async fn move_uids(session: &mut Session, uids: &[u32], target: &str) -> Res
             .await?;
         session.expunge().await?.try_collect::<Vec<_>>().await?;
     }
+    Ok(())
+}
+
+/// Sets or clears \\Flagged, the mark other mail programs show as a flag or star.
+pub async fn set_flagged(session: &mut Session, uids: &[u32], flagged: bool) -> Result<()> {
+    if uids.is_empty() {
+        return Ok(());
+    }
+    let change = if flagged {
+        "+FLAGS.SILENT (\\Flagged)"
+    } else {
+        "-FLAGS.SILENT (\\Flagged)"
+    };
+    session
+        .uid_store(uid_set(uids), change)
+        .await?
+        .try_collect::<Vec<_>>()
+        .await?;
     Ok(())
 }
 

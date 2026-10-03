@@ -41,7 +41,7 @@
 	function down(event: PointerEvent) {
 		if (event.button !== 0 || !(left.length || right.length)) return;
 		const target = event.target as HTMLElement;
-		if (target.closest('.pane, .pick')) return;
+		if (target.closest('.pane, .pick, .grip')) return;
 		pointer = event.pointerId;
 		startX = event.clientX;
 		startY = event.clientY;
@@ -122,7 +122,10 @@
 	onpointerup={up}
 	onpointercancel={cancel}
 	onclickcapture={click}
-	ondragstart={(event) => event.preventDefault()}
+	ondragstart={(event) => {
+		// Only the grip starts a real drag; elsewhere a mouse drag is the slide gesture.
+		if (!(event.target as HTMLElement).closest('.grip')) event.preventDefault();
+	}}
 >
 	{#each [{ side: 'start', list: right, shown: offset > 0 }, { side: 'end', list: left, shown: offset < 0 }] as pane}
 		{#if pane.list.length && pane.shown}

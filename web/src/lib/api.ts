@@ -69,6 +69,8 @@ export interface ThreadSummary {
 	has_attachments: boolean;
 	sender_name: string | null;
 	sender_address: string | null;
+	/** When a delayed conversation returns to the inbox. */
+	snoozed_until: number | null;
 }
 
 export interface Attachment {
@@ -102,6 +104,10 @@ export interface Thread {
 	id: number;
 	/** Some received mail of it is still in the inbox, so it can be archived. */
 	can_archive: boolean;
+	/** It is in the Important list (a mail of it is flagged). */
+	important: boolean;
+	/** Delayed until then, or null. */
+	snoozed_until: number | null;
 	subject: string;
 	sender: { id: number; address: string; display_name: string; category: Category | null } | null;
 	messages: Message[];
@@ -157,7 +163,11 @@ export interface SavedSearch {
 
 export interface Counts {
 	screener: number;
+	/** Unread conversations in the Inbox (named after its sender category). */
 	unread_important: number;
+	/** Unread conversations in the Important list. */
+	unread_flagged: number;
+	delayed: number;
 	drafts: number;
 }
 
