@@ -163,19 +163,28 @@ pub async fn pdf(
     if let Ok(bytes) = tokio::fs::read(&cached).await {
         return Ok((headers("application/octet-stream"), bytes));
     }
+    // A document LibreOffice could not read once will not read better next time.
+    let failed = dir.join(format!("{idx}.nopdf"));
+    let unreadable = || no_preview("this document could not be converted for preview");
+    if tokio::fs::try_exists(&failed).await.unwrap_or(false) {
+        return Err(unreadable());
+    }
 
     // LibreOffice is heavy; convert one document at a time.
     let _permit = state.convert.acquire().await.map_err(anyhow::Error::from)?;
     if let Ok(bytes) = tokio::fs::read(&cached).await {
         return Ok((headers("application/octet-stream"), bytes));
     }
-    let bytes = preview::office_to_pdf(&soffice, &state.config.data_dir, &part.data, &part.filename)
-        .await
-        .map_err(|e| {
-            tracing::warn!(message = id, "Office preview failed: {e:#}");
-            no_preview("this document could not be converted for preview")
-        })?;
     tokio::fs::create_dir_all(&dir).await?;
+    let converted = preview::office_to_pdf(&soffice, &state.config.data_dir, &part.data, &part.filename).await;
+    let bytes = match converted {
+        Ok(bytes) => bytes,
+        Err(e) => {
+            tracing::warn!(message = id, "Office preview failed: {e:#}");
+            tokio::fs::write(&failed, b"").await?;
+            return Err(unreadable());
+        }
+    };
     tokio::fs::write(&cached, &bytes).await?;
     Ok((headers("application/octet-stream"), bytes))
 }
