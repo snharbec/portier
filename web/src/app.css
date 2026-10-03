@@ -1,0 +1,217 @@
+@import '@fontsource-variable/bricolage-grotesque';
+@import '@fontsource-variable/instrument-sans';
+
+:root {
+	--paper: #f2f4f9;
+	--surface: #ffffff;
+	--ink: #14213d;
+	--ink-soft: #55607a;
+	--line: #d9deea;
+	--important: #2f4be0;
+	--feed: #0b7f6d;
+	--junk: #b4264a;
+	--signal: #ffc83d;
+	--signal-ink: #3d2c00;
+
+	--display: 'Bricolage Grotesque Variable', system-ui, sans-serif;
+	--body: 'Instrument Sans Variable', system-ui, sans-serif;
+
+	--column: 46rem;
+	--radius: 14px;
+	color-scheme: light dark;
+}
+
+@media (prefers-color-scheme: dark) {
+	:root {
+		--paper: #0f1524;
+		--surface: #182036;
+		--ink: #e9edf7;
+		--ink-soft: #9aa5c0;
+		--line: #2b3552;
+		--important: #8498ff;
+		--feed: #45c8b2;
+		--junk: #ff7d9c;
+	}
+}
+
+*,
+*::before,
+*::after {
+	box-sizing: border-box;
+}
+
+body {
+	margin: 0;
+	background: var(--paper);
+	color: var(--ink);
+	font: 400 1rem/1.5 var(--body);
+	-webkit-font-smoothing: antialiased;
+}
+
+h1,
+h2,
+h3 {
+	font-family: var(--display);
+	font-weight: 700;
+	line-height: 1.15;
+	letter-spacing: -0.02em;
+	margin: 0;
+}
+h1 {
+	font-size: 2.25rem;
+}
+h2 {
+	font-size: 1.25rem;
+}
+
+a {
+	color: inherit;
+}
+
+button,
+input,
+select,
+textarea {
+	font: inherit;
+	color: inherit;
+}
+
+:focus-visible {
+	outline: 3px solid var(--signal);
+	outline-offset: 2px;
+}
+
+.column {
+	width: min(var(--column), 100% - 2rem);
+	margin-inline: auto;
+}
+
+.page-head {
+	padding: 2.5rem 0 1.25rem;
+}
+.page-head p {
+	margin: 0.4rem 0 0;
+	color: var(--ink-soft);
+	max-width: 60ch;
+}
+
+.section-title {
+	font: 600 0.9rem var(--body);
+	color: var(--ink-soft);
+	margin: 1.75rem 0 0.5rem;
+}
+
+.sheet {
+	background: var(--surface);
+	border: 1px solid var(--line);
+	border-radius: var(--radius);
+	overflow: hidden;
+}
+
+.btn {
+	display: inline-flex;
+	align-items: center;
+	gap: 0.4rem;
+	padding: 0.5rem 0.95rem;
+	border: 1px solid var(--line);
+	border-radius: 999px;
+	background: var(--surface);
+	font-weight: 600;
+	cursor: pointer;
+	text-decoration: none;
+	white-space: nowrap;
+}
+.btn:hover {
+	border-color: var(--ink-soft);
+}
+.btn:disabled {
+	opacity: 0.55;
+	cursor: default;
+}
+.btn.primary {
+	background: var(--important);
+	border-color: var(--important);
+	color: #fff;
+}
+@media (prefers-color-scheme: dark) {
+	.btn.primary {
+		color: #0f1524;
+	}
+}
+.btn.quiet {
+	border-color: transparent;
+	background: transparent;
+	color: var(--ink-soft);
+}
+.btn.quiet:hover {
+	color: var(--ink);
+}
+.btn.danger {
+	color: var(--junk);
+}
+.btn.small {
+	padding: 0.25rem 0.7rem;
+	font-size: 0.875rem;
+}
+
+.field {
+	display: grid;
+	gap: 0.25rem;
+	font-size: 0.9rem;
+	font-weight: 600;
+}
+.field input,
+.field select,
+.input {
+	width: 100%;
+	padding: 0.55rem 0.7rem;
+	border: 1px solid var(--line);
+	border-radius: 9px;
+	background: var(--surface);
+	font-weight: 400;
+	font-size: 1rem;
+}
+
+.error {
+	color: var(--junk);
+	font-weight: 600;
+}
+.muted {
+	color: var(--ink-soft);
+}
+.empty {
+	padding: 3rem 1.5rem;
+	text-align: center;
+	color: var(--ink-soft);
+}
+.empty strong {
+	display: block;
+	font: 700 1.25rem var(--display);
+	color: var(--ink);
+	margin-bottom: 0.3rem;
+}
+
+.tag {
+	display: inline-block;
+	padding: 0.05rem 0.55rem;
+	border-radius: 999px;
+	font-size: 0.8rem;
+	font-weight: 600;
+	border: 1.5px solid currentColor;
+}
+.tag.important {
+	color: var(--important);
+}
+.tag.feed {
+	color: var(--feed);
+}
+.tag.junk {
+	color: var(--junk);
+}
+
+@media (prefers-reduced-motion: reduce) {
+	* {
+		transition: none !important;
+		animation: none !important;
+	}
+}

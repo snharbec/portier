@@ -1,0 +1,189 @@
+export type Category = 'important' | 'feed' | 'junk';
+
+export interface User {
+	id: number;
+	email: string;
+	is_admin: boolean;
+}
+
+export interface Account {
+	id: number;
+	label: string;
+	address: string;
+	display_name: string;
+	imap_host: string;
+	imap_port: number;
+	imap_security: string;
+	imap_username: string;
+	smtp_host: string;
+	smtp_port: number;
+	smtp_security: string;
+	smtp_username: string;
+	inbox_folder: string;
+	junk_folder: string;
+	sent_folder: string;
+	append_sent: boolean;
+	last_error: string | null;
+	last_sync_at: number | null;
+}
+
+export interface Addr {
+	name: string;
+	address: string;
+}
+
+export interface ScreenerEntry {
+	id: number;
+	address: string;
+	display_name: string;
+	count: number;
+	message_id: number;
+	thread_id: number;
+	subject: string;
+	snippet: string;
+	date: number;
+}
+
+export interface Sender {
+	id: number;
+	address: string;
+	display_name: string;
+	category: Category | null;
+	decided_at: number | null;
+	count: number;
+}
+
+export interface ThreadSummary {
+	id: number;
+	subject: string;
+	count: number;
+	unread: number;
+	date: number;
+	snippet: string;
+	from_name: string;
+	from_addr: string;
+	is_outgoing: boolean;
+	account_id: number;
+	has_attachments: boolean;
+	sender_name: string | null;
+	sender_address: string | null;
+}
+
+export interface Attachment {
+	idx: number;
+	filename: string;
+	mime: string;
+	size: number;
+}
+
+export interface Message {
+	id: number;
+	thread_id: number;
+	account_id: number;
+	sender_id: number | null;
+	sender_category: Category | null;
+	from: Addr;
+	to: Addr[];
+	cc: Addr[];
+	subject: string;
+	date: number;
+	seen: boolean;
+	is_outgoing: boolean;
+	body_text: string;
+	body_html: string;
+	attachments: Attachment[];
+}
+
+export interface Thread {
+	id: number;
+	subject: string;
+	sender: { id: number; address: string; display_name: string; category: Category | null } | null;
+	messages: Message[];
+}
+
+export interface Draft {
+	id: number;
+	account_id: number | null;
+	kind: 'new' | 'reply' | 'reply_all' | 'forward';
+	source_message: number | null;
+	to_addrs: string;
+	cc_addrs: string;
+	bcc_addrs: string;
+	subject: string;
+	body_html: string;
+	forward_attachments: boolean;
+	include_quote: boolean;
+	updated_at: number;
+}
+
+export interface DraftAttachment {
+	id: number;
+	filename: string;
+	mime: string;
+	size: number;
+}
+
+export interface DraftDetail {
+	draft: Draft;
+	attachments: DraftAttachment[];
+	source: { id: number; from: Addr; subject: string; date: number; attachments: number } | null;
+}
+
+export interface SearchHit {
+	id: number;
+	thread_id: number;
+	subject: string;
+	from_name: string;
+	from_addr: string;
+	date: number;
+	excerpt: string;
+}
+
+export interface Counts {
+	screener: number;
+	unread_important: number;
+	drafts: number;
+}
+
+export class ApiError extends Error {
+	constructor(
+		public status: number,
+		message: string
+	) {
+		super(message);
+	}
+}
+
+let onUnauthorized: () => void = () => {};
+export function setUnauthorizedHandler(handler: () => void) {
+	onUnauthorized = handler;
+}
+
+async function request<T>(method: string, path: string, body?: unknown): Promise<T> {
+	const init: RequestInit = { method, credentials: 'same-origin' };
+	if (body instanceof FormData) {
+		init.body = body;
+	} else if (body !== undefined) {
+		init.headers = { 'Content-Type': 'application/json' };
+		init.body = JSON.stringify(body);
+	}
+	let response: Response;
+	try {
+		response = await fetch(`/api${path}`, init);
+	} catch {
+		throw new ApiError(0, 'Cannot reach the server. Check your connection and try again.');
+	}
+	if (!response.ok) {
+		const data = await response.json().catch(() => null);
+		if (response.status === 401) onUnauthorized();
+		throw new ApiError(response.status, data?.error ?? `Request failed (${response.status})`);
+	}
+	return response.json();
+}
+
+export const api = {
+	get: <T>(path: string) => request<T>('GET', path),
+	post: <T>(path: string, body?: unknown) => request<T>('POST', path, body ?? {}),
+	put: <T>(path: string, body: unknown) => request<T>('PUT', path, body),
+	delete: <T>(path: string) => request<T>('DELETE', path)
+};
