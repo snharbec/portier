@@ -225,7 +225,7 @@
 		border-top: 1px solid var(--line);
 		font-size: 0.9rem;
 	}
-	/* The same places as the menu, always in view where the window has room beside the column. */
+	/* The same places as the menu, always in view down the left edge where the window is wide enough. */
 	.rail {
 		display: none;
 	}
@@ -234,8 +234,12 @@
 			display: block;
 			position: fixed;
 			top: 5.5rem;
-			left: max(1rem, (100vw - var(--column)) / 2 - 12rem);
+			left: 1.25rem;
 			width: 10.5rem;
+		}
+		main {
+			width: auto;
+			margin: 0 1.25rem 0 13rem;
 		}
 	}
 	.rail ul {

@@ -77,7 +77,6 @@
 <style>
 	.row {
 		display: flex;
-		margin-left: -2.5rem;
 	}
 	.row .pick {
 		align-self: flex-start;
@@ -86,11 +85,6 @@
 	.card {
 		flex: 1;
 		min-width: 0;
-	}
-	@media (max-width: 52rem) {
-		.row {
-			margin-left: 0;
-		}
 	}
 	.more {
 		text-align: center;

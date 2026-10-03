@@ -120,7 +120,7 @@
 		<p class="empty" aria-busy="true">Loading</p>
 	{/if}
 {:else}
-	<div class="page-head">
+	<div class="page-head measure">
 		<h1>{titles[detail.draft.kind]}</h1>
 	</div>
 
@@ -227,6 +227,10 @@
 {/if}
 
 <style>
+	/* Forms stay at a readable width instead of stretching across the window. */
+	:global(main:has(> .measure)) {
+		max-width: var(--column);
+	}
 	.composer {
 		padding: 0.5rem 1.2rem 1.2rem;
 		overflow: visible;

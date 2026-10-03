@@ -16,6 +16,7 @@
 	--display: 'Bricolage Grotesque Variable', system-ui, sans-serif;
 	--body: 'Instrument Sans Variable', system-ui, sans-serif;
 
+	/* Widest comfortable measure for forms and floating bars; mail lists and mails use the full window. */
 	--column: 46rem;
 	--radius: 14px;
 	color-scheme: light dark;
@@ -81,8 +82,9 @@ textarea {
 	outline-offset: 2px;
 }
 
+/* Page content spans the window, with a gutter on each side. */
 .column {
-	width: min(var(--column), 100% - 2rem);
+	width: calc(100% - 2.5rem);
 	margin-inline: auto;
 }
 

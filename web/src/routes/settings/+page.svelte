@@ -187,7 +187,7 @@
 	}
 </script>
 
-<div class="page-head"><h1>Settings</h1></div>
+<div class="page-head measure"><h1>Settings</h1></div>
 
 <section>
 	<h2>Mail accounts</h2>
@@ -430,6 +430,10 @@
 </section>
 
 <style>
+	/* Forms stay at a readable width instead of stretching across the window. */
+	:global(main:has(> .measure)) {
+		max-width: var(--column);
+	}
 	section {
 		margin-bottom: 3rem;
 	}
