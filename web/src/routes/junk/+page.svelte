@@ -21,6 +21,9 @@
 <div class="page-head">
 	<h1>Junk</h1>
 	<p>Mail from senders you turned away. It also sits in the Junk folder of your mail account.</p>
+	{#if threads?.length}
+		<p class="tools"><a class="btn small" href="/read/junk">Read all on one page</a></p>
+	{/if}
 </div>
 
 {#if error}

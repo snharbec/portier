@@ -84,6 +84,7 @@ export interface Message {
 	account_id: number;
 	sender_id: number | null;
 	sender_category: Category | null;
+	show_images: boolean;
 	from: Addr;
 	to: Addr[];
 	cc: Addr[];

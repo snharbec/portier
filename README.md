@@ -4,8 +4,14 @@ Self-hosted web mail client that screens mail by sender. Each new sender waits i
 Screener until you put them in one of three places:
 
 - **Important**: conversations you want to see, split into new and previously seen
-- **Nice to know**: newsletters and updates, shown open in one scrolling page
+- **Nice to know**: newsletters and updates, kept out of the way of Important
 - **Junk**: hidden, and moved to the Junk folder of the mail account
+
+Important, Nice to know, Junk and Sent are conversation lists. Each has "Read all on one page",
+which shows the list's mails opened one below the other.
+
+Images that a mail loads from the internet are hidden until you choose "Show images". That choice
+is remembered for the sender; "Hide images and ask again" undoes it.
 
 The **Attachments** page shows every file received in the last four weeks from senders in
 Important and Nice to know, as a picture of its content: images as thumbnails, PDFs by their

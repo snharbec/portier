@@ -33,6 +33,7 @@ pub fn router() -> Router<AppState> {
         .route("/screener", get(mail::screener))
         .route("/senders", get(mail::senders))
         .route("/senders/{id}/category", post(mail::set_category))
+        .route("/senders/{id}/images", post(mail::set_images))
         .route("/contacts", get(mail::contacts))
         .route("/counts", get(mail::counts))
         .route("/threads", get(mail::threads))
@@ -288,6 +289,23 @@ mod tests {
         assert_eq!(status, StatusCode::NOT_FOUND);
         let (status, _, _) = call(&app, "GET", "/api/users", Some(&bob_cookie), None).await;
         assert_eq!(status, StatusCode::FORBIDDEN);
+
+        // Remembering "show images" is per sender and only for the owner.
+        let images = format!("/api/senders/{sender}/images");
+        let show = json!({ "show": true });
+        let (status, _, _) = call(&app, "POST", &images, Some(&bob_cookie), Some(show.clone())).await;
+        assert_eq!(status, StatusCode::NOT_FOUND);
+        let thread_path = format!("/api/threads/{thread}");
+        let (_, _, before) = call(&app, "GET", &thread_path, Some(&admin_cookie), None).await;
+        assert_eq!(before["messages"][0]["show_images"], false);
+        let (status, _, _) = call(&app, "POST", &images, Some(&admin_cookie), Some(show)).await;
+        assert_eq!(status, StatusCode::OK);
+        let (_, _, after) = call(&app, "GET", &thread_path, Some(&admin_cookie), None).await;
+        assert_eq!(after["messages"][0]["show_images"], true);
+        let hide = json!({ "show": false });
+        call(&app, "POST", &images, Some(&admin_cookie), Some(hide)).await;
+        let (_, _, reverted) = call(&app, "GET", &thread_path, Some(&admin_cookie), None).await;
+        assert_eq!(reverted["messages"][0]["show_images"], false);
 
         let category: Option<String> = sqlx::query_scalar("SELECT category FROM senders WHERE id = ?")
             .bind(sender)
@@ -562,6 +580,16 @@ mod tests {
         let (_, _, important) = call(&app, "GET", "/api/threads?box=important", Some(&cookie), None).await;
         let (_, _, feed) = call(&app, "GET", "/api/feed", Some(&cookie), None).await;
         assert_eq!((count(important), count(feed)), (0, 1));
+        // Nice to know is a conversation list as well, and each list can be read on one page.
+        let (_, _, feed_list) = call(&app, "GET", "/api/threads?box=feed", Some(&cookie), None).await;
+        assert_eq!(count(feed_list), 1);
+        for (mailbox, expected) in [("feed", 1), ("important", 0), ("junk", 0), ("sent", 0)] {
+            let path = format!("/api/feed?box={mailbox}");
+            let (status, _, page) = call(&app, "GET", &path, Some(&cookie), None).await;
+            assert_eq!((status, count(page)), (StatusCode::OK, expected), "{mailbox}");
+        }
+        let (status, _, _) = call(&app, "GET", "/api/feed?box=bogus", Some(&cookie), None).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
 
         let (status, _, _) = call(&app, "POST", &path, Some(&cookie), Some(json!({ "category": "bogus" }))).await;
         assert_eq!(status, StatusCode::BAD_REQUEST);

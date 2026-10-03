@@ -34,6 +34,9 @@
 
 <div class="page-head">
 	<h1>Important</h1>
+	{#if threads?.length}
+		<p class="tools"><a class="btn small" href="/read/important">Read all on one page</a></p>
+	{/if}
 </div>
 
 {#if error}

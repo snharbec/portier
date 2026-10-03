@@ -96,6 +96,14 @@ textarea {
 	color: var(--ink-soft);
 	max-width: 60ch;
 }
+.page-head .tools {
+	margin-top: 0.75rem;
+	color: var(--ink);
+	display: flex;
+	flex-wrap: wrap;
+	gap: 0.5rem;
+	max-width: none;
+}
 
 .section-title {
 	font: 600 0.9rem var(--body);

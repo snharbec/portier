@@ -1,9 +1,25 @@
 <script lang="ts">
-	import type { Message } from '#lib/api.ts';
+	import { api, type Message } from '#lib/api.ts';
+	import { notify } from '#lib/app.svelte.ts';
+	import { untrack } from 'svelte';
 
 	let { message }: { message: Message } = $props();
 
-	let showImages = $state(false);
+	/** The sender is one whose images are loaded without asking. */
+	let remembered = $state(untrack(() => message.show_images));
+	let showImages = $state(untrack(() => message.show_images));
+
+	/** Showing images is remembered for the sender; hiding them again forgets it. */
+	async function setImages(show: boolean) {
+		showImages = show;
+		if (message.sender_id === null) return;
+		try {
+			await api.post(`/senders/${message.sender_id}/images`, { show });
+			remembered = show;
+		} catch (e) {
+			notify(`The choice could not be saved for this sender: ${(e as Error).message}`);
+		}
+	}
 	let frame: HTMLIFrameElement | undefined = $state();
 	let height = $state(120);
 
@@ -48,7 +64,13 @@ blockquote{margin:0 0 0 .8ex;border-left:2px solid #c9cfdd;padding-left:1ex;colo
 {#if hasRemoteImages && !showImages}
 	<p class="images">
 		Images from the internet are hidden so senders cannot see that you opened this.
-		<button class="btn small" onclick={() => (showImages = true)}>Show images</button>
+		<button class="btn small" onclick={() => setImages(true)}>Show images</button>
+		{#if message.sender_id !== null}<span>They will then always be shown for this sender.</span>{/if}
+	</p>
+{:else if hasRemoteImages && remembered}
+	<p class="images">
+		Images from this sender are shown automatically.
+		<button class="btn small" onclick={() => setImages(false)}>Hide images and ask again</button>
 	</p>
 {/if}
 <iframe

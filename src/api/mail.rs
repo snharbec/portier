@@ -94,6 +94,30 @@ pub async fn senders(
 }
 
 #[derive(Deserialize)]
+pub struct ImagesInput {
+    show: bool,
+}
+
+/// Remembers whether remote images in this sender's mail are loaded without asking.
+pub async fn set_images(
+    State(state): State<AppState>,
+    user: CurrentUser,
+    Path(id): Path<i64>,
+    Json(input): Json<ImagesInput>,
+) -> ApiResult<Json<Value>> {
+    let result = sqlx::query("UPDATE senders SET show_images = ? WHERE id = ? AND user_id = ?")
+        .bind(input.show)
+        .bind(id)
+        .bind(user.id)
+        .execute(&state.db)
+        .await?;
+    if result.rows_affected() == 0 {
+        return Err(ApiError::not_found());
+    }
+    Ok(Json(json!({ "ok": true })))
+}
+
+#[derive(Deserialize)]
 pub struct CategoryInput {
     category: Option<String>,
 }
@@ -173,6 +197,7 @@ pub async fn threads(
             "(t.sender_id IS NULL OR s.category = 'important')
              AND EXISTS (SELECT 1 FROM messages m WHERE m.thread_id = t.id AND m.is_outgoing = 0)"
         }
+        "feed" => "s.category = 'feed'",
         "junk" => "s.category = 'junk'",
         "sent" => "EXISTS (SELECT 1 FROM messages m WHERE m.thread_id = t.id AND m.is_outgoing = 1)",
         _ => return Err(ApiError::bad_request("unknown box")),
@@ -235,6 +260,7 @@ struct MessageRow {
     account_id: i64,
     sender_id: Option<i64>,
     sender_category: Option<String>,
+    show_images: bool,
     from_name: String,
     from_addr: String,
     to_addrs: String,
@@ -264,6 +290,8 @@ pub struct MessageView {
     account_id: i64,
     sender_id: Option<i64>,
     sender_category: Option<String>,
+    /// The user chose to always load remote images from this sender.
+    show_images: bool,
     from: Addr,
     to: Vec<Addr>,
     cc: Vec<Addr>,
@@ -277,6 +305,7 @@ pub struct MessageView {
 }
 
 const MESSAGE_COLUMNS: &str = "m.id, m.thread_id, m.account_id, m.sender_id, s.category AS sender_category,
+    COALESCE(s.show_images, 0) AS show_images,
     m.from_name, m.from_addr, m.to_addrs, m.cc_addrs, m.subject, m.date, m.seen, m.is_outgoing,
     m.body_text, m.body_html";
 
@@ -314,6 +343,7 @@ async fn to_views(state: &AppState, rows: Vec<MessageRow>) -> ApiResult<Vec<Mess
             account_id: r.account_id,
             sender_id: r.sender_id,
             sender_category: r.sender_category,
+            show_images: r.show_images,
             from: Addr {
                 name: r.from_name,
                 address: r.from_addr,
@@ -383,22 +413,43 @@ pub async fn message(
 
 #[derive(Deserialize)]
 pub struct Page {
+    /// important | feed | junk | sent
+    #[serde(rename = "box", default = "default_box")]
+    mailbox: String,
     #[serde(default)]
     offset: i64,
+    limit: Option<i64>,
 }
 
-/// "Nice to know": whole messages, newest first, for reading in one scroll.
+fn default_box() -> String {
+    "feed".into()
+}
+
+/// The mails of a list as whole messages, newest first, for reading them on one page.
+/// A mail belongs to the list its conversation is shown in.
 pub async fn feed(
     State(state): State<AppState>,
     user: CurrentUser,
     Query(page): Query<Page>,
 ) -> ApiResult<Json<Vec<MessageView>>> {
+    let condition = match page.mailbox.as_str() {
+        "important" => "m.is_outgoing = 0 AND (t.sender_id IS NULL OR ts.category = 'important')",
+        "feed" => "m.is_outgoing = 0 AND ts.category = 'feed'",
+        "junk" => "m.is_outgoing = 0 AND ts.category = 'junk'",
+        "sent" => "m.is_outgoing = 1",
+        _ => return Err(ApiError::bad_request("unknown box")),
+    };
     let rows: Vec<MessageRow> = sqlx::query_as(sqlx::AssertSqlSafe(format!(
-        "SELECT {MESSAGE_COLUMNS} FROM messages m JOIN senders s ON s.id = m.sender_id
-         WHERE m.user_id = ? AND s.category = 'feed' AND m.is_outgoing = 0
-         ORDER BY m.date DESC, m.id DESC LIMIT 20 OFFSET ?"
+        "SELECT {MESSAGE_COLUMNS} FROM messages m
+         JOIN threads t ON t.id = m.thread_id
+         LEFT JOIN senders ts ON ts.id = t.sender_id
+         LEFT JOIN senders s ON s.id = m.sender_id
+         WHERE m.user_id = ?1 AND {condition}
+           AND m.id IN (SELECT MIN(id) FROM messages WHERE user_id = ?1 GROUP BY account_id, message_id)
+         ORDER BY m.date DESC, m.id DESC LIMIT ?2 OFFSET ?3"
     )))
     .bind(user.id)
+    .bind(page.limit.unwrap_or(20).clamp(1, 200))
     .bind(page.offset.max(0))
     .fetch_all(&state.db)
     .await?;
