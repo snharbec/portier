@@ -3,7 +3,8 @@
 use std::collections::HashSet;
 
 use anyhow::Result;
-use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
+use ratatui::layout::{Position, Rect};
 use serde_json::{Value, json};
 
 use crate::api::{
@@ -163,6 +164,36 @@ pub enum Focus {
     List,
 }
 
+/// What a row of the side bar leads to.
+#[derive(Clone, Copy, Debug)]
+pub enum SideTarget {
+    Place(Place),
+    /// A saved search, by its position in the list of them.
+    Saved(usize),
+}
+
+/// Where things were drawn last, so that the mouse can point at them.
+#[derive(Default)]
+pub struct Drawn {
+    /// The rows of the side bar: the line of the screen and what is on it.
+    pub side: std::cell::RefCell<Vec<(u16, SideTarget)>>,
+    pub side_area: std::cell::Cell<Rect>,
+    /// The list, and the index of the row on its first line.
+    pub list: std::cell::Cell<Rect>,
+    pub first: std::cell::Cell<usize>,
+    /// The opened mail, or the mails read on one page.
+    pub mail: std::cell::Cell<Rect>,
+}
+
+impl Drawn {
+    pub fn clear(&self) {
+        self.side.borrow_mut().clear();
+        self.side_area.set(Rect::default());
+        self.list.set(Rect::default());
+        self.mail.set(Rect::default());
+    }
+}
+
 /// What the keys are for at the moment.
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub enum Mode {
@@ -268,6 +299,10 @@ pub struct App {
     /// Lists narrowed to unseen mail.
     narrowed: HashSet<&'static str>,
     pub reading: Option<Reading>,
+    pub drawn: Drawn,
+    /// The briefing of Home as the server gave it, and the width its text is wrapped to.
+    briefing: Vec<BriefingEntry>,
+    wrapped: usize,
     /// How wide the list was drawn last, for text that is wrapped into its rows.
     pub list_width: std::cell::Cell<usize>,
     /// How many pages of the current list are loaded, and whether it has older mail still.
@@ -283,14 +318,12 @@ pub struct App {
     pub lines: usize,
 }
 
+/// The heading of the briefing in Home.
+const BRIEFING: &str = "Briefing";
+
 /// The rows of the briefing: per mail a line that opens it, then what the model says about it
 /// and about its attachments, wrapped to the list.
-fn briefing_rows(entries: Vec<BriefingEntry>, width: usize) -> Vec<Row> {
-    // Before the first frame the list has no width yet: the window's, less the side bar.
-    let width = match width {
-        0 => ratatui::crossterm::terminal::size().map_or(80, |(columns, _)| (columns as usize).saturating_sub(21)),
-        width => width,
-    };
+fn briefing_rows(entries: &[BriefingEntry], width: usize) -> Vec<Row> {
     let mut rows = Vec::new();
     for entry in entries {
         rows.push(Row::Entry {
@@ -298,7 +331,7 @@ fn briefing_rows(entries: Vec<BriefingEntry>, width: usize) -> Vec<Row> {
             text: if entry.subject.is_empty() {
                 "(no subject)".into()
             } else {
-                entry.subject
+                entry.subject.clone()
             },
             date: entry.date,
             sender: None,
@@ -318,7 +351,7 @@ fn briefing_rows(entries: Vec<BriefingEntry>, width: usize) -> Vec<Row> {
                 .into_iter()
                 .map(|text| Row::Said { text, soft: false }),
         );
-        for file in entry.attachments {
+        for file in &entry.attachments {
             rows.extend(
                 crate::text::wrap(&format!("[{}] {}", file.filename, file.text), room)
                     .into_iter()
@@ -366,6 +399,9 @@ impl App {
             saved: Vec::new(),
             narrowed: HashSet::new(),
             reading: None,
+            drawn: Drawn::default(),
+            briefing: Vec::new(),
+            wrapped: 0,
             list_width: std::cell::Cell::new(0),
             pages: 1,
             more: false,
@@ -423,12 +459,19 @@ impl App {
                 let truly_unseen = unseen.iter().filter(|t| t.unread > 0).count();
                 // The briefing is an extra: a server without summaries simply has none.
                 let briefing: Briefing = self.client.get("/briefing").await.unwrap_or_default();
-                if !briefing.entries.is_empty() {
+                self.briefing = briefing.entries;
+                if !self.briefing.is_empty() {
                     rows.push(Row::Header {
-                        title: "Briefing",
-                        count: briefing.entries.len(),
+                        title: BRIEFING,
+                        count: self.briefing.len(),
                     });
-                    rows.extend(briefing_rows(briefing.entries, self.list_width.get()));
+                    // Before the first frame the list has no width yet: the window's, less the side bar.
+                    self.wrapped = match self.list_width.get() {
+                        0 => ratatui::crossterm::terminal::size()
+                            .map_or(80, |(columns, _)| (columns as usize).saturating_sub(21)),
+                        width => width,
+                    };
+                    rows.extend(briefing_rows(&self.briefing, self.wrapped));
                 }
                 let areas = [
                     ("Unseen", truly_unseen, unseen, "No unseen messages. Area is empty."),
@@ -550,6 +593,41 @@ impl App {
             .or_else(|| self.nearest(self.cursor))
             .unwrap_or(0);
         Ok(())
+    }
+
+    /// Wraps the briefing anew when the list is drawn at another width than its text was
+    /// wrapped to: the window was resized, or a mail opened beside the list.
+    pub fn fit_briefing(&mut self, width: usize) {
+        if width == self.wrapped || self.place != Place::Home {
+            return;
+        }
+        let Some(start) = self
+            .rows
+            .iter()
+            .position(|row| matches!(row, Row::Header { title, .. } if *title == BRIEFING))
+        else {
+            return;
+        };
+        let end = self.rows[start + 1..]
+            .iter()
+            .position(|row| matches!(row, Row::Header { .. }))
+            .map_or(self.rows.len(), |next| start + 1 + next);
+        // The cursor stays on its mail: the same entry of the briefing, or the same row below it.
+        let entry = (start < self.cursor && self.cursor < end).then(|| {
+            self.rows[start + 1..self.cursor]
+                .iter()
+                .filter(|row| row.selectable())
+                .count()
+        });
+        let fresh = briefing_rows(&self.briefing, width);
+        if let Some(entry) = entry {
+            let at = fresh.iter().enumerate().filter(|(_, row)| row.selectable()).nth(entry);
+            self.cursor = start + 1 + at.map_or(0, |(index, _)| index);
+        } else if self.cursor >= end {
+            self.cursor = self.cursor + fresh.len() - (end - start - 1);
+        }
+        self.rows.splice(start + 1..end, fresh);
+        self.wrapped = width;
     }
 
     fn mails(&self) -> impl Iterator<Item = &ThreadSummary> {
@@ -906,6 +984,110 @@ impl App {
             self.status = format!("{error:#}");
         }
         Ok(())
+    }
+
+    /// A click or a turn of the wheel. Clicks choose a list in the side bar and open the mail
+    /// of a row (or tick it while selecting); the wheel moves through the list or scrolls the
+    /// mail, whichever it is over.
+    pub async fn mouse(&mut self, event: MouseEvent) -> Result<()> {
+        let click = event.kind == MouseEventKind::Down(MouseButton::Left);
+        if click {
+            self.status.clear();
+        }
+        if let Err(error) = self.point(event, click).await {
+            if error.is::<crate::api::SignedOut>() {
+                return Err(error);
+            }
+            self.status = format!("{error:#}");
+        }
+        Ok(())
+    }
+
+    async fn point(&mut self, event: MouseEvent, click: bool) -> Result<()> {
+        let wheel = match event.kind {
+            MouseEventKind::ScrollDown => 1,
+            MouseEventKind::ScrollUp => -1,
+            _ => 0,
+        };
+        if !click && wheel == 0 {
+            return Ok(());
+        }
+        if self.help || self.viewing.is_some() {
+            // A click closes the list of keys or the picture, as any key does.
+            if click {
+                self.help = false;
+                self.viewing = None;
+            }
+            return Ok(());
+        }
+        // Writing, and the questions asked at the bottom line, are answered with keys.
+        if self.compose.is_some() || self.files.is_some() || self.mode != Mode::Normal {
+            return Ok(());
+        }
+        let at = Position::new(event.column, event.row);
+
+        if click && self.drawn.side_area.get().contains(at) {
+            let target = self
+                .drawn
+                .side
+                .borrow()
+                .iter()
+                .find(|(row, _)| *row == at.y)
+                .map(|(_, target)| *target);
+            match target {
+                Some(SideTarget::Place(place)) => self.go(place).await?,
+                Some(SideTarget::Saved(index)) => {
+                    if let Some(saved) = self.saved.get(index) {
+                        let query = saved.query.clone();
+                        self.search(query).await?;
+                    }
+                }
+                None => {}
+            }
+            return Ok(());
+        }
+        if self.reading.is_some() {
+            // The mails on one page scroll with the wheel, as with the arrows.
+            let code = match wheel {
+                1 => KeyCode::Down,
+                -1 => KeyCode::Up,
+                _ => return Ok(()),
+            };
+            return self.reading_key(KeyEvent::new(code, KeyModifiers::NONE)).await;
+        }
+        if self.drawn.mail.get().contains(at) {
+            self.scroll(wheel * 3);
+            return Ok(());
+        }
+        let list = self.drawn.list.get();
+        if !list.contains(at) {
+            return Ok(());
+        }
+        if wheel != 0 {
+            // Over the list the wheel moves the cursor; it opens nothing.
+            self.focus = Focus::List;
+            if !self.step(wheel) && wheel > 0 && self.more {
+                self.pages += 1;
+                self.load_rows().await?;
+                self.step(wheel);
+            }
+            return Ok(());
+        }
+        let index = self.drawn.first.get() + (at.y - list.y) as usize;
+        if !self.rows.get(index).is_some_and(Row::selectable) {
+            return Ok(());
+        }
+        self.cursor = index;
+        self.focus = Focus::List;
+        if self.selecting {
+            if let Some(id) = self.current_id()
+                && !self.selected.remove(&id)
+            {
+                self.selected.insert(id);
+            }
+            return Ok(());
+        }
+        self.open_current().await
     }
 
     async fn act(&mut self, key: KeyEvent) -> Result<()> {
@@ -1519,6 +1701,28 @@ impl App {
         let mut rest = keys;
         while let Some(c) = rest.chars().next() {
             let (code, modifiers, used) = match rest.strip_prefix('<').and_then(|r| r.split_once('>')) {
+                // `<click:30,5>`, `<wheel-down:30,5>`, `<wheel-up:30,5>`: the mouse at column, row.
+                Some((name, _)) if name.contains(':') => {
+                    let (what, at) = name.split_once(':').unwrap_or_default();
+                    let kind = match what {
+                        "click" => MouseEventKind::Down(MouseButton::Left),
+                        "wheel-down" => MouseEventKind::ScrollDown,
+                        "wheel-up" => MouseEventKind::ScrollUp,
+                        other => anyhow::bail!("unknown mouse action <{other}>"),
+                    };
+                    let (column, row) = at
+                        .split_once(',')
+                        .ok_or_else(|| anyhow::anyhow!("<{name}> needs column,row"))?;
+                    self.mouse(MouseEvent {
+                        kind,
+                        column: column.parse()?,
+                        row: row.parse()?,
+                        modifiers: KeyModifiers::NONE,
+                    })
+                    .await?;
+                    rest = &rest[name.len() + 2..];
+                    continue;
+                }
                 Some((name, _)) => {
                     let (code, modifiers) = match name {
                         "down" => (KeyCode::Down, KeyModifiers::NONE),

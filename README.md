@@ -115,6 +115,11 @@ those of the web client where they exist (`?` lists them): arrows for the next a
 Enter, Space and Backspace to page, `Shift+H` / `I` / `D` / `N` for the lists, `s` for the split
 view, `o` to open the mail in the web browser.
 
+The mouse works too: a click chooses a list in the side bar or opens the mail of a row (ticks
+it while selecting), and the wheel moves through the list or scrolls the mail, whichever it is
+over. While the client listens to the mouse, marking text for copying needs Shift held down
+(Option in Terminal.app and iTerm2); `PORTIER_TUI_MOUSE=off` leaves the mouse to the terminal.
+
 Mail is acted on with the same letters: `a` archive, `d` move to Trash, `u` unseen, `i` important,
 `z` delay (then `1`, `2`, `3` or `7`), `t` note; also `b` to move mail back out of the Trash and
 `m` to move it to a folder. They apply to the opened mail, to the one under the cursor, or, after

@@ -13,7 +13,8 @@ use std::{
 };
 
 use anyhow::{Context, Result, anyhow, bail};
-use ratatui::crossterm::event::{self, Event, KeyEventKind};
+use ratatui::crossterm::event::{self, DisableMouseCapture, EnableMouseCapture, Event, KeyEventKind, MouseEventKind};
+use ratatui::crossterm::execute;
 use serde::{Deserialize, Serialize};
 
 use crate::{api::Client, app::App};
@@ -30,6 +31,8 @@ For scripts and tests:
   --print WxH     Draw one screen of that size as text and exit.
   --script KEYS   Keys to press before that, e.g. 'jj<enter><space>'.
   PORTIER_EMAIL, PORTIER_PASSWORD sign in without asking.
+
+PORTIER_TUI_MOUSE=off leaves the mouse to the terminal.
 
 The session is kept in ~/.config/portier/session.json (PORTIER_CONFIG_DIR changes the folder).";
 
@@ -148,8 +151,33 @@ fn print_screen(app: &mut App, width: u16, height: u16) -> Result<()> {
     Ok(())
 }
 
+/// Whether the mouse is listened to: yes, unless `PORTIER_TUI_MOUSE=off`. While it is, the
+/// terminal's own marking of text needs Shift (Option in some terminals) held down.
+fn mouse_wanted() -> bool {
+    std::env::var("PORTIER_TUI_MOUSE").map_or(true, |value| value != "off")
+}
+
+/// Starts or stops the terminal reporting clicks and the wheel.
+fn listen_to_mouse(on: bool) {
+    if !mouse_wanted() {
+        return;
+    }
+    let _ = if on {
+        execute!(std::io::stdout(), EnableMouseCapture)
+    } else {
+        execute!(std::io::stdout(), DisableMouseCapture)
+    };
+}
+
 async fn interactive(app: &mut App, client: Client) -> Result<()> {
     let mut terminal = ratatui::init();
+    // A crash must not leave the terminal reporting the mouse as text.
+    let crashed = std::panic::take_hook();
+    std::panic::set_hook(Box::new(move |info| {
+        listen_to_mouse(false);
+        crashed(info);
+    }));
+    listen_to_mouse(true);
     // Asked before anything else reads the terminal: the answer comes in on the same way keys do.
     app.picker = pictures::picker(true);
     let (changed_tx, mut changed) = tokio::sync::mpsc::unbounded_channel();
@@ -158,6 +186,15 @@ async fn interactive(app: &mut App, client: Client) -> Result<()> {
     let (keys_tx, mut keys) = tokio::sync::mpsc::unbounded_channel();
     std::thread::spawn(move || {
         while let Ok(event) = event::read() {
+            // Of the mouse only clicks and the wheel matter; its every move would redraw the screen.
+            if let Event::Mouse(mouse) = &event
+                && !matches!(
+                    mouse.kind,
+                    MouseEventKind::Down(_) | MouseEventKind::ScrollDown | MouseEventKind::ScrollUp
+                )
+            {
+                continue;
+            }
             if keys_tx.send(event).is_err() {
                 break;
             }
@@ -169,16 +206,18 @@ async fn interactive(app: &mut App, client: Client) -> Result<()> {
             terminal.draw(|frame| ui::draw(frame, app))?;
             tokio::select! {
                 Some(event) = keys.recv() => {
-                    if let Event::Key(key) = event
-                        && key.kind != KeyEventKind::Release
-                    {
-                        app.key(key).await?;
+                    match event {
+                        Event::Key(key) if key.kind != KeyEventKind::Release => app.key(key).await?,
+                        Event::Mouse(mouse) => app.mouse(mouse).await?,
+                        _ => {}
                     }
                     if std::mem::take(&mut app.wants_editor) {
                         // The terminal is handed to the editor and taken back afterwards.
+                        listen_to_mouse(false);
                         ratatui::restore();
                         let edited = edit_outside(app.draft_text().unwrap_or_default());
                         terminal = ratatui::init();
+                        listen_to_mouse(true);
                         match edited {
                             Ok(text) => app.set_draft_text(&text),
                             Err(error) => app.status = format!("{error:#}"),
@@ -205,6 +244,7 @@ async fn interactive(app: &mut App, client: Client) -> Result<()> {
         Ok(())
     }
     .await;
+    listen_to_mouse(false);
     ratatui::restore();
     result
 }

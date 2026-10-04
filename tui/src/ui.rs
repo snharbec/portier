@@ -19,6 +19,7 @@ const SIDE_WIDTH: u16 = 20;
 
 pub fn draw(frame: &mut Frame, app: &mut App) {
     let area = frame.area();
+    app.drawn.clear();
     let [top, middle, bottom] =
         Layout::vertical([Constraint::Length(1), Constraint::Min(1), Constraint::Length(1)]).areas(area);
 
@@ -202,6 +203,8 @@ fn input(frame: &mut Frame, bottom: Rect, label: &str, text: &str) {
 fn side_bar(frame: &mut Frame, app: &App, area: Rect) {
     let width = area.width as usize - 1;
     let mut lines = Vec::new();
+    // Which line of the screen each entry is on, for the mouse.
+    let mut targets = Vec::new();
     for place in Place::ALL {
         if place.starts_group() {
             lines.push(Line::styled("─".repeat(width), Style::default().fg(SOFT)));
@@ -224,6 +227,7 @@ fn side_bar(frame: &mut Frame, app: &App, area: Rect) {
         } else {
             Style::default().fg(SOFT)
         };
+        targets.push((area.y + lines.len() as u16, crate::app::SideTarget::Place(place)));
         lines.push(Line::from(vec![
             Span::styled(if here { "▌" } else { " " }, Style::default().fg(ACCENT)),
             Span::styled(name.chars().skip(1).collect::<String>(), style),
@@ -234,7 +238,8 @@ fn side_bar(frame: &mut Frame, app: &App, area: Rect) {
     if !app.saved.is_empty() {
         lines.push(Line::styled("─".repeat(width), Style::default().fg(SOFT)));
         let here = app.saved_here().map(|saved| saved.id);
-        for saved in &app.saved {
+        for (index, saved) in app.saved.iter().enumerate() {
+            targets.push((area.y + lines.len() as u16, crate::app::SideTarget::Saved(index)));
             let badge = if saved.unread > 0 {
                 saved.unread.to_string()
             } else {
@@ -258,6 +263,9 @@ fn side_bar(frame: &mut Frame, app: &App, area: Rect) {
             ]));
         }
     }
+    targets.retain(|(row, _)| *row < area.bottom());
+    *app.drawn.side.borrow_mut() = targets;
+    app.drawn.side_area.set(area);
     frame.render_widget(Paragraph::new(lines), area);
 }
 
@@ -339,8 +347,9 @@ fn mail_row(
     Line::from(spans)
 }
 
-fn list(frame: &mut Frame, app: &App, area: Rect) {
+fn list(frame: &mut Frame, app: &mut App, area: Rect) {
     let width = area.width as usize;
+    app.fit_briefing(width);
     let height = area.height as usize;
     app.list_width.set(width);
     let now = Local::now();
@@ -351,6 +360,8 @@ fn list(frame: &mut Frame, app: &App, area: Rect) {
     } else {
         app.cursor + 1 - height
     };
+    app.drawn.list.set(area);
+    app.drawn.first.set(first);
     let mut lines = Vec::new();
     for (index, row) in app.rows.iter().enumerate().skip(first).take(height) {
         let mut line = match row {
@@ -679,6 +690,7 @@ fn mail(frame: &mut Frame, app: &mut App, area: Rect, beside: bool) {
         })
         .border_style(Style::default().fg(SOFT));
     let inner = block.inner(area);
+    app.drawn.mail.set(area);
     frame.render_widget(block, area);
     let inner = Rect {
         x: inner.x + 1,
@@ -743,6 +755,7 @@ const KEYS: &[(&str, &[(&str, &str)])] = &[
             ("2", "Screener"),
             ("Tab", "Side bar and back; ↑ ↓ choose a list there"),
             ("s", "Split view: beside, below, off"),
+            ("Mouse", "Click a list or a mail; the wheel scrolls"),
             (
                 "Ctrl Z",
                 "Undo the last action, for 4 seconds after it (also a sent mail)",
