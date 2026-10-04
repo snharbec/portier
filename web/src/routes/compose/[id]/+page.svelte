@@ -1,15 +1,18 @@
 <script lang="ts">
 	import { goto } from '$app/navigation';
 	import { page } from '$app/state';
-	import { api, type Addr, type DraftAttachment, type DraftDetail } from '#lib/api.ts';
+	import { api, type Addr, type DraftAttachment, type DraftDetail, type Message } from '#lib/api.ts';
 	import { app, draftReturnPath, refreshCounts } from '#lib/app.svelte.ts';
 	import Editor from '#lib/components/Editor.svelte';
+	import MessageCard from '#lib/components/MessageCard.svelte';
 	import { displayName, fileSize } from '#lib/format.ts';
 	import { onMount } from 'svelte';
 
 	const id = page.params.id;
 
 	let detail = $state<DraftDetail | null>(null);
+	/** The mail being answered or forwarded, shown below the draft to read while writing. */
+	let original = $state<Message | null>(null);
 	let attachments = $state<DraftAttachment[]>([]);
 	let error = $state('');
 	let status = $state('');
@@ -28,6 +31,12 @@
 				detail = loaded;
 				attachments = loaded.attachments;
 				showCopies = !!(loaded.draft.cc_addrs || loaded.draft.bcc_addrs);
+				if (loaded.source) {
+					// Only for reading along: without it the draft works all the same.
+					api.get<Message>(`/messages/${loaded.source.id}`)
+						.then((message) => (original = message))
+						.catch(() => {});
+				}
 			})
 			.catch((e) => (error = e.message));
 		return () => {
@@ -289,6 +298,12 @@
 			<button class="btn quiet danger" onclick={discard}>Discard</button>
 		</div>
 	</div>
+	{#if original}
+		<section class="original" aria-label="Original message">
+			<h2>{detail.draft.kind === 'forward' ? 'The mail you forward' : 'The mail you answer'}</h2>
+			<MessageCard message={original} actions={false} showSubject />
+		</section>
+	{/if}
 {/if}
 
 <style>
@@ -353,6 +368,15 @@
 	}
 	.suggestions button[aria-selected='true'] {
 		background: color-mix(in srgb, var(--important) 14%, var(--surface));
+	}
+	.original {
+		margin-top: 1.5rem;
+	}
+	.original h2 {
+		font: 600 0.9rem var(--body);
+		letter-spacing: 0;
+		color: var(--ink-soft);
+		margin-bottom: 0.5rem;
 	}
 	.source {
 		display: grid;
