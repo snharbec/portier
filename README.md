@@ -107,11 +107,19 @@ Mail is acted on with the same letters: `a` archive, `d` move to Trash, `u` unse
 result names the list it is found in. `Shift+F` lists all mail from the sender of a mail,
 `Shift+S` saves the shown search in the side bar (with its count of unseen mail) and `Shift+X`
 removes it. `Shift+U` narrows Nice to know, Junk and Archive to unseen mail, and `Shift+P` reads
-all mails of a list or of the search results on one page. Writing mail is done in the web client
-for now.
+all mails of a list or of the search results on one page.
+
+`c` writes a new mail, `r` replies, `Shift+R` replies to all, `f` forwards, and Enter on a draft
+takes it up again. Tab walks through the fields; known recipients are offered while typing in To
+(arrows pick, Enter takes). `Ctrl+S` sends (`Ctrl+Return` too, where the terminal tells it from
+Return), Esc saves the draft and leaves, `Ctrl+X` twice discards it. `Ctrl+A` attaches a file by
+its path, `Ctrl+O` shows the mail being answered, and `Ctrl+E` hands the text to your own editor
+(`$VISUAL`, `$EDITOR`, else vi). The text is plain and is sent as simple paragraphs; a draft that
+was given formatting in the web client loses it when edited here.
 
 Mails written as HTML are shown as text with their links; pictures and designed layouts are
-not. `o` opens such a mail in the browser.
+not. `o` opens such a mail in the browser. Mail accounts, users and the other settings are
+managed in the web client.
 
 ## Configuration (environment)
 

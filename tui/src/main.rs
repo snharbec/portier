@@ -2,6 +2,7 @@
 
 mod api;
 mod app;
+mod compose;
 mod text;
 mod ui;
 
@@ -167,6 +168,16 @@ async fn interactive(app: &mut App, client: Client) -> Result<()> {
                     {
                         app.key(key).await?;
                     }
+                    if std::mem::take(&mut app.wants_editor) {
+                        // The terminal is handed to the editor and taken back afterwards.
+                        ratatui::restore();
+                        let edited = edit_outside(app.draft_text().unwrap_or_default());
+                        terminal = ratatui::init();
+                        match edited {
+                            Ok(text) => app.set_draft_text(&text),
+                            Err(error) => app.status = format!("{error:#}"),
+                        }
+                    }
                 }
                 Some(()) = changed.recv() => {
                     // Several changes in a row are one reason to look again.
@@ -230,6 +241,29 @@ async fn main() -> Result<()> {
         bail!("portier-tui needs a terminal (or --print WxH to write one screen as text)");
     }
     interactive(&mut app, client).await
+}
+
+/// Lets the reader's editor (`$VISUAL`, `$EDITOR`, else vi) work on the text of the draft.
+fn edit_outside(text: String) -> Result<String> {
+    let editor = std::env::var("VISUAL")
+        .or_else(|_| std::env::var("EDITOR"))
+        .unwrap_or_else(|_| "vi".into());
+    let path = std::env::temp_dir().join(format!("portier-draft-{}.txt", std::process::id()));
+    std::fs::write(&path, &text)?;
+    // The variable may hold options too ("code --wait"): the shell splits it.
+    let status = std::process::Command::new("sh")
+        .arg("-c")
+        .arg(format!("{editor} \"$1\""))
+        .arg("sh")
+        .arg(&path)
+        .status()
+        .with_context(|| format!("cannot start {editor}"));
+    let edited = std::fs::read_to_string(&path);
+    let _ = std::fs::remove_file(&path);
+    if !status?.success() {
+        bail!("{editor} ended with an error; the text is unchanged");
+    }
+    Ok(edited?)
 }
 
 /// `'jj<enter>'` as `["j", "j", "<enter>"]`.

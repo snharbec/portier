@@ -36,6 +36,12 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
     let user = Span::styled(format!("{} ", app.user), Style::default().fg(SOFT));
     frame.render_widget(Paragraph::new(Line::from(user)).right_aligned(), top);
 
+    if app.compose.is_some() {
+        // Writing takes the whole window.
+        compose(frame, app, middle, bottom);
+        return;
+    }
+
     // A narrow terminal has no room for the side bar; the letters still reach every list.
     let main = if area.width >= 70 {
         let [side, main] = Layout::horizontal([Constraint::Length(SIDE_WIDTH), Constraint::Min(1)]).areas(middle);
@@ -147,6 +153,15 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
 
 /// What the top line says the list is.
 fn heading(app: &App) -> String {
+    if let Some(compose) = &app.compose {
+        return match compose.kind.as_str() {
+            "reply" => "Reply",
+            "reply_all" => "Reply to all",
+            "forward" => "Forward",
+            _ => "New message",
+        }
+        .to_string();
+    }
     match app.place {
         Place::Search => match app.saved_here() {
             Some(saved) => format!("{}  (saved search: {})", saved.name, saved.query),
@@ -380,6 +395,244 @@ fn list(frame: &mut Frame, app: &App, area: Rect) {
     frame.render_widget(Paragraph::new(lines), area);
 }
 
+/// The form a mail is written in.
+fn compose(frame: &mut Frame, app: &mut App, area: Rect, bottom: Rect) {
+    use crate::compose::Field;
+    let soft = Style::default().fg(SOFT);
+    let area = Rect {
+        x: area.x + 1,
+        width: area.width.saturating_sub(2).min(100),
+        ..area
+    };
+    let width = area.width as usize;
+    let status = app.status.clone();
+    let Some(compose) = &mut app.compose else { return };
+
+    // The original mail, read in place of the form.
+    if compose.show_original {
+        let lines = match &compose.original {
+            Some(original) => crate::text::page(std::slice::from_ref(original), width),
+            None => Vec::new(),
+        };
+        let height = area.height as usize;
+        compose.original_scroll = compose.original_scroll.min(lines.len().saturating_sub(height));
+        let (count, scroll) = (lines.len(), compose.original_scroll);
+        let shown: Vec<Line> = lines.into_iter().skip(scroll).take(height).collect();
+        frame.render_widget(Paragraph::new(shown), area);
+        frame.render_widget(
+            Paragraph::new(Line::styled(
+                " Space page  ↑↓ scroll  any other key: back to your mail",
+                soft,
+            )),
+            bottom,
+        );
+        app.page = height;
+        app.lines = count;
+        return;
+    }
+
+    const LABEL: usize = 9;
+    let mut lines: Vec<Line> = Vec::new();
+    let mut cursor: Option<(u16, u16)> = None;
+    let field = |name: &str, value: String, here: bool, lines: &mut Vec<Line>, cursor: &mut Option<(u16, u16)>| {
+        let room = width.saturating_sub(LABEL);
+        // The end of a long value stays in view, where the typing happens.
+        let mut shown = value;
+        while shown.width() > room.saturating_sub(1) {
+            shown.remove(0);
+        }
+        if here {
+            *cursor = Some((area.x + (LABEL + shown.width()) as u16, area.y + lines.len() as u16));
+        }
+        let label = Style::default().fg(if here { ACCENT } else { SOFT });
+        lines.push(Line::from(vec![
+            Span::styled(cell(name, LABEL), label),
+            Span::raw(shown),
+        ]));
+    };
+    let from = match compose.accounts.get(compose.account) {
+        Some(account) => format!("{} <{}>", account.label, account.address),
+        None => "No mail account: add one in the web client".to_string(),
+    };
+    let from = if compose.field == Field::From && compose.accounts.len() > 1 {
+        format!("{from}   (← → changes)")
+    } else {
+        from
+    };
+    let mut no_cursor = None;
+    field("From", from, compose.field == Field::From, &mut lines, &mut no_cursor);
+    field(
+        "To",
+        compose.to.clone(),
+        compose.field == Field::To,
+        &mut lines,
+        &mut cursor,
+    );
+    let to_row = lines.len();
+    field(
+        "Cc",
+        compose.cc.clone(),
+        compose.field == Field::Cc,
+        &mut lines,
+        &mut cursor,
+    );
+    field(
+        "Bcc",
+        compose.bcc.clone(),
+        compose.field == Field::Bcc,
+        &mut lines,
+        &mut cursor,
+    );
+    field(
+        "Subject",
+        compose.subject.clone(),
+        compose.field == Field::Subject,
+        &mut lines,
+        &mut cursor,
+    );
+    lines.push(Line::styled("─".repeat(width), soft));
+    let head = lines.len();
+
+    // Below the text: what is sent along.
+    let mut foot: Vec<Line> = Vec::new();
+    let tick = |on: bool| if on { "[x] " } else { "[ ] " };
+    let mark = |here: bool| Span::styled(if here { "▌" } else { " " }, Style::default().fg(ACCENT));
+    if let Some(who) = &compose.source_from {
+        foot.push(Line::from(vec![
+            mark(compose.field == Field::Quote),
+            Span::raw(format!(
+                "{}Include the message from {who} below yours",
+                tick(compose.quote)
+            )),
+        ]));
+        if compose.kind == "forward" && compose.source_files > 0 {
+            let files = if compose.source_files == 1 {
+                "attachment".to_string()
+            } else {
+                format!("{} attachments", compose.source_files)
+            };
+            foot.push(Line::from(vec![
+                mark(compose.field == Field::Files),
+                Span::raw(format!("{}Forward its {files}", tick(compose.forward_files))),
+            ]));
+        }
+    }
+    for (index, file) in compose.files.iter().enumerate() {
+        let here = compose.field == Field::Attachment(index);
+        foot.push(Line::from(vec![
+            mark(here),
+            Span::raw(format!("📎 {}", file.filename)),
+            Span::styled(
+                format!(
+                    "  {} KB{}",
+                    (file.size + 1023) / 1024,
+                    if here { "   (Backspace removes)" } else { "" }
+                ),
+                soft,
+            ),
+        ]));
+    }
+    if !foot.is_empty() {
+        foot.insert(0, Line::styled("─".repeat(width), soft));
+    }
+
+    // The text takes what is left between head and foot.
+    let rows = (area.height as usize).saturating_sub(head + foot.len()).max(1);
+    compose.width = width;
+    let (text, at_row, at_col) = compose.body.screen(width);
+    if at_row < compose.body.top {
+        compose.body.top = at_row;
+    } else if at_row >= compose.body.top + rows {
+        compose.body.top = at_row + 1 - rows;
+    }
+    let top = compose.body.top;
+    if text.len() == 1 && text[0].is_empty() && compose.field != Field::Body {
+        lines.push(Line::styled("Write your message", soft));
+    }
+    for row in text.into_iter().skip(top).take(rows) {
+        if lines.len() < head + rows {
+            lines.push(Line::raw(row));
+        }
+    }
+    while lines.len() < head + rows {
+        lines.push(Line::raw(""));
+    }
+    if compose.field == Field::Body {
+        cursor = Some((area.x + at_col as u16, area.y + (head + at_row - top) as u16));
+    }
+    lines.extend(foot);
+    frame.render_widget(Paragraph::new(lines), area);
+
+    // Known recipients that match what is typed, right under the To line.
+    if !compose.suggestions.is_empty() {
+        let height = compose.suggestions.len() as u16 + 2;
+        let popup = Rect {
+            x: area.x + LABEL as u16,
+            y: area.y + to_row as u16,
+            width: 60.min(area.width.saturating_sub(LABEL as u16)),
+            height: height.min(area.height.saturating_sub(to_row as u16)),
+        };
+        let items: Vec<Line> = compose
+            .suggestions
+            .iter()
+            .enumerate()
+            .map(|(index, contact)| {
+                let line = Line::from(vec![
+                    Span::raw(format!(
+                        " {} ",
+                        crate::api::display_name(Some(&contact.name), Some(&contact.address))
+                    )),
+                    Span::styled(format!("{} ", contact.address), soft),
+                ]);
+                if compose.picked == Some(index) {
+                    line.style(Style::default().add_modifier(Modifier::REVERSED))
+                } else {
+                    line
+                }
+            })
+            .collect();
+        let block = Block::default()
+            .borders(Borders::ALL)
+            .title_bottom(" ↓ ↑ pick, Enter takes ");
+        frame.render_widget(Clear, popup);
+        frame.render_widget(Paragraph::new(items).block(block), popup);
+    }
+
+    // The bottom line: the path of a file being attached, what just happened, or the keys.
+    if let Some(path) = &compose.attaching {
+        input(frame, bottom, " File to attach (path): ", path);
+        return;
+    }
+    let hint = if status.is_empty() {
+        let mut text = String::new();
+        for hint in [
+            "Ctrl+S send",
+            "Tab next field",
+            "Esc save and leave",
+            "Ctrl+A attach",
+            "Ctrl+O original",
+            "Ctrl+E editor",
+            "Ctrl+X discard",
+        ] {
+            if hint == "Ctrl+O original" && compose.original.is_none() {
+                continue;
+            }
+            if text.width() + hint.width() + 3 > bottom.width as usize {
+                break;
+            }
+            text.push_str("  ");
+            text.push_str(hint);
+        }
+        Line::styled(text.split_off(1.min(text.len())), soft)
+    } else {
+        Line::raw(format!(" {}", fit(&status, bottom.width.saturating_sub(2) as usize)))
+    };
+    frame.render_widget(Paragraph::new(hint), bottom);
+    if let Some(position) = cursor {
+        frame.set_cursor_position(position);
+    }
+}
+
 /// Every mail of the list, one below the other.
 fn one_page(frame: &mut Frame, app: &mut App, area: Rect) {
     let inner = Rect {
@@ -476,6 +729,25 @@ const KEYS: &[(&str, &[(&str, &str)])] = &[
             ("t", "Add or edit your note (Enter saves, Esc cancels)"),
             ("m", "Move to a folder of the mail account"),
             ("v", "Select several: Space ticks, * ticks all, Esc stops"),
+        ],
+    ),
+    (
+        "Writing mail",
+        &[
+            ("c", "Write a new mail"),
+            ("r", "Reply"),
+            ("Shift R", "Reply to all"),
+            ("f", "Forward"),
+            ("Enter", "In Drafts: take up the draft"),
+            (
+                "Ctrl S",
+                "While writing: send (Ctrl Return where the terminal knows it)",
+            ),
+            ("Tab", "While writing: next field; Esc saves the draft and leaves"),
+            (
+                "Ctrl A O E",
+                "Attach a file; read the original mail; use your own editor",
+            ),
         ],
     ),
     (

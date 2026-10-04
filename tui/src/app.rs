@@ -9,6 +9,7 @@ use serde_json::{Value, json};
 use crate::api::{
     Client, Counts, Draft, Message, SavedSearch, ScreenerEntry, SearchHit, Thread, ThreadSummary, display_name,
 };
+use crate::compose::Compose;
 
 /// The lists of the side bar, in the web client's order.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -121,13 +122,14 @@ pub enum Row {
     },
     Mail(ThreadSummary),
     /// A sender waiting in the Screener (with the sender's id and newest conversation), or a
-    /// draft (with neither: drafts are written in the web client for now).
+    /// draft (with its id).
     Entry {
         who: String,
         text: String,
         date: i64,
         sender: Option<i64>,
         thread: Option<i64>,
+        draft: Option<i64>,
     },
     /// What an empty area or list says.
     Empty(String),
@@ -199,7 +201,11 @@ pub struct Open {
 }
 
 pub struct App {
-    client: Client,
+    pub(crate) client: Client,
+    /// The mail being written, if one is.
+    pub compose: Option<Compose>,
+    /// The text of the draft is to be handed to the reader's own editor.
+    pub wants_editor: bool,
     pub user: String,
     pub counts: Counts,
     pub place: Place,
@@ -244,6 +250,8 @@ impl App {
     pub async fn new(client: Client, user: String) -> Result<Self> {
         let mut app = Self {
             client,
+            compose: None,
+            wants_editor: false,
             user,
             counts: Counts::default(),
             place: Place::Home,
@@ -346,6 +354,7 @@ impl App {
                     date: entry.date,
                     sender: Some(entry.id),
                     thread: Some(entry.thread_id),
+                    draft: None,
                 }));
                 if rows.is_empty() {
                     rows.push(Row::Empty("Nobody is waiting. New senders appear here.".into()));
@@ -367,6 +376,7 @@ impl App {
                     date: draft.updated_at,
                     sender: None,
                     thread: None,
+                    draft: Some(draft.id),
                 }));
                 if rows.is_empty() {
                     rows.push(Row::Empty("No drafts.".into()));
@@ -430,6 +440,10 @@ impl App {
             Some(Row::Mail(thread)) => Some(thread),
             _ => None,
         }
+    }
+
+    pub(crate) fn current_thread_id(&self) -> Option<i64> {
+        self.current_id()
     }
 
     fn current_id(&self) -> Option<i64> {
@@ -570,6 +584,8 @@ impl App {
     async fn open_current(&mut self) -> Result<()> {
         let (id, was_unseen) = match self.rows.get(self.cursor) {
             Some(Row::Mail(summary)) => (summary.id, summary.unread > 0),
+            // A draft is taken up again.
+            Some(Row::Entry { draft: Some(id), .. }) => return self.open_draft(*id).await,
             // A waiting sender's newest mail, to read before deciding.
             Some(Row::Entry { thread: Some(id), .. }) => (*id, false),
             _ => return Ok(()),
@@ -731,6 +747,9 @@ impl App {
             self.help = false;
             return Ok(());
         }
+        if self.compose.is_some() {
+            return self.compose_key(key).await;
+        }
         match std::mem::replace(&mut self.mode, Mode::Normal) {
             Mode::Normal => {}
             Mode::Delay => return self.delay_key(key).await,
@@ -782,6 +801,12 @@ impl App {
             KeyCode::Char('D') => self.go(Place::Delayed).await?,
             KeyCode::Char('N') | KeyCode::Char('3') => self.go(Place::Feed).await?,
             KeyCode::Char('2') => self.go(Place::Screener).await?,
+
+            // Writing mail.
+            KeyCode::Char('c') if !ctrl => self.start_draft("new").await?,
+            KeyCode::Char('r') if self.place.has_mail() => self.start_draft("reply").await?,
+            KeyCode::Char('R') if self.place.has_mail() => self.start_draft("reply_all").await?,
+            KeyCode::Char('f') if self.place.has_mail() => self.start_draft("forward").await?,
 
             // Searching, as in the web client's search field.
             KeyCode::Char('/') => {
@@ -1222,7 +1247,8 @@ impl App {
     }
 
     /// Keys given as text, for scripts and tests: plain characters, and `<down>`, `<up>`,
-    /// `<left>`, `<right>`, `<enter>`, `<esc>`, `<tab>`, `<space>`, `<bs>`, `<c-down>`, `<c-up>`.
+    /// `<left>`, `<right>`, `<enter>`, `<esc>`, `<tab>`, `<s-tab>`, `<space>`, `<bs>`, `<lt>`, `<c-down>`, `<c-up>`,
+    /// `<c-enter>` and `<c-x>` for Ctrl with a letter.
     pub async fn script(&mut self, keys: &str) -> Result<()> {
         let mut rest = keys;
         while let Some(c) = rest.chars().next() {
@@ -1240,6 +1266,14 @@ impl App {
                         "bs" => (KeyCode::Backspace, KeyModifiers::NONE),
                         "c-down" => (KeyCode::Down, KeyModifiers::CONTROL),
                         "c-up" => (KeyCode::Up, KeyModifiers::CONTROL),
+                        "s-tab" => (KeyCode::BackTab, KeyModifiers::SHIFT),
+                        "c-enter" => (KeyCode::Enter, KeyModifiers::CONTROL),
+                        "lt" => (KeyCode::Char('<'), KeyModifiers::NONE),
+                        // `<c-s>`: Ctrl with a letter.
+                        other if other.len() == 3 && other.starts_with("c-") => (
+                            KeyCode::Char(other.chars().nth(2).unwrap_or(' ')),
+                            KeyModifiers::CONTROL,
+                        ),
                         other => anyhow::bail!("unknown key <{other}>"),
                     };
                     (code, modifiers, name.len() + 2)
@@ -1294,7 +1328,7 @@ fn edit(key: KeyEvent, text: &mut String) -> Typed {
 }
 
 /// A query as part of a web address.
-fn encode(text: &str) -> String {
+pub(crate) fn encode(text: &str) -> String {
     let mut out = String::new();
     for byte in text.bytes() {
         match byte {

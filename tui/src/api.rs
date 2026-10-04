@@ -204,6 +204,7 @@ pub struct ScreenerEntry {
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct Draft {
+    pub id: i64,
     pub to_addrs: String,
     pub subject: String,
     pub updated_at: i64,
@@ -333,6 +334,31 @@ impl Client {
             .delete(format!("{}/api{path}", self.base))
             .header(reqwest::header::COOKIE, self.cookie())
             .timeout(Duration::from_secs(30))
+            .send()
+            .await
+            .with_context(|| format!("cannot reach {}", self.base))?;
+        Self::answer(response).await
+    }
+
+    /// Sends a file of this computer as an attachment of a draft.
+    pub async fn upload<T: DeserializeOwned>(&self, path: &str, file: &str) -> Result<T> {
+        // "~/…" as the shell would read it.
+        let file = match (file.strip_prefix("~/"), std::env::var_os("HOME")) {
+            (Some(rest), Some(home)) => std::path::PathBuf::from(home).join(rest),
+            _ => std::path::PathBuf::from(file),
+        };
+        let data = std::fs::read(&file).with_context(|| format!("cannot read {}", file.display()))?;
+        let name = file
+            .file_name()
+            .map(|name| name.to_string_lossy().to_string())
+            .unwrap_or_else(|| "attachment".into());
+        let form = reqwest::multipart::Form::new().part("file", reqwest::multipart::Part::bytes(data).file_name(name));
+        let response = self
+            .http
+            .post(format!("{}/api{path}", self.base))
+            .header(reqwest::header::COOKIE, self.cookie())
+            .timeout(Duration::from_secs(120))
+            .multipart(form)
             .send()
             .await
             .with_context(|| format!("cannot reach {}", self.base))?;
