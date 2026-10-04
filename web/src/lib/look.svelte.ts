@@ -42,6 +42,9 @@ function apply() {
 	if (typeof document === 'undefined') return;
 	document.documentElement.dataset.theme = look.theme;
 	document.documentElement.dataset.mode = look.dark ? 'dark' : 'light';
+	// An installed app's title bar and a phone's status bar take the page's own colour.
+	const paper = getComputedStyle(document.documentElement).getPropertyValue('--paper').trim();
+	if (paper) document.querySelector('meta[name="theme-color"]')?.setAttribute('content', paper);
 }
 
 export function setLook(change: { theme?: Theme; mode?: Mode }) {

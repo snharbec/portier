@@ -80,6 +80,17 @@ The frontend is embedded in the binary, so build `web/` before `cargo build`. Op
 http://127.0.0.1:8080. The first user to register manages the installation and can add
 further users under Settings.
 
+## Installing it as an app
+
+Served over HTTPS, the web client can be installed as an app: in Chrome and Edge with the install
+button in the address bar, in Safari with "Add to Dock" (Mac) or "Add to Home Screen" (iPhone,
+iPad). It then has its own icon and window, without the browser's bars.
+
+The app itself (scripts, styles, fonts, icons) is stored on the device, so it opens at once and
+also without the server. Mail is never stored there: it is always asked from the server. When the
+server cannot be reached (no connection, VPN off) the app says so and starts by itself once it
+can.
+
 ## Terminal client
 
 `portier-tui` shows the same lists and mails in a terminal. It talks to a running Portier server
@@ -178,6 +189,11 @@ On macOS, `contrib/launchd/` has two launchd agents to copy into `~/Library/Laun
 adapt: one keeps Portier running from login on, the other asks Tailscale for the certificate
 at login and once a week, which renews it when it is due. Load each with
 `launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/<file>`.
+
+The agents run a copy of the binary in `~/Library/Application Support/Portier`, with the data
+folder beside it, not the one in the build folder. `contrib/launchd/deploy.sh <label>` builds,
+copies the new binary there and restarts the agent. (A service run straight from a build folder
+on an external volume stops at a macOS permission dialog after every rebuild.)
 
 A reverse proxy that adds HTTPS in front of the plain port works as well. Either way, keep
 `master.key` with your backups: without it the stored account passwords cannot be read.

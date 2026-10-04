@@ -7,20 +7,20 @@
 	<string>org.example.portier</string>
 	<key>ProgramArguments</key>
 	<array>
-		<string>/path/to/portier/target/release/portier</string>
+		<string>/Users/you/Library/Application Support/Portier/portier</string>
 	</array>
 	<key>WorkingDirectory</key>
-	<string>/path/to/portier</string>
+	<string>/Users/you/Library/Application Support/Portier</string>
 	<key>EnvironmentVariables</key>
 	<dict>
 		<key>PORTIER_BIND</key>
 		<string>100.x.y.z:8443</string>
 		<key>PORTIER_DATA_DIR</key>
-		<string>/path/to/portier/data</string>
+		<string>/Users/you/Library/Application Support/Portier/data</string>
 		<key>PORTIER_TLS_CERT</key>
-		<string>/path/to/portier/data/tls/cert.pem</string>
+		<string>/Users/you/Library/Application Support/Portier/data/tls/cert.pem</string>
 		<key>PORTIER_TLS_KEY</key>
-		<string>/path/to/portier/data/tls/key.pem</string>
+		<string>/Users/you/Library/Application Support/Portier/data/tls/key.pem</string>
 		<key>PATH</key>
 		<string>/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin</string>
 	</dict>

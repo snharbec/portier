@@ -11,9 +11,9 @@
 		<string>/usr/local/bin/tailscale</string>
 		<string>cert</string>
 		<string>--cert-file</string>
-		<string>/path/to/portier/data/tls/cert.pem</string>
+		<string>/Users/you/Library/Application Support/Portier/data/tls/cert.pem</string>
 		<string>--key-file</string>
-		<string>/path/to/portier/data/tls/key.pem</string>
+		<string>/Users/you/Library/Application Support/Portier/data/tls/key.pem</string>
 		<string>machine.your-tailnet.ts.net</string>
 	</array>
 	<key>RunAtLoad</key>

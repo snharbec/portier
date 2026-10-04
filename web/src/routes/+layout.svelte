@@ -15,8 +15,35 @@
 	let menuOpen = $state(false);
 	let loadError = $state('');
 
+	let offline = $state(false);
+
 	onMount(() => {
-		loadSession().catch((e) => (loadError = e.message));
+		let again: ReturnType<typeof setTimeout> | undefined;
+		// The app itself is stored on the device and opens without the server. Until the server
+		// answers (no connection, or the VPN to it is off), it keeps trying by itself.
+		const start = () => {
+			clearTimeout(again);
+			loadSession()
+				.then(() => (loadError = ''))
+				.catch((e) => {
+					loadError = e.message;
+					again = setTimeout(start, 5000);
+				});
+		};
+		offline = !navigator.onLine;
+		start();
+		const online = () => {
+			offline = false;
+			if (!app.ready) start();
+		};
+		const gone = () => (offline = true);
+		window.addEventListener('online', online);
+		window.addEventListener('offline', gone);
+		return () => {
+			clearTimeout(again);
+			window.removeEventListener('online', online);
+			window.removeEventListener('offline', gone);
+		};
 	});
 
 	// `badge` is the number of unseen conversations (for the Screener waiting senders, for Drafts
@@ -298,8 +325,17 @@
 
 <svelte:window {onkeydown} />
 
-{#if loadError}
-	<p class="empty"><strong>Portier is not responding</strong>{loadError}</p>
+{#if loadError && !app.ready}
+	<p class="empty">
+		{#if offline}
+			<strong>You are offline</strong>Your mail is on the Portier server, which cannot be reached without a
+			connection.
+		{:else}
+			<strong>Portier cannot be reached</strong>{loadError} If the server is only reachable through a VPN,
+			check that it is on.
+		{/if}
+		<span class="retry">Trying again by itself.</span>
+	</p>
 {:else if !app.ready}
 	<p class="empty" aria-busy="true">Loading</p>
 {:else if !app.user}
@@ -469,6 +505,11 @@
 {/if}
 
 <style>
+	.retry {
+		display: block;
+		margin-top: 0.4rem;
+		font-size: 0.9rem;
+	}
 	header {
 		position: sticky;
 		top: 0;
