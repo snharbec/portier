@@ -339,6 +339,18 @@
 			{#if !thread.note && noteDraft === null}
 				<button class="btn small" onclick={editNote}>Add note <span class="key">(t)</span></button>
 			{/if}
+			<a
+				class="btn small"
+				href={thread.messages.length === 1
+					? `/api/export/mail?message=${thread.messages[0].id}`
+					: `/api/export/mail?threads=${thread.id}`}
+				download
+				title={thread.messages.length === 1
+					? 'Download this mail as an .eml file'
+					: 'Download this conversation as an mbox file'}
+			>
+				Save as file
+			</a>
 			{#if thread.can_restore}
 				<button class="btn small" onclick={untrash} disabled={trashing} title="Take it out of the Trash">
 					Move back to Home

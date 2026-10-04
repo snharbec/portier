@@ -8,6 +8,7 @@ mod files;
 mod groups;
 mod mail;
 mod pictures;
+mod portable;
 mod saved;
 
 use axum::{
@@ -53,6 +54,17 @@ pub fn router() -> Router<AppState> {
         )
         .route("/senders/{id}/picture/url", post(pictures::from_url))
         .route("/contacts", get(mail::contacts))
+        .route("/export/mail", get(portable::mail))
+        .route("/export/settings", get(portable::export_settings))
+        .route(
+            "/import/settings",
+            post(portable::import_settings).layer(DefaultBodyLimit::max(portable::MAX_IMPORT_BYTES)),
+        )
+        .route(
+            "/backup",
+            get(portable::backup_settings).put(portable::set_backup_folder),
+        )
+        .route("/backup/download", get(portable::backup_download))
         .route("/groups", get(groups::list).post(groups::create))
         .route("/groups/{id}", put(groups::update).delete(groups::delete))
         .route("/avatar", get(mail::avatar))
@@ -1548,6 +1560,152 @@ mod tests {
             ("inbox".to_string(), Some(1)),
             "mail is back in the inbox with its UID"
         );
+    }
+
+    #[tokio::test]
+    async fn settings_travel_in_a_file_and_mail_leaves_as_files() {
+        let (app, state) = test_app().await;
+        let admin = json!({ "email": "admin@example.org", "password": "password1" });
+        let (_, cookie, _) = call(&app, "POST", "/api/register", None, Some(admin)).await;
+        let cookie = cookie.unwrap();
+        let (thread, message, sender) = seed_mail(&state, 1).await;
+        let db = &state.db;
+        sqlx::query("UPDATE senders SET category = 'feed', show_images = 1 WHERE id = ?")
+            .bind(sender)
+            .execute(db)
+            .await
+            .unwrap();
+        sqlx::query("UPDATE threads SET note = 'call back' WHERE id = ?")
+            .bind(thread)
+            .execute(db)
+            .await
+            .unwrap();
+        let group = json!({ "name": "Board", "members": "anna@example.org" });
+        call(&app, "POST", "/api/groups", Some(&cookie), Some(group)).await;
+        let search = json!({ "name": "Invoices", "query": "invoice" });
+        call(&app, "POST", "/api/searches", Some(&cookie), Some(search)).await;
+
+        let (status, _, file) = call(&app, "GET", "/api/export/settings", Some(&cookie), None).await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(file["portier_settings"], 1);
+        assert_eq!(
+            (&file["senders"][0]["category"], &file["senders"][0]["show_images"]),
+            (&json!("feed"), &json!(true))
+        );
+        assert_eq!(
+            file["groups"],
+            json!([{ "name": "Board", "members": "anna@example.org" }])
+        );
+        assert_eq!(file["notes"][0]["note"], "call back");
+        assert!(
+            file.get("accounts").is_none() && !file.to_string().contains("password"),
+            "no accounts, no passwords"
+        );
+
+        // Another user takes the file in: decisions, group and search arrive; the note has no
+        // mail to sit on there and is counted as such.
+        let other = json!({ "email": "other@example.org", "password": "password2" });
+        call(&app, "POST", "/api/users", Some(&cookie), Some(other.clone())).await;
+        let (_, other_cookie, _) = call(&app, "POST", "/api/login", None, Some(other)).await;
+        let other_cookie = other_cookie.as_deref();
+        let (status, _, taken) = call(&app, "POST", "/api/import/settings", other_cookie, Some(file.clone())).await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(
+            (&taken["senders"], &taken["groups"], &taken["saved_searches"]),
+            (&json!(1), &json!(1), &json!(1))
+        );
+        assert_eq!((&taken["notes"], &taken["notes_without_mail"]), (&json!(0), &json!(1)));
+        let (_, _, theirs) = call(&app, "GET", "/api/groups", other_cookie, None).await;
+        assert_eq!(theirs[0]["name"], "Board");
+        let waiting: Option<String> = sqlx::query_scalar("SELECT category FROM senders WHERE user_id = 2")
+            .fetch_one(db)
+            .await
+            .unwrap();
+        assert_eq!(waiting.as_deref(), Some("feed"), "decided before the sender ever wrote");
+
+        // Taking the own file in again changes nothing and doubles nothing; a lost note comes back.
+        sqlx::query("UPDATE threads SET note = ''").execute(db).await.unwrap();
+        let (_, _, again) = call(&app, "POST", "/api/import/settings", Some(&cookie), Some(file)).await;
+        assert_eq!((&again["notes"], &again["problems"]), (&json!(1), &json!([])));
+        let note: String = sqlx::query_scalar("SELECT note FROM threads WHERE id = ?")
+            .bind(thread)
+            .fetch_one(db)
+            .await
+            .unwrap();
+        assert_eq!(note, "call back");
+        let (_, _, groups) = call(&app, "GET", "/api/groups", Some(&cookie), None).await;
+        let (_, _, searches) = call(&app, "GET", "/api/searches", Some(&cookie), None).await;
+        assert_eq!(
+            (groups.as_array().unwrap().len(), searches.as_array().unwrap().len()),
+            (1, 1)
+        );
+        let wrong = json!({ "portier_settings": 99 });
+        let (status, _, _) = call(&app, "POST", "/api/import/settings", Some(&cookie), Some(wrong)).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+
+        // Mail as files: one mail, one conversation, a list; never another user's.
+        let raw = b"From: Jane <jane@example.org>\r\nSubject: Secret\r\n\r\nFrom the start\r\n";
+        let path = state.raw_path(1, message);
+        tokio::fs::create_dir_all(path.parent().unwrap()).await.unwrap();
+        tokio::fs::write(&path, raw).await.unwrap();
+        let download = async |path: String, cookie: Option<&str>| {
+            let mut request = Request::builder().method("GET").uri(path);
+            if let Some(cookie) = cookie {
+                request = request.header("cookie", cookie);
+            }
+            let response = app.clone().oneshot(request.body(Body::empty()).unwrap()).await.unwrap();
+            let status = response.status();
+            let name = response
+                .headers()
+                .get("content-disposition")
+                .map(|value| value.to_str().unwrap().to_string())
+                .unwrap_or_default();
+            let bytes = response.into_body().collect().await.unwrap().to_bytes();
+            (status, name, String::from_utf8_lossy(&bytes).into_owned())
+        };
+        let (status, name, eml) = download(format!("/api/export/mail?message={message}"), Some(&cookie)).await;
+        assert_eq!(
+            (status, name.as_str()),
+            (StatusCode::OK, "attachment; filename=\"Secret.eml\"")
+        );
+        assert_eq!(eml.as_bytes(), raw);
+        let (status, name, mbox) = download(format!("/api/export/mail?threads={thread}"), Some(&cookie)).await;
+        assert_eq!(
+            (status, name.as_str()),
+            (StatusCode::OK, "attachment; filename=\"Secret.mbox\"")
+        );
+        assert!(
+            mbox.starts_with("From ") && mbox.contains("\n>From the start\n"),
+            "{mbox}"
+        );
+        let (status, _, all) = download("/api/export/mail?box=all".into(), Some(&cookie)).await;
+        assert_eq!((status, all.matches("Subject: Secret").count()), (StatusCode::OK, 1));
+        let (status, _, _) = download(format!("/api/export/mail?message={message}"), other_cookie).await;
+        assert_eq!(status, StatusCode::NOT_FOUND);
+        let (status, _, _) = download(format!("/api/export/mail?threads={thread}"), other_cookie).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "nothing of theirs to export");
+
+        // Backups are the administrator's: a download now, and a folder for the daily ones.
+        let (status, _, _) = download("/api/backup/download".into(), other_cookie).await;
+        assert_eq!(status, StatusCode::FORBIDDEN);
+        let (status, name, _) = download("/api/backup/download".into(), Some(&cookie)).await;
+        assert!(
+            status == StatusCode::OK && name.contains("portier-") && name.contains(".tar.gz"),
+            "{name}"
+        );
+        let folder = state.config.data_dir.join("backups");
+        let set = json!({ "dir": folder });
+        let (status, _, saved) = call(&app, "PUT", "/api/backup", Some(&cookie), Some(set)).await;
+        assert_eq!(status, StatusCode::OK, "{saved}");
+        assert!(saved["last_error"].is_null() && saved["last_at"].is_i64());
+        assert_eq!(
+            std::fs::read_dir(&folder).unwrap().count(),
+            1,
+            "the first backup is written at once"
+        );
+        let relative = json!({ "dir": "backups" });
+        let (status, _, _) = call(&app, "PUT", "/api/backup", Some(&cookie), Some(relative)).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
     }
 
     #[tokio::test]

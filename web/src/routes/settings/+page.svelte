@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { tick } from 'svelte';
 	import { api, type Account, type Addr, type Category, type RecipientGroup, type Sender, type User } from '#lib/api.ts';
-	import { app, categoryNames, classify, refreshAccounts } from '#lib/app.svelte.ts';
+	import { app, categoryNames, classify, refreshAccounts, refreshCounts, refreshSettings } from '#lib/app.svelte.ts';
 	import { clearOffline, offline, setOffline } from '#lib/offline.svelte.ts';
 	import { swipeActions, type SwipeAction } from '#lib/swipe.ts';
 	import Avatar from '#lib/components/Avatar.svelte';
@@ -147,6 +147,130 @@
 			app.swipe = { left: saved.swipe_left, right: saved.swipe_right };
 		} catch (e) {
 			swipeError = (e as Error).message;
+		}
+	}
+
+	// ---- Backup, export, import ----
+	let exportBox = $state('all');
+	const exportBoxes = [
+		['all', 'All mail'],
+		['important', 'Home'],
+		['flagged', 'Important'],
+		['feed', 'Nice to know'],
+		['archive', 'Archive'],
+		['sent', 'Sent'],
+		['junk', 'Junk'],
+		['trash', 'Trash']
+	];
+	let portableBusy = $state(false);
+	let portableError = $state('');
+	let imported = $state<{
+		senders: number;
+		pictures: number;
+		groups: number;
+		saved_searches: number;
+		notes: number;
+		notes_without_mail: number;
+		problems: string[];
+	} | null>(null);
+
+	/** Hands a text to the browser as a file to save. */
+	function saveAs(name: string, text: string) {
+		const link = document.createElement('a');
+		link.href = URL.createObjectURL(new Blob([text], { type: 'application/json' }));
+		link.download = name;
+		link.click();
+		setTimeout(() => URL.revokeObjectURL(link.href), 1000);
+	}
+
+	async function exportSettings() {
+		portableError = '';
+		portableBusy = true;
+		try {
+			const file = await api.get<Record<string, unknown>>('/export/settings');
+			// What this browser keeps goes along: the look.
+			file.browser = { look: { theme: look.theme, mode: look.mode } };
+			saveAs(`portier-settings-${new Date().toISOString().slice(0, 10)}.json`, JSON.stringify(file, null, 1));
+		} catch (e) {
+			portableError = (e as Error).message;
+		} finally {
+			portableBusy = false;
+		}
+	}
+
+	async function importSettings(event: Event) {
+		const input = event.currentTarget as HTMLInputElement;
+		const chosen = input.files?.[0];
+		input.value = '';
+		if (!chosen) return;
+		portableError = '';
+		imported = null;
+		portableBusy = true;
+		try {
+			let file: { portier_settings?: number; browser?: { look?: { theme?: string; mode?: string } } };
+			try {
+				file = JSON.parse(await chosen.text());
+			} catch {
+				throw new Error('This is not a Portier settings file.');
+			}
+			if (file?.portier_settings !== 1) throw new Error('This is not a Portier settings file.');
+			imported = await api.post('/import/settings', file);
+			const wanted = file.browser?.look;
+			const theme = themes.find((t) => t.id === wanted?.theme)?.id;
+			const mode = modes.find((m) => m.id === wanted?.mode)?.id;
+			if (theme || mode) setLook({ ...(theme ? { theme } : {}), ...(mode ? { mode } : {}) });
+			groups = await api.get<RecipientGroup[]>('/groups');
+			await Promise.all([refreshCounts(), refreshSettings()]);
+			app.tick += 1;
+		} catch (e) {
+			portableError = (e as Error).message;
+		} finally {
+			portableBusy = false;
+		}
+	}
+
+	// The whole installation, for the administrator.
+	type BackupState = {
+		dir: string;
+		last_at: number | null;
+		last_file: string | null;
+		last_error: string | null;
+		keep: number;
+		data_dir: string;
+	};
+	let backup = $state<BackupState | null>(null);
+	let backupDir = $state('');
+	let backupError = $state('');
+	let backupNote = $state('');
+	let backupBusy = $state(false);
+
+	$effect(() => {
+		if (!app.user?.is_admin) return;
+		api.get<BackupState>('/backup')
+			.then((state) => {
+				backup = state;
+				backupDir = state.dir;
+			})
+			.catch(() => {});
+	});
+
+	async function saveBackupFolder(event: SubmitEvent) {
+		event.preventDefault();
+		backupError = backupNote = '';
+		backupBusy = true;
+		try {
+			backup = await api.put<BackupState>('/backup', { dir: backupDir });
+			backupDir = backup.dir;
+			backupNote = backup.dir
+				? 'Saved, and the first backup is written. From now on one is written every day.'
+				: 'Saved. No backups are written by themselves.';
+		} catch (e) {
+			backupError = (e as Error).message;
+			api.get<BackupState>('/backup')
+				.then((state) => (backup = state))
+				.catch(() => {});
+		} finally {
+			backupBusy = false;
 		}
 	}
 
@@ -436,6 +560,7 @@
 	<a class="btn small" href="#archive">Automatic archive</a>
 	<a class="btn small" href="#summaries">Summaries</a>
 	<a class="btn small" href="#groups">Groups</a>
+	<a class="btn small" href="#portable">Backup and export</a>
 	<a class="btn small" href="#device">Mail on this device</a>
 	{#if app.user?.is_admin}<a class="btn small" href="#users">Users</a>{/if}
 	<a class="btn small" href="#password">Password</a>
@@ -807,6 +932,81 @@
 	{#if groupError}<p class="error" role="alert">{groupError}</p>{/if}
 </section>
 
+<section id="portable">
+	<h2>Backup and export</h2>
+
+	<h3>Your settings</h3>
+	<p class="muted">
+		One file with what you set up in Portier: where each sender's mail goes, sender pictures, groups, saved
+		searches, notes on mails, slide actions, automatic archive and the look. Mail and mail accounts are not in
+		it. Importing sets what the file names and leaves everything else as it is.
+	</p>
+	<div class="actions">
+		<button class="btn" disabled={portableBusy} onclick={exportSettings}>Export settings</button>
+		<label class="btn" class:disabled={portableBusy}>
+			Import settings
+			<input type="file" accept="application/json,.json" hidden disabled={portableBusy} onchange={importSettings} />
+		</label>
+	</div>
+	{#if portableError}<p class="error" role="alert">{portableError}</p>{/if}
+	{#if imported}
+		<p class="ok" role="status">
+			Imported: {imported.senders} senders, {imported.pictures} pictures, {imported.groups} groups,
+			{imported.saved_searches} saved searches, {imported.notes} notes.
+		</p>
+		{#if imported.notes_without_mail}
+			<p class="muted note">
+				{imported.notes_without_mail}
+				{imported.notes_without_mail === 1 ? 'note was' : 'notes were'} left out: the mail they belong to is not
+				here (yet). Import again once it is.
+			</p>
+		{/if}
+		{#if imported.problems.length}
+			<p class="error">Not taken over: {imported.problems.join('; ')}</p>
+		{/if}
+	{/if}
+
+	<h3>Mail as files</h3>
+	<p class="muted">
+		Your mail as an mbox file, which Thunderbird, Apple Mail and other mail programs open and import. A single
+		mail or conversation can be saved from the mail itself ("Save as file"), a selection from the selection bar.
+	</p>
+	<div class="actions">
+		<select bind:value={exportBox} aria-label="Which mail">
+			{#each exportBoxes as [id, name]}<option value={id}>{name}</option>{/each}
+		</select>
+		<a class="btn" href="/api/export/mail?box={exportBox}" download>Export as mbox file</a>
+	</div>
+
+	{#if app.user?.is_admin}
+		<h3>Whole installation</h3>
+		<p class="muted">
+			A backup holds everything of every user: the database, the stored mail, and the key that protects the mail
+			passwords. Keep it as safe as the server itself. It is put back with the server stopped:
+			<code>portier restore FILE</code>; <code>portier backup</code> writes one from the command line.
+		</p>
+		<div class="actions">
+			<a class="btn" href="/api/backup/download" download>Download a backup now</a>
+		</div>
+		<form class="daily" onsubmit={saveBackupFolder}>
+			<label class="field">
+				Folder for a daily backup (on the server; empty for none)
+				<input bind:value={backupDir} placeholder="/path/to/backups" autocomplete="off" spellcheck="false" />
+			</label>
+			<button class="btn primary" disabled={backupBusy || backupDir.trim() === (backup?.dir ?? '')}>Save</button>
+		</form>
+		{#if backup?.dir}
+			<p class="muted note">
+				One backup a day, the newest {backup.keep} are kept.
+				{#if backup.last_at}Last one: {fullDate(backup.last_at)}{backup.last_file ? `, ${backup.last_file}` : ''}.{/if}
+			</p>
+		{/if}
+		{#if backup?.last_error}<p class="error" role="alert">The last backup failed: {backup.last_error}</p>{/if}
+		{#if backupError}<p class="error" role="alert">{backupError}</p>{/if}
+		{#if backupNote}<p class="ok" role="status">{backupNote}</p>{/if}
+	{/if}
+</section>
+
 <section id="device">
 	<h2>Mail on this device</h2>
 	<p class="muted">
@@ -1094,6 +1294,44 @@
 		.grid.server {
 			grid-template-columns: 1fr 1fr;
 		}
+	}
+	#portable h3 {
+		margin: 1.4rem 0 0.3rem;
+		font: 600 1rem var(--body);
+		letter-spacing: 0;
+	}
+	#portable .actions {
+		display: flex;
+		flex-wrap: wrap;
+		align-items: center;
+		gap: 0.6rem;
+		margin-top: 0.6rem;
+	}
+	#portable select {
+		padding: 0.5rem 0.7rem;
+		border: 1px solid var(--line);
+		border-radius: 10px;
+		background: var(--surface);
+		color: inherit;
+		font: inherit;
+	}
+	#portable label.btn {
+		cursor: pointer;
+	}
+	#portable label.btn.disabled {
+		opacity: 0.55;
+		pointer-events: none;
+	}
+	#portable code {
+		font-size: 0.9em;
+	}
+	.daily {
+		display: grid;
+		grid-template-columns: minmax(0, 1fr) auto;
+		gap: 0.75rem;
+		align-items: end;
+		max-width: 40rem;
+		margin-top: 0.9rem;
 	}
 	.groups {
 		list-style: none;

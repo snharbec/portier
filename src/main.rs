@@ -2,6 +2,7 @@ mod api;
 mod assets;
 mod auth;
 mod avatar;
+mod backup;
 mod config;
 mod crypto;
 mod error;
@@ -82,7 +83,61 @@ async fn main() -> Result<()> {
     avatar::install_crypto();
     let config = Config::from_env()?;
     let db_path = config.data_dir.join("emscreen.db");
+
+    // Commands for whoever runs the server; run on the server itself, where whoever can run
+    // them could read the data folder anyway.
+    const USAGE: &str = "usage: portier                              run the server
+       portier reset-password EMAIL         give a user a new password
+       portier backup [FILE]                write a backup of the whole installation
+       portier restore FILE [--replace]     put a backup in place (server stopped)";
+    let args: Vec<String> = std::env::args().skip(1).collect();
+    let args: Vec<&str> = args.iter().map(String::as_str).collect();
+    match args.as_slice() {
+        [] | ["reset-password", _] | ["backup"] | ["backup", _] => {}
+        ["restore", file] | ["restore", file, "--replace"] | ["restore", "--replace", file] => {
+            // Restoring under a running server would pull the database from under it.
+            let running = tokio::time::timeout(
+                std::time::Duration::from_secs(2),
+                tokio::net::TcpStream::connect(config.bind),
+            )
+            .await;
+            if matches!(running, Ok(Ok(_))) {
+                anyhow::bail!("something answers at {}: stop the Portier server first", config.bind);
+            }
+            let aside = backup::restore(
+                &config.data_dir,
+                std::path::Path::new(file),
+                args.contains(&"--replace"),
+            )?;
+            println!("Restored into {}.", config.data_dir.display());
+            if aside.exists() {
+                println!("What was there before is in {}.", aside.display());
+            }
+            if config::setting("MASTER_KEY").is_some() {
+                println!(
+                    "PORTIER_MASTER_KEY is set: it must be the key the backup was made with, or the mail passwords cannot be read."
+                );
+            }
+            return Ok(());
+        }
+        _ => anyhow::bail!(USAGE),
+    }
+
     let db = open_database(&format!("sqlite://{}", db_path.display())).await?;
+    match args.as_slice() {
+        ["reset-password", email] => return reset_password(&db, email).await,
+        ["backup", rest @ ..] => {
+            let file = rest
+                .first()
+                .map_or_else(|| backup::file_name(true), |name| name.to_string());
+            let size = backup::write(&db, &config.data_dir, std::path::Path::new(&file)).await?;
+            println!("Backup written: {file} ({:.1} MB)", size as f64 / 1e6);
+            println!("It holds all mail and the key to the mail passwords: keep it as safe as the server.");
+            return Ok(());
+        }
+        _ => {}
+    }
+
     sqlx::query("DELETE FROM sessions WHERE expires_at < ?")
         .bind(state::now())
         .execute(&db)
@@ -95,23 +150,13 @@ async fn main() -> Result<()> {
         .execute(&db)
         .await?;
 
-    // `portier reset-password EMAIL`: for a user who is locked out. Run on the server itself,
-    // where whoever can run it could read the database anyway.
-    let mut args = std::env::args().skip(1);
-    match (args.next().as_deref(), args.next()) {
-        (None, _) => {}
-        (Some("reset-password"), Some(email)) => return reset_password(&db, &email).await,
-        _ => anyhow::bail!(
-            "usage: portier                        run the server\n       portier reset-password EMAIL   give a user a new password"
-        ),
-    }
-
     let bind = config.bind;
     let state = AppState::new(db, config);
     mail::sync::start_all(&state).await?;
     tokio::spawn(mail::delay::run(state.clone()));
     tokio::spawn(api::autoarchive::run(state.clone()));
     tokio::spawn(mail::summary::run(state.clone()));
+    tokio::spawn(backup::run(state.clone()));
 
     let Some((cert, key)) = state.config.tls.clone() else {
         if !bind.ip().is_loopback() {

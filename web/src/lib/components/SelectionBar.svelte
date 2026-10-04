@@ -147,6 +147,15 @@
 			<button class="btn small" disabled={busy} onclick={() => run('archive', 'Archived:')}>Archive</button>
 		{/if}
 		<button class="btn small" disabled={busy} onclick={move}>Move to folder</button>
+		{#if threadIds.length}
+			<a class="btn small" href="/api/export/mail?threads={threadIds.join(',')}" download title="Download as an mbox file">
+				Save as file
+			</a>
+		{:else if messageIds.length === 1}
+			<a class="btn small" href="/api/export/mail?message={messageIds[0]}" download title="Download as an .eml file">
+				Save as file
+			</a>
+		{/if}
 		{#if trashable}
 			<button class="btn small danger" disabled={busy} onclick={() => run('trash', 'Moved to Trash:')}>
 				Move to Trash

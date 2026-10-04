@@ -250,6 +250,39 @@ Conversion runs headless, one document at a time, on a copy of the file in a thr
 It still means LibreOffice opens files that strangers sent you. Set `PORTIER_SOFFICE=off` if
 you do not want that.
 
+## Backup, export and import
+
+Settings, "Backup and export" has three things.
+
+**Your settings as a file.** "Export settings" downloads one JSON file with what you set up:
+where each sender's mail goes, sender pictures, groups, saved searches, notes on mails, slide
+actions, automatic archive, and the look of that browser. Mail and mail accounts are not in it.
+"Import settings" takes such a file in, in the same or another Portier: what the file names is
+set, everything else stays. A sender decision moves that sender's mail as deciding in the
+Screener does; a note is put on the conversation that holds its mail, and is left out (and
+counted) when that mail is not there yet.
+
+**Mail as files.** "Export as mbox file" downloads a list, or all mail, as one mbox file, which
+Thunderbird, Apple Mail and others open and import. "Save as file" on a mail gives that mail as
+`.eml` (a conversation as mbox), and in the selection bar the selected conversations. There is
+no import of mail: mail comes in through the mail account.
+
+**The whole installation** (administrator). A backup is one `.tar.gz` file with the database,
+the stored mail, files of drafts, and the key that protects the mail passwords, for all users.
+It can be made while the server runs:
+
+    portier backup [FILE]                 # or "Download a backup now" in Settings
+    portier restore FILE [--replace]      # with the server stopped
+
+`restore` fills the data folder (`PORTIER_DATA_DIR`). Over existing data it needs `--replace`
+and moves what was there into `before-restore-…` inside the data folder instead of deleting it.
+With a folder set under "Folder for a daily backup", the server writes
+`portier-YYYY-MM-DD.tar.gz` there once a day and keeps the newest seven; Settings shows when the
+last one was written, or why it failed.
+
+A backup holds every user's mail and the key to the mail passwords, unencrypted. Keep it as
+safe as the server, and put the daily folder on another disk than the data.
+
 ## Groups of recipients
 
 Settings, "Groups" sets up names for several addresses, per user. When writing a mail, type the

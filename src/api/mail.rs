@@ -316,12 +316,9 @@ const HERE: &str = "f.role NOT IN ('archive', 'trash', 'limbo')";
 /// It is delayed and has not come back yet.
 pub(crate) const DELAYED: &str = "(t.snoozed_until IS NOT NULL AND t.snoozed_until > unixepoch())";
 
-pub async fn threads(
-    State(state): State<AppState>,
-    user: CurrentUser,
-    Query(q): Query<BoxQuery>,
-) -> ApiResult<Json<Vec<ThreadRow>>> {
-    let condition = match q.mailbox.as_str() {
+/// What makes a conversation `t` (of sender `s`) belong to a list.
+pub(crate) fn box_condition(mailbox: &str) -> ApiResult<String> {
+    Ok(match mailbox {
         // Internally the Inbox is still called "important", after its sender category.
         // Threads the user started belong to it once somebody answers.
         "important" => format!(
@@ -343,7 +340,15 @@ pub async fn threads(
                            WHERE m.thread_id = t.id AND m.is_outgoing = 1 AND f.role NOT IN ('trash', 'limbo'))"
             .to_string(),
         _ => return Err(ApiError::bad_request("unknown box")),
-    };
+    })
+}
+
+pub async fn threads(
+    State(state): State<AppState>,
+    user: CurrentUser,
+    Query(q): Query<BoxQuery>,
+) -> ApiResult<Json<Vec<ThreadRow>>> {
+    let condition = box_condition(&q.mailbox)?;
     // A conversation that came back from a delay sorts by the moment it returned.
     let order = if q.mailbox == "delayed" {
         "t.snoozed_until, lm.date DESC"
