@@ -5,6 +5,7 @@
 	import { app, categoryNames, classify, notify, refreshCounts, startDraft } from '#lib/app.svelte.ts';
 	import ClassifyButtons from './ClassifyButtons.svelte';
 	import MessageCard from './MessageCard.svelte';
+	import SenderPicture from './SenderPicture.svelte';
 	import DelayMenu from './DelayMenu.svelte';
 	import { displayName, returnTime } from '#lib/format.ts';
 	import { afterRemoving, listPath, neighbour } from '#lib/reading.ts';
@@ -14,6 +15,7 @@
 	let thread = $state<Thread | null>(null);
 	let error = $state('');
 	let changing = $state(false);
+	let choosingPicture = $state(false);
 	/** Messages that were unread when the thread was opened stay expanded. */
 	let unreadAtOpen = $state(new Set<number>());
 
@@ -262,7 +264,21 @@
 				<button class="btn small quiet" onclick={() => (changing = !changing)}>
 					{thread.sender.category ? 'Change' : 'Decide'}
 				</button>
+				<button class="btn small quiet" aria-expanded={choosingPicture} onclick={() => (choosingPicture = !choosingPicture)}>
+					Picture
+				</button>
 			</p>
+			{#if choosingPicture}
+				<SenderPicture
+					senderId={thread.sender.id}
+					address={thread.sender.address}
+					name={displayName(thread.sender.display_name, thread.sender.address)}
+					hasPicture={thread.sender.has_picture}
+					onchange={(has) => {
+						if (thread?.sender) thread.sender.has_picture = has;
+					}}
+				/>
+			{/if}
 			{#if changing}
 				<ClassifyButtons small current={thread.sender.category} onpick={pick} />
 			{/if}

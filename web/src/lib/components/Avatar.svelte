@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { hue, initials } from '#lib/format.ts';
+	import { pictures } from '#lib/pictures.svelte.ts';
 
 	let {
 		name,
@@ -17,7 +18,13 @@
 	// Initials show at once; the picture replaces them when it turns out to exist.
 	let loaded = $state(false);
 	let failed = $state(false);
-	const src = $derived(address && address.includes('@') ? `/api/avatar?address=${encodeURIComponent(address)}` : null);
+	// A picture the user changed gets a new address, so the browser's stored copy is not shown.
+	const version = $derived(address ? pictures.version[address.toLowerCase()] : undefined);
+	const src = $derived(
+		address && address.includes('@')
+			? `/api/avatar?address=${encodeURIComponent(address)}${version ? `&v=${version}` : ''}`
+			: null
+	);
 
 	$effect(() => {
 		src;

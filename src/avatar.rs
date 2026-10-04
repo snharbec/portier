@@ -255,6 +255,32 @@ pub fn is_public(ip: IpAddr) -> bool {
 /// public addresses, the connection is pinned to the address that was checked, and redirects
 /// are not followed, so the record cannot steer this server at something on the local network.
 async fn fetch_public(url: &str, max_bytes: usize) -> Result<Vec<u8>> {
+    match fetch_step(url, max_bytes).await? {
+        Fetched::Body(data) => Ok(data),
+        Fetched::Elsewhere(_) => bail!("redirected"),
+    }
+}
+
+/// A picture from a web address the user gave. Like `fetch_public`, but follows a few
+/// redirects, each checked the same way as the first address.
+pub async fn fetch_picture(url: &str, max_bytes: usize) -> Result<Vec<u8>> {
+    let mut url = url.to_string();
+    for _ in 0..4 {
+        match fetch_step(&url, max_bytes).await? {
+            Fetched::Body(data) => return Ok(data),
+            Fetched::Elsewhere(next) => url = next,
+        }
+    }
+    bail!("too many redirects")
+}
+
+enum Fetched {
+    Body(Vec<u8>),
+    /// The server points to another address.
+    Elsewhere(String),
+}
+
+async fn fetch_step(url: &str, max_bytes: usize) -> Result<Fetched> {
     let parsed = reqwest::Url::parse(url)?;
     if parsed.scheme() != "https" {
         bail!("not https");
@@ -273,7 +299,15 @@ async fn fetch_public(url: &str, max_bytes: usize) -> Result<Vec<u8>> {
         .redirect(reqwest::redirect::Policy::none())
         .resolve(&host, addresses[0])
         .build()?;
-    let mut response = client.get(parsed).send().await?;
+    let mut response = client.get(parsed.clone()).send().await?;
+    if response.status().is_redirection() {
+        let target = response
+            .headers()
+            .get(reqwest::header::LOCATION)
+            .and_then(|value| value.to_str().ok())
+            .ok_or_else(|| anyhow!("redirect without a target"))?;
+        return Ok(Fetched::Elsewhere(parsed.join(target)?.to_string()));
+    }
     if !response.status().is_success() {
         bail!("status {}", response.status());
     }
@@ -284,7 +318,7 @@ async fn fetch_public(url: &str, max_bytes: usize) -> Result<Vec<u8>> {
             bail!("too large");
         }
     }
-    Ok(data)
+    Ok(Fetched::Body(data))
 }
 
 /// BIMI logos are a restricted SVG profile without scripting. Anything that could run or load

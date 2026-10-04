@@ -57,6 +57,8 @@ export interface Sender {
 	category: Category | null;
 	decided_at: number | null;
 	count: number;
+	/** A picture of your own choosing is set for the sender. */
+	has_picture: boolean;
 }
 
 export interface ThreadSummary {
@@ -121,7 +123,7 @@ export interface Thread {
 	/** Your own note on the conversation; empty when there is none. */
 	note: string;
 	subject: string;
-	sender: { id: number; address: string; display_name: string; category: Category | null } | null;
+	sender: { id: number; address: string; display_name: string; category: Category | null; has_picture: boolean } | null;
 	messages: Message[];
 }
 

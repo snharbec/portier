@@ -2,7 +2,9 @@
 	import { api, type Account, type Category, type Sender, type User } from '#lib/api.ts';
 	import { app, categoryNames, classify, refreshAccounts } from '#lib/app.svelte.ts';
 	import { swipeActions, type SwipeAction } from '#lib/swipe.ts';
+	import Avatar from '#lib/components/Avatar.svelte';
 	import ClassifyButtons from '#lib/components/ClassifyButtons.svelte';
+	import SenderPicture from '#lib/components/SenderPicture.svelte';
 	import { displayName, fullDate } from '#lib/format.ts';
 	import { look, modes, setLook, themes } from '#lib/look.svelte.ts';
 
@@ -111,6 +113,8 @@
 	let senders = $state<Sender[]>([]);
 	let filter = $state<Category | ''>('');
 	let editingSender = $state<number | null>(null);
+	/** Sender whose picture chooser is open. */
+	let pictureOf = $state<number | null>(null);
 
 	async function loadSenders() {
 		senders = await api.get<Sender[]>(`/senders${filter ? `?category=${filter}` : ''}`);
@@ -417,7 +421,8 @@
 	{:else}
 		<ul class="sheet list">
 			{#each senders as sender (sender.id)}
-				<li>
+				<li class="sender">
+					<Avatar name={displayName(sender.display_name, sender.address)} seed={sender.address} address={sender.address} size={36} />
 					<div class="grow">
 						<strong>{displayName(sender.display_name, sender.address)}</strong>
 						<span class="muted">{sender.address}, {sender.count} {sender.count === 1 ? 'message' : 'messages'}</span>
@@ -427,6 +432,24 @@
 					{:else}
 						{#if sender.category}<span class="tag {sender.category}">{categoryNames[sender.category]}</span>{/if}
 						<button class="btn small quiet" onclick={() => (editingSender = sender.id)}>Change</button>
+					{/if}
+					<button
+						class="btn small quiet"
+						aria-expanded={pictureOf === sender.id}
+						onclick={() => (pictureOf = pictureOf === sender.id ? null : sender.id)}
+					>
+						Picture
+					</button>
+					{#if pictureOf === sender.id}
+						<div class="picture-panel">
+							<SenderPicture
+								senderId={sender.id}
+								address={sender.address}
+								name={displayName(sender.display_name, sender.address)}
+								hasPicture={sender.has_picture}
+								onchange={(has) => (sender.has_picture = has)}
+							/>
+						</div>
 					{/if}
 				</li>
 			{/each}
@@ -593,6 +616,14 @@
 	}
 	section > h2 {
 		margin-bottom: 0.6rem;
+	}
+	/* The picture chooser of a sender opens below its row. */
+	li.sender {
+		flex-wrap: wrap;
+	}
+	.picture-panel {
+		flex-basis: 100%;
+		padding: 0.3rem 0 0.5rem;
 	}
 	.choices,
 	.themes {

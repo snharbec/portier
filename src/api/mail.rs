@@ -71,6 +71,8 @@ pub struct SenderRow {
     category: Option<String>,
     decided_at: Option<i64>,
     count: i64,
+    /// A picture of the user's own choosing is set for the sender.
+    has_picture: bool,
 }
 
 pub async fn senders(
@@ -81,7 +83,8 @@ pub async fn senders(
     Ok(Json(
         sqlx::query_as(
             "SELECT s.id, s.address, s.display_name, s.category, s.decided_at,
-                    (SELECT COUNT(*) FROM messages m WHERE m.sender_id = s.id) AS count
+                    (SELECT COUNT(*) FROM messages m WHERE m.sender_id = s.id) AS count,
+                    EXISTS (SELECT 1 FROM sender_pictures p WHERE p.sender_id = s.id) AS has_picture
              FROM senders s
              WHERE s.user_id = ?1 AND s.category IS NOT NULL AND (?2 IS NULL OR s.category = ?2)
              ORDER BY s.decided_at DESC",
@@ -166,7 +169,8 @@ pub struct AvatarQuery {
     address: String,
 }
 
-/// Picture of a sender (Gravatar or BIMI logo), or 404 so the page shows initials instead.
+/// Picture of a sender (the user's own choice, else Gravatar or BIMI logo), or 404 so the page
+/// shows initials instead.
 /// Only for addresses the user actually has mail from, so this cannot be used to look up others.
 pub async fn avatar(
     State(state): State<AppState>,
@@ -179,10 +183,27 @@ pub async fn avatar(
         headers.insert(CACHE_CONTROL, HeaderValue::from_static("private, max-age=3600"));
         (headers, ApiError::not_found())
     };
+    let address = q.address.trim().to_lowercase();
+    // A picture the user chose comes first, and needs no lookup anywhere.
+    let own: Option<Vec<u8>> = sqlx::query_scalar(
+        "SELECT p.data FROM sender_pictures p JOIN senders s ON s.id = p.sender_id
+         WHERE s.user_id = ? AND s.address = ?",
+    )
+    .bind(user.id)
+    .bind(&address)
+    .fetch_optional(&state.db)
+    .await
+    .map_err(|e| (HeaderMap::new(), e.into()))?;
+    if let Some(data) = own {
+        let mut headers = HeaderMap::new();
+        headers.insert(CONTENT_TYPE, HeaderValue::from_static("image/jpeg"));
+        headers.insert(X_CONTENT_TYPE_OPTIONS, HeaderValue::from_static("nosniff"));
+        headers.insert(CACHE_CONTROL, HeaderValue::from_static("private, max-age=3600"));
+        return Ok((headers, data));
+    }
     if !state.config.avatars {
         return Err(missing());
     }
-    let address = q.address.trim().to_lowercase();
     let known: bool = sqlx::query_scalar(
         "SELECT EXISTS (SELECT 1 FROM senders WHERE user_id = ?1 AND address = ?2)
              OR EXISTS (SELECT 1 FROM accounts WHERE user_id = ?1 AND lower(address) = ?2)",
@@ -240,6 +261,18 @@ pub struct ThreadRow {
     snoozed_until: Option<i64>,
     /// Your own note on the conversation; empty when there is none.
     note: String,
+}
+
+/// A conversation's own data and its sender, for the mail view.
+#[derive(sqlx::FromRow)]
+struct ThreadHead {
+    subject: String,
+    sender_id: Option<i64>,
+    address: Option<String>,
+    display_name: Option<String>,
+    category: Option<String>,
+    note: String,
+    has_picture: bool,
 }
 
 /// SQL conditions on a thread `t`, shared by the lists, the counts and the one-page views.
@@ -528,15 +561,9 @@ async fn to_views(state: &AppState, rows: Vec<MessageRow>) -> ApiResult<Vec<Mess
 }
 
 pub async fn thread(State(state): State<AppState>, user: CurrentUser, Path(id): Path<i64>) -> ApiResult<Json<Value>> {
-    let head: (
-        String,
-        Option<i64>,
-        Option<String>,
-        Option<String>,
-        Option<String>,
-        String,
-    ) = sqlx::query_as(
-        "SELECT t.subject, s.id, s.address, s.display_name, s.category, t.note
+    let head: ThreadHead = sqlx::query_as(
+        "SELECT t.subject, s.id AS sender_id, s.address, s.display_name, s.category, t.note,
+                EXISTS (SELECT 1 FROM sender_pictures p WHERE p.sender_id = s.id) AS has_picture
          FROM threads t LEFT JOIN senders s ON s.id = t.sender_id
          WHERE t.id = ? AND t.user_id = ?",
     )
@@ -595,10 +622,11 @@ pub async fn thread(State(state): State<AppState>, user: CurrentUser, Path(id): 
         "can_restore": can_restore,
         "important": flagged,
         "snoozed_until": snoozed_until,
-        "subject": head.0,
-        "note": head.5,
-        "sender": head.1.map(|sender_id| json!({
-            "id": sender_id, "address": head.2, "display_name": head.3, "category": head.4,
+        "subject": head.subject,
+        "note": head.note,
+        "sender": head.sender_id.map(|sender_id| json!({
+            "id": sender_id, "address": head.address, "display_name": head.display_name, "category": head.category,
+            "has_picture": head.has_picture,
         })),
         "messages": to_views(&state, rows).await?,
     })))

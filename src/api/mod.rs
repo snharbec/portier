@@ -5,6 +5,7 @@ mod bulk;
 mod compose;
 mod files;
 mod mail;
+mod pictures;
 mod saved;
 
 use axum::{
@@ -38,6 +39,13 @@ pub fn router() -> Router<AppState> {
         .route("/senders", get(mail::senders))
         .route("/senders/{id}/category", post(mail::set_category))
         .route("/senders/{id}/images", post(mail::set_images))
+        .route(
+            "/senders/{id}/picture",
+            post(pictures::upload)
+                .delete(pictures::remove)
+                .layer(DefaultBodyLimit::max(pictures::MAX_PICTURE_BYTES)),
+        )
+        .route("/senders/{id}/picture/url", post(pictures::from_url))
         .route("/contacts", get(mail::contacts))
         .route("/avatar", get(mail::avatar))
         .route("/counts", get(mail::counts))
@@ -955,6 +963,115 @@ mod tests {
         // An empty note removes it.
         call(&app, "PUT", &path, Some(&cookie), Some(json!({ "note": " " }))).await;
         assert_eq!(hits("note:").await.len(), 0);
+    }
+
+    #[tokio::test]
+    async fn a_picture_of_your_own_choosing_replaces_the_looked_up_one() {
+        // Lookups are off: only a picture the user chose can be served.
+        let (app, state) = test_app_with(false).await;
+        let admin = json!({ "email": "admin@example.org", "password": "password1" });
+        let (_, cookie, _) = call(&app, "POST", "/api/register", None, Some(admin)).await;
+        let cookie = cookie.unwrap();
+        let (thread, _, sender) = seed_mail(&state, 1).await;
+        let picture = format!("/api/senders/{sender}/picture");
+        let avatar = "/api/avatar?address=anna@example.com";
+
+        let upload = async |cookie: &str, file: Vec<u8>| -> StatusCode {
+            let boundary = "----emscreen-test";
+            let mut body = format!(
+                "--{boundary}\r\nContent-Disposition: form-data; name=\"file\"; filename=\"a.png\"\r\n\
+                 Content-Type: image/png\r\n\r\n"
+            )
+            .into_bytes();
+            body.extend(file);
+            body.extend(format!("\r\n--{boundary}--\r\n").into_bytes());
+            let request = Request::builder()
+                .method("POST")
+                .uri(&picture)
+                .header(header::COOKIE, cookie)
+                .header(
+                    header::CONTENT_TYPE,
+                    format!("multipart/form-data; boundary={boundary}"),
+                )
+                .body(Body::from(body))
+                .unwrap();
+            app.clone().oneshot(request).await.unwrap().status()
+        };
+        let served = async || {
+            let request = Request::builder()
+                .uri(avatar)
+                .header(header::COOKIE, &cookie)
+                .body(Body::empty())
+                .unwrap();
+            let response = app.clone().oneshot(request).await.unwrap();
+            let kind = response
+                .headers()
+                .get(header::CONTENT_TYPE)
+                .map(|v| v.to_str().unwrap().to_string());
+            let bytes = response.into_body().collect().await.unwrap().to_bytes();
+            (kind, bytes)
+        };
+
+        assert_eq!(
+            served().await.0.as_deref(),
+            Some("application/json"),
+            "nothing set yet: not found"
+        );
+
+        let mut png = std::io::Cursor::new(Vec::new());
+        image::RgbaImage::from_pixel(900, 600, image::Rgba([10, 120, 200, 255]))
+            .write_to(&mut png, image::ImageFormat::Png)
+            .unwrap();
+        assert_eq!(upload(&cookie, png.into_inner()).await, StatusCode::OK);
+
+        // Served as a small JPEG made here, whatever was uploaded.
+        let (kind, bytes) = served().await;
+        assert_eq!(kind.as_deref(), Some("image/jpeg"));
+        let stored = image::load_from_memory(&bytes).unwrap();
+        assert!(stored.width() <= 480 && stored.height() <= 480);
+        let (_, _, detail) = call(&app, "GET", &format!("/api/threads/{thread}"), Some(&cookie), None).await;
+        assert_eq!(detail["sender"]["has_picture"], true);
+
+        // What is not a picture is refused and leaves the old one in place.
+        assert_eq!(
+            upload(&cookie, b"<svg onload=alert(1)>".to_vec()).await,
+            StatusCode::BAD_REQUEST
+        );
+        assert_eq!(served().await.0.as_deref(), Some("image/jpeg"));
+        // Web addresses: https only, and never the local network.
+        for url in [
+            "http://example.com/a.png",
+            "file:///etc/passwd",
+            "https://127.0.0.1/a.png",
+            "https://localhost/a.png",
+        ] {
+            let (status, _, _) = call(
+                &app,
+                "POST",
+                &format!("{picture}/url"),
+                Some(&cookie),
+                Some(json!({ "url": url })),
+            )
+            .await;
+            assert_eq!(status, StatusCode::BAD_REQUEST, "{url}");
+        }
+
+        // Another user can neither set nor remove it.
+        let other = json!({ "email": "other@example.org", "password": "password2" });
+        call(&app, "POST", "/api/users", Some(&cookie), Some(other.clone())).await;
+        let (_, other_cookie, _) = call(&app, "POST", "/api/login", None, Some(other)).await;
+        let other_cookie = other_cookie.unwrap();
+        assert_eq!(upload(&other_cookie, vec![1, 2, 3]).await, StatusCode::NOT_FOUND);
+        let (status, _, _) = call(&app, "DELETE", &picture, Some(&other_cookie), None).await;
+        assert_eq!(status, StatusCode::NOT_FOUND);
+
+        let (status, _, _) = call(&app, "DELETE", &picture, Some(&cookie), None).await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(
+            served().await.0.as_deref(),
+            Some("application/json"),
+            "removed: not found again"
+        );
     }
 
     #[tokio::test]

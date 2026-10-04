@@ -158,6 +158,14 @@ A search can be saved under a name with "Save this search" on the results page. 
 are listed in the side bar with the number of unread mails they currently find, and are run afresh
 each time, so `received:last month` keeps meaning the previous month.
 
+## Sender pictures
+
+Senders show a picture looked up for their address (Gravatar, or their domain's BIMI logo). With
+"Picture", on an opened mail next to the sender or in Settings in the list of senders, you choose
+one of your own instead: an image file from your computer, or the web address of a picture.
+Email Screen keeps a small copy and shows it for that sender; "Remove your picture" goes back to
+the looked-up one.
+
 ## Look
 
 Settings has four colour themes (Harbour, Forest, Plum, Graphite), each light and dark; "Like the
