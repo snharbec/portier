@@ -1,0 +1,39 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!-- Portier, the mail client: started at login and restarted when it stops. -->
+	<key>Label</key>
+	<string>org.example.portier</string>
+	<key>ProgramArguments</key>
+	<array>
+		<string>/path/to/portier/target/release/portier</string>
+	</array>
+	<key>WorkingDirectory</key>
+	<string>/path/to/portier</string>
+	<key>EnvironmentVariables</key>
+	<dict>
+		<key>PORTIER_BIND</key>
+		<string>100.x.y.z:8443</string>
+		<key>PORTIER_DATA_DIR</key>
+		<string>/path/to/portier/data</string>
+		<key>PORTIER_TLS_CERT</key>
+		<string>/path/to/portier/data/tls/cert.pem</string>
+		<key>PORTIER_TLS_KEY</key>
+		<string>/path/to/portier/data/tls/key.pem</string>
+		<key>PATH</key>
+		<string>/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin</string>
+	</dict>
+	<key>RunAtLoad</key>
+	<true/>
+	<key>KeepAlive</key>
+	<true/>
+	<!-- Until the VPN address exists after a start of the machine, binding fails: try again every 15 s. -->
+	<key>ThrottleInterval</key>
+	<integer>15</integer>
+	<key>StandardOutPath</key>
+	<string>/Users/you/Library/Logs/portier.log</string>
+	<key>StandardErrorPath</key>
+	<string>/Users/you/Library/Logs/portier.log</string>
+</dict>
+</plist>

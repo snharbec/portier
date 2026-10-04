@@ -15,6 +15,9 @@ pub struct Config {
     pub soffice: Option<PathBuf>,
     /// Look up sender pictures at Gravatar and through BIMI.
     pub avatars: bool,
+    /// Certificate chain and private key (PEM files) to serve HTTPS with; without them
+    /// the server speaks plain HTTP.
+    pub tls: Option<(PathBuf, PathBuf)>,
 }
 
 /// A setting from the environment: `PORTIER_<name>`, or `EMSCREEN_<name>` as installations
@@ -38,8 +41,14 @@ impl Config {
         let sync_max_per_folder = setting("SYNC_MAX_PER_FOLDER")
             .and_then(|v| v.parse().ok())
             .unwrap_or(5000);
+        let tls = match (setting("TLS_CERT"), setting("TLS_KEY")) {
+            (Some(cert), Some(key)) => Some((PathBuf::from(cert), PathBuf::from(key))),
+            (None, None) => None,
+            _ => anyhow::bail!("PORTIER_TLS_CERT and PORTIER_TLS_KEY have to be set together"),
+        };
         Ok(Self {
             bind,
+            tls,
             data_dir,
             master_key,
             open_registration,

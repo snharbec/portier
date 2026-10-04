@@ -145,8 +145,41 @@ unchanged.
 | `PORTIER_SYNC_MAX_PER_FOLDER` | `5000` | Newest messages mirrored per folder |
 | `PORTIER_SOFFICE` | found automatically | Path to LibreOffice's `soffice`, or `off` |
 | `PORTIER_AVATARS` | on | `off` stops looking up sender pictures |
+| `PORTIER_TLS_CERT`, `PORTIER_TLS_KEY` | none | Certificate chain and private key (PEM files): the server then speaks HTTPS |
 
-Serve it behind HTTPS (reverse proxy) when it is reachable from other machines. Keep
+A user who is locked out gets a new password on the server itself:
+
+    ./target/release/portier reset-password you@example.org
+
+It prints a random password and ends that user's sessions; the user then chooses their own under
+Settings.
+
+### Reaching it from other machines
+
+By default Portier listens on this machine only and speaks plain HTTP. For other machines it
+needs HTTPS: your login and all your mail pass over the connection.
+
+    PORTIER_BIND=0.0.0.0:8443 \
+    PORTIER_TLS_CERT=/path/to/fullchain.pem \
+    PORTIER_TLS_KEY=/path/to/privkey.pem \
+    ./target/release/portier
+
+- `PORTIER_BIND`: `0.0.0.0` listens on every network of the machine. To serve one network only,
+  give that network's own address instead, e.g. the machine's VPN address.
+- The certificate has to be issued for the name you type into the browser. Any source works:
+  Let's Encrypt, your VPN (`tailscale cert machine.your-tailnet.ts.net` writes both files), or a
+  certificate authority of your own.
+- The files are read again twice a day, so a renewed certificate is picked up without a restart.
+- With HTTPS on, the session cookie is marked Secure. Sign in again after switching.
+- The terminal client connects with `--url https://name:8443` and trusts the certificate
+  authorities your system trusts.
+
+On macOS, `contrib/launchd/` has two launchd agents to copy into `~/Library/LaunchAgents` and
+adapt: one keeps Portier running from login on, the other asks Tailscale for the certificate
+at login and once a week, which renews it when it is due. Load each with
+`launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/<file>`.
+
+A reverse proxy that adds HTTPS in front of the plain port works as well. Either way, keep
 `master.key` with your backups: without it the stored account passwords cannot be read.
 
 ## Sender pictures

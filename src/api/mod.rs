@@ -114,6 +114,7 @@ mod tests {
             sync_max_per_folder: 100,
             soffice: None,
             avatars,
+            tls: None,
         };
         let state = AppState::new(db, config);
         (crate::app(state.clone()), state)

@@ -91,12 +91,21 @@ pub async fn create_session(state: &AppState, user_id: i64) -> ApiResult<String>
         .execute(&state.db)
         .await?;
     Ok(format!(
-        "{COOKIE_NAME}={token}; Path=/; HttpOnly; SameSite=Lax; Max-Age={SESSION_SECONDS}"
+        "{COOKIE_NAME}={token}; Path=/; HttpOnly; SameSite=Lax; Max-Age={SESSION_SECONDS}{}",
+        secure(state)
     ))
 }
 
-pub fn clear_cookie() -> String {
-    format!("{COOKIE_NAME}=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0")
+pub fn clear_cookie(state: &AppState) -> String {
+    format!(
+        "{COOKIE_NAME}=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0{}",
+        secure(state)
+    )
+}
+
+/// Served over HTTPS, the session cookie is never sent over a plain connection.
+fn secure(state: &AppState) -> &'static str {
+    if state.config.tls.is_some() { "; Secure" } else { "" }
 }
 
 #[cfg(test)]

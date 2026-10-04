@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!-- Keeps Portier's HTTPS certificate fresh: asks Tailscale for it at login and every Monday.
+	     Tailscale renews it when it is due; Portier reads the files again twice a day. -->
+	<key>Label</key>
+	<string>org.example.portier-cert</string>
+	<key>ProgramArguments</key>
+	<array>
+		<string>/usr/local/bin/tailscale</string>
+		<string>cert</string>
+		<string>--cert-file</string>
+		<string>/path/to/portier/data/tls/cert.pem</string>
+		<string>--key-file</string>
+		<string>/path/to/portier/data/tls/key.pem</string>
+		<string>machine.your-tailnet.ts.net</string>
+	</array>
+	<key>RunAtLoad</key>
+	<true/>
+	<key>StartCalendarInterval</key>
+	<dict>
+		<key>Weekday</key>
+		<integer>1</integer>
+		<key>Hour</key>
+		<integer>9</integer>
+		<key>Minute</key>
+		<integer>30</integer>
+	</dict>
+	<key>StandardOutPath</key>
+	<string>/Users/you/Library/Logs/portier-cert.log</string>
+	<key>StandardErrorPath</key>
+	<string>/Users/you/Library/Logs/portier-cert.log</string>
+</dict>
+</plist>

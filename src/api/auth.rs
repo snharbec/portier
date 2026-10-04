@@ -111,7 +111,7 @@ pub async fn logout(State(state): State<AppState>, parts: Parts) -> ApiResult<(H
             .execute(&state.db)
             .await?;
     }
-    Ok((cookie_headers(auth::clear_cookie()), Json(json!({ "ok": true }))))
+    Ok((cookie_headers(auth::clear_cookie(&state)), Json(json!({ "ok": true }))))
 }
 
 #[derive(Deserialize)]
