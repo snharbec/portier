@@ -6,7 +6,9 @@ use anyhow::Result;
 use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use serde_json::{Value, json};
 
-use crate::api::{Client, Counts, Draft, ScreenerEntry, Thread, ThreadSummary, display_name};
+use crate::api::{
+    Client, Counts, Draft, Message, SavedSearch, ScreenerEntry, SearchHit, Thread, ThreadSummary, display_name,
+};
 
 /// The lists of the side bar, in the web client's order.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -21,6 +23,9 @@ pub enum Place {
     Drafts,
     Junk,
     Trash,
+    /// The results of a search: reached with `/` or from a saved search, not a fixed entry
+    /// of the side bar.
+    Search,
 }
 
 impl Place {
@@ -49,6 +54,7 @@ impl Place {
             Place::Drafts => "Drafts",
             Place::Junk => "Junk",
             Place::Trash => "Trash",
+            Place::Search => "Search",
         }
     }
 
@@ -68,8 +74,23 @@ impl Place {
             Place::Sent => "sent",
             Place::Junk => "junk",
             Place::Trash => "trash",
-            Place::Screener | Place::Drafts => return None,
+            Place::Screener | Place::Drafts | Place::Search => return None,
         })
+    }
+
+    /// A list of mails, on which the mail keys work (the Screener and Drafts are not).
+    pub fn has_mail(self) -> bool {
+        self.mailbox().is_some() || self == Place::Search
+    }
+
+    /// The lists that can be narrowed to unseen mail, as in the web client.
+    pub fn can_narrow(self) -> bool {
+        matches!(self, Place::Feed | Place::Junk | Place::Archive)
+    }
+
+    /// The lists whose mails can be read on one page: all but Junk, as in the web client.
+    fn one_page(self) -> bool {
+        self.has_mail() && self != Place::Junk
     }
 
     /// The number beside the place, and whether it asks for attention (the signal colour).
@@ -85,6 +106,7 @@ impl Place {
             Place::Drafts => (counts.drafts, true),
             Place::Junk => (counts.unread_junk, false),
             Place::Trash => (counts.unread_trash, false),
+            Place::Search => (0, false),
         }
     }
 }
@@ -149,6 +171,22 @@ pub enum Mode {
         names: Vec<String>,
         cursor: usize,
     },
+    /// Typing what to search for.
+    Search {
+        text: String,
+    },
+    /// Typing the name a search is saved under.
+    Name {
+        text: String,
+    },
+}
+
+/// The mails of a list or of a search, opened one below the other.
+pub struct Reading {
+    pub messages: Vec<Message>,
+    pub scroll: usize,
+    /// Everything there is has been loaded.
+    done: bool,
 }
 
 pub struct Open {
@@ -179,6 +217,14 @@ pub struct App {
     /// One line for the bottom of the screen: what just happened, or what went wrong.
     pub status: String,
     pub quit: bool,
+    /// What the search results answer.
+    pub query: String,
+    /// The mails the search found, for reading them on one page.
+    hits: Vec<i64>,
+    pub saved: Vec<SavedSearch>,
+    /// Lists narrowed to unseen mail.
+    narrowed: HashSet<&'static str>,
+    pub reading: Option<Reading>,
     /// Conversations of the current list that are in Important.
     flagged: HashSet<i64>,
     /// Mails read beside the list keep their place in Home's Unseen area while the mail
@@ -212,6 +258,11 @@ impl App {
             selected: HashSet::new(),
             status: String::new(),
             quit: false,
+            query: String::new(),
+            hits: Vec::new(),
+            saved: Vec::new(),
+            narrowed: HashSet::new(),
+            reading: None,
             flagged: HashSet::new(),
             held: Vec::new(),
             page: 20,
@@ -231,6 +282,7 @@ impl App {
     /// Loads the counts and the current list again, and the opened mail if there is one.
     pub async fn refresh(&mut self) -> Result<()> {
         self.counts = self.client.get("/counts").await?;
+        self.saved = self.client.get("/searches").await?;
         self.load_rows().await?;
         if let Some(open) = &self.open {
             match self.client.get::<Thread>(&format!("/threads/{}", open.thread.id)).await {
@@ -320,14 +372,36 @@ impl App {
                     rows.push(Row::Empty("No drafts.".into()));
                 }
             }
+            Place::Search => {
+                let hits: Vec<SearchHit> = self.client.get(&format!("/search?q={}", encode(&self.query))).await?;
+                self.hits = hits.iter().map(|hit| hit.id).collect();
+                self.flagged = hits
+                    .iter()
+                    .filter(|hit| hit.place == "flagged")
+                    .map(|hit| hit.thread_id)
+                    .collect();
+                rows.extend(hits.into_iter().map(|hit| Row::Mail(hit.row())));
+                if rows.is_empty() {
+                    rows.push(Row::Empty("No mail matches. Try fewer or different words.".into()));
+                }
+            }
             place => {
                 let mailbox = place.mailbox().expect("mail list");
-                let list = self.threads(mailbox).await?;
+                let mut list = self.threads(mailbox).await?;
                 if place == Place::Important {
                     self.flagged = list.iter().map(|t| t.id).collect();
                 }
+                let all = list.len();
+                if self.narrowed.contains(place.name()) {
+                    // The opened mail stays listed although reading it made it seen.
+                    let open = self.open.as_ref().map(|open| open.thread.id);
+                    list.retain(|t| t.unread > 0 || Some(t.id) == open);
+                }
+                let narrowed_away = all > 0 && list.is_empty();
                 rows.extend(list.into_iter().map(Row::Mail));
-                if rows.is_empty() {
+                if narrowed_away {
+                    rows.push(Row::Empty("No unseen mail here. U shows all mail again.".into()));
+                } else if rows.is_empty() {
                     rows.push(Row::Empty(format!("{} is empty.", place.name())));
                 }
             }
@@ -389,8 +463,100 @@ impl App {
         false
     }
 
+    /// Whether the current list shows unseen mail only.
+    pub fn is_narrowed(&self) -> bool {
+        self.narrowed.contains(self.place.name())
+    }
+
+    /// The saved search whose results are shown, if the query is one of the saved ones.
+    pub fn saved_here(&self) -> Option<&SavedSearch> {
+        (self.place == Place::Search)
+            .then(|| self.saved.iter().find(|saved| saved.query == self.query.trim()))
+            .flatten()
+    }
+
+    /// Runs a search and shows what it finds.
+    async fn search(&mut self, query: String) -> Result<()> {
+        let before = (self.place, std::mem::replace(&mut self.query, query));
+        self.place = Place::Search;
+        self.open = None;
+        self.reading = None;
+        self.held.clear();
+        self.selecting = false;
+        self.selected.clear();
+        self.cursor = 0;
+        self.focus = Focus::List;
+        if let Err(error) = self.load_rows().await {
+            // A query the server cannot read: stay where the reader was.
+            (self.place, self.query) = before;
+            self.load_rows().await?;
+            return Err(error);
+        }
+        let found = self.mails().count();
+        self.status = match found {
+            0 => String::new(),
+            200 => "The newest 200 mails are shown".into(),
+            1 => "1 mail found".into(),
+            n => format!("{n} mails found"),
+        };
+        Ok(())
+    }
+
+    /// Opens every mail of the current list, or every mail found, one below the other.
+    async fn read_all(&mut self) -> Result<()> {
+        if !self.place.one_page() || self.mails().next().is_none() {
+            return Ok(());
+        }
+        self.open = None;
+        self.reading = Some(Reading {
+            messages: Vec::new(),
+            scroll: 0,
+            done: false,
+        });
+        self.read_more().await
+    }
+
+    /// The next twenty mails of the page.
+    async fn read_more(&mut self) -> Result<()> {
+        const BATCH: usize = 20;
+        let Some(have) = self
+            .reading
+            .as_ref()
+            .filter(|reading| !reading.done)
+            .map(|reading| reading.messages.len())
+        else {
+            return Ok(());
+        };
+        let (batch, done): (Vec<Message>, bool) = match self.place.mailbox() {
+            Some(mailbox) => {
+                let batch: Vec<Message> = self
+                    .client
+                    .get(&format!("/feed?box={mailbox}&offset={have}&limit={BATCH}"))
+                    .await?;
+                let done = batch.len() < BATCH;
+                (batch, done)
+            }
+            None => {
+                let mut batch = Vec::new();
+                for id in self.hits.iter().skip(have).take(BATCH) {
+                    // A mail that is gone by now is left out.
+                    if let Ok(message) = self.client.get::<Message>(&format!("/messages/{id}")).await {
+                        batch.push(message);
+                    }
+                }
+                (batch, have + BATCH >= self.hits.len())
+            }
+        };
+        if let Some(reading) = &mut self.reading {
+            reading.messages.extend(batch);
+            reading.done = done;
+        }
+        Ok(())
+    }
+
     async fn go(&mut self, place: Place) -> Result<()> {
         self.place = place;
+        self.reading = None;
         self.open = None;
         self.held.clear();
         self.selecting = false;
@@ -570,6 +736,30 @@ impl App {
             Mode::Delay => return self.delay_key(key).await,
             Mode::Note { thread, text } => return self.note_key(key, thread, text).await,
             Mode::Folders { account, names, cursor } => return self.folder_key(key, account, names, cursor).await,
+            Mode::Search { mut text } => {
+                return match edit(key, &mut text) {
+                    Typed::Done if text.trim().is_empty() => Ok(()),
+                    Typed::Done => self.search(text.trim().to_string()).await,
+                    Typed::More => {
+                        self.mode = Mode::Search { text };
+                        Ok(())
+                    }
+                    Typed::Cancelled => Ok(()),
+                };
+            }
+            Mode::Name { mut text } => {
+                return match edit(key, &mut text) {
+                    Typed::Done => self.save_search(text.trim()).await,
+                    Typed::More => {
+                        self.mode = Mode::Name { text };
+                        Ok(())
+                    }
+                    Typed::Cancelled => Ok(()),
+                };
+            }
+        }
+        if self.reading.is_some() {
+            return self.reading_key(key).await;
         }
 
         let page = self.page.saturating_sub(2).max(1) as isize;
@@ -592,6 +782,51 @@ impl App {
             KeyCode::Char('D') => self.go(Place::Delayed).await?,
             KeyCode::Char('N') | KeyCode::Char('3') => self.go(Place::Feed).await?,
             KeyCode::Char('2') => self.go(Place::Screener).await?,
+
+            // Searching, as in the web client's search field.
+            KeyCode::Char('/') => {
+                let text = if self.place == Place::Search {
+                    self.query.clone()
+                } else {
+                    String::new()
+                };
+                self.mode = Mode::Search { text };
+            }
+            KeyCode::Char('F') => {
+                // All mail from the sender of the mail the keys are on.
+                let address = match (&self.open, self.current()) {
+                    (Some(open), _) => open.thread.sender.as_ref().map(|sender| sender.address.clone()),
+                    (None, Some(thread)) => Some(thread.from_addr.clone()),
+                    (None, None) => None,
+                };
+                if let Some(address) = address.filter(|address| !address.is_empty()) {
+                    self.search(format!("from:{address}")).await?;
+                }
+            }
+            KeyCode::Char('S') if self.place == Place::Search => {
+                let text = self.saved_here().map(|saved| saved.name.clone()).unwrap_or_default();
+                self.mode = Mode::Name { text };
+            }
+            KeyCode::Char('X') if self.place == Place::Search => {
+                if let Some((id, name)) = self.saved_here().map(|saved| (saved.id, saved.name.clone())) {
+                    let _: Value = self.client.delete(&format!("/searches/{id}")).await?;
+                    self.saved = self.client.get("/searches").await?;
+                    self.status = format!("Removed {name} from the side bar");
+                }
+            }
+            KeyCode::Char('U') if self.place.can_narrow() => {
+                let name = self.place.name();
+                if !self.narrowed.remove(name) {
+                    self.narrowed.insert(name);
+                }
+                self.status = if self.is_narrowed() {
+                    "Unseen mail only".into()
+                } else {
+                    "All mail".into()
+                };
+                self.load_rows().await?;
+            }
+            KeyCode::Char('P') => self.read_all().await?,
 
             KeyCode::Tab | KeyCode::BackTab => {
                 self.focus = if self.focus == Focus::Side {
@@ -625,7 +860,7 @@ impl App {
             }
 
             // Selecting several mails.
-            KeyCode::Char('v') if self.focus == Focus::List && self.place.mailbox().is_some() => {
+            KeyCode::Char('v') if self.focus == Focus::List && self.place.has_mail() => {
                 self.selecting = !self.selecting;
                 self.selected.clear();
                 if self.selecting {
@@ -766,7 +1001,7 @@ impl App {
             Some(open) => open.thread.can_archive && self.place != Place::Screener,
             None => matches!(
                 self.place,
-                Place::Home | Place::Important | Place::Delayed | Place::Feed | Place::Junk
+                Place::Home | Place::Important | Place::Delayed | Place::Feed | Place::Junk | Place::Search
             ),
         }
     }
@@ -882,14 +1117,92 @@ impl App {
         Ok(())
     }
 
+    /// Keys while the mails of a list are read on one page.
+    async fn reading_key(&mut self, key: KeyEvent) -> Result<()> {
+        let page = self.page.saturating_sub(2).max(1) as isize;
+        let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
+        let by = match key.code {
+            KeyCode::Esc | KeyCode::Char('P') => {
+                self.reading = None;
+                return Ok(());
+            }
+            KeyCode::Char('q') => {
+                self.quit = true;
+                return Ok(());
+            }
+            KeyCode::Char('c') if ctrl => {
+                self.quit = true;
+                return Ok(());
+            }
+            KeyCode::Char('?') => {
+                self.help = true;
+                return Ok(());
+            }
+            KeyCode::Char(' ') if key.modifiers.contains(KeyModifiers::SHIFT) => -page,
+            KeyCode::Char(' ') | KeyCode::PageDown => page,
+            KeyCode::Backspace | KeyCode::PageUp => -page,
+            KeyCode::Down if ctrl => page,
+            KeyCode::Up if ctrl => -page,
+            KeyCode::Down | KeyCode::Char('j') => 3,
+            KeyCode::Up | KeyCode::Char('k') => -3,
+            _ => return Ok(()),
+        };
+        let (height, lines) = (self.page, self.lines);
+        let Some(reading) = &mut self.reading else {
+            return Ok(());
+        };
+        let last = lines.saturating_sub(height);
+        reading.scroll = (reading.scroll as isize + by).clamp(0, last as isize) as usize;
+        // Near the end of what is loaded, the next mails are fetched.
+        if by > 0 && reading.scroll + height >= lines {
+            self.read_more().await?;
+        }
+        Ok(())
+    }
+
+    /// Saves the shown search under a name, or renames it when it is saved already.
+    async fn save_search(&mut self, name: &str) -> Result<()> {
+        if name.is_empty() {
+            return Ok(());
+        }
+        let body = json!({ "name": name, "query": self.query });
+        let renamed = match self.saved_here().map(|saved| saved.id) {
+            Some(id) => {
+                let _: Value = self.client.put(&format!("/searches/{id}"), body).await?;
+                true
+            }
+            None => {
+                let _: Value = self.client.post("/searches", body).await?;
+                false
+            }
+        };
+        self.saved = self.client.get("/searches").await?;
+        self.status = if renamed {
+            format!("Renamed to {name}")
+        } else {
+            format!("Saved as {name}")
+        };
+        Ok(())
+    }
+
     /// Arrow down or up: the next place in the side bar, or the next mail. With a mail open
     /// the arrows go on to the next mail and open it, as they do in the web client.
     async fn arrow(&mut self, by: isize) -> Result<()> {
         if self.focus == Focus::Side {
-            let at = Place::ALL.iter().position(|p| *p == self.place).unwrap_or(0) as isize;
-            let next = (at + by).clamp(0, Place::ALL.len() as isize - 1) as usize;
+            // The side bar: the lists, then the saved searches.
+            let lists = Place::ALL.len();
+            let at = match self.saved_here() {
+                Some(here) => lists + self.saved.iter().position(|saved| saved.id == here.id).unwrap_or(0),
+                None => Place::ALL.iter().position(|p| *p == self.place).unwrap_or(0),
+            } as isize;
+            let next = (at + by).clamp(0, (lists + self.saved.len()) as isize - 1) as usize;
             if next as isize != at {
-                self.go(Place::ALL[next]).await?;
+                if next < lists {
+                    self.go(Place::ALL[next]).await?;
+                } else {
+                    let query = self.saved[next - lists].query.clone();
+                    self.search(query).await?;
+                }
                 self.focus = Focus::Side;
             }
             return Ok(());
@@ -955,4 +1268,50 @@ fn open_in_browser(address: &str) {
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null())
         .spawn();
+}
+
+/// What a key did to a line of text being typed.
+enum Typed {
+    More,
+    Done,
+    Cancelled,
+}
+
+/// One key on a line of text: Enter ends it, Esc gives up, Ctrl+U empties it.
+fn edit(key: KeyEvent, text: &mut String) -> Typed {
+    let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
+    match key.code {
+        KeyCode::Enter => return Typed::Done,
+        KeyCode::Esc => return Typed::Cancelled,
+        KeyCode::Backspace => {
+            text.pop();
+        }
+        KeyCode::Char('u') if ctrl => text.clear(),
+        KeyCode::Char(c) if !ctrl => text.push(c),
+        _ => {}
+    }
+    Typed::More
+}
+
+/// A query as part of a web address.
+fn encode(text: &str) -> String {
+    let mut out = String::new();
+    for byte in text.bytes() {
+        match byte {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => out.push(byte as char),
+            other => out.push_str(&format!("%{other:02X}")),
+        }
+    }
+    out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::encode;
+
+    #[test]
+    fn queries_are_encoded_for_the_address() {
+        assert_eq!(encode("hallo from:carsten"), "hallo%20from%3Acarsten");
+        assert_eq!(encode("größe & 100%"), "gr%C3%B6%C3%9Fe%20%26%20100%25");
+    }
 }

@@ -101,8 +101,14 @@ Mail is acted on with the same letters: `a` archive, `d` move to Trash, `u` unse
 `z` delay (then `1`, `2`, `3` or `7`), `t` note; also `b` to move mail back out of the Trash and
 `m` to move it to a folder. They apply to the opened mail, to the one under the cursor, or, after
 `v`, to the mails ticked with Space. In the Screener, Enter reads a waiting sender's mail and
-`i`, `n` or `Shift+J` sends them to Home, Nice to know or Junk. Search and writing mail are done
-in the web client for now.
+`i`, `n` or `Shift+J` sends them to Home, Nice to know or Junk.
+
+`/` searches with the same filters as the web client (`from:`, `note:`, `received:` …); each
+result names the list it is found in. `Shift+F` lists all mail from the sender of a mail,
+`Shift+S` saves the shown search in the side bar (with its count of unseen mail) and `Shift+X`
+removes it. `Shift+U` narrows Nice to know, Junk and Archive to unseen mail, and `Shift+P` reads
+all mails of a list or of the search results on one page. Writing mail is done in the web client
+for now.
 
 Mails written as HTML are shown as text with their links; pictures and designed layouts are
 not. `o` opens such a mail in the browser.

@@ -28,7 +28,7 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
             Style::default().add_modifier(Modifier::BOLD | Modifier::REVERSED),
         ),
         Span::styled(
-            format!("  {}", app.place.name()),
+            format!("  {}", heading(app)),
             Style::default().add_modifier(Modifier::BOLD),
         ),
     ]);
@@ -46,6 +46,7 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
     };
 
     match (&app.open, app.split) {
+        _ if app.reading.is_some() => one_page(frame, app, main),
         (None, _) => list(frame, app, main),
         (Some(_), Split::Off) => mail(frame, app, main, false),
         (Some(_), Split::Beside) if main.width >= 70 => {
@@ -65,7 +66,9 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
 
     let hint = if app.status.is_empty() {
         // As many hints as fit, the most needed first.
-        let hints: &[&str] = if app.selecting {
+        let hints: &[&str] = if app.reading.is_some() {
+            &["Space page", "↑↓ scroll", "Esc back to the list", "? keys", "q quit"]
+        } else if app.selecting {
             &[
                 "Space tick",
                 "* all",
@@ -105,6 +108,7 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
                 "? keys",
                 "↑↓ mail",
                 "Enter open",
+                "/ search",
                 "a archive",
                 "d trash",
                 "t note",
@@ -129,23 +133,9 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
     frame.render_widget(Paragraph::new(hint), bottom);
 
     match &app.mode {
-        Mode::Note { text, .. } => {
-            // The note is written on the bottom line, with the cursor at its end.
-            let label = " Note: ";
-            let room = (area.width as usize).saturating_sub(label.width() + 1);
-            // The end of a long note stays in view while typing.
-            let mut shown = text.clone();
-            while shown.width() > room {
-                shown.remove(0);
-            }
-            let line = Line::from(vec![
-                Span::styled(label, Style::default().fg(SIGNAL).add_modifier(Modifier::BOLD)),
-                Span::raw(shown.clone()),
-            ]);
-            frame.render_widget(Clear, bottom);
-            frame.render_widget(Paragraph::new(line), bottom);
-            frame.set_cursor_position((bottom.x + (label.width() + shown.width()) as u16, bottom.y));
-        }
+        Mode::Note { text, .. } => input(frame, bottom, " Note: ", text),
+        Mode::Search { text } => input(frame, bottom, " Search: ", text),
+        Mode::Name { text } => input(frame, bottom, " Name for the side bar: ", text),
         Mode::Folders { names, cursor, .. } => folders(frame, area, names, *cursor),
         Mode::Normal | Mode::Delay => {}
     }
@@ -153,6 +143,38 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
     if app.help {
         help(frame, area);
     }
+}
+
+/// What the top line says the list is.
+fn heading(app: &App) -> String {
+    match app.place {
+        Place::Search => match app.saved_here() {
+            Some(saved) => format!("{}  (saved search: {})", saved.name, saved.query),
+            None => format!("Search: {}", app.query),
+        },
+        place if app.is_narrowed() => format!("{}, unseen only", place.name()),
+        place => place.name().to_string(),
+    }
+}
+
+/// A line of text being typed, on the bottom line, with the cursor at its end.
+fn input(frame: &mut Frame, bottom: Rect, label: &str, text: &str) {
+    let room = (bottom.width as usize).saturating_sub(label.width() + 1);
+    // The end of a long text stays in view while typing.
+    let mut shown = text.to_string();
+    while shown.width() > room {
+        shown.remove(0);
+    }
+    let line = Line::from(vec![
+        Span::styled(
+            label.to_string(),
+            Style::default().fg(SIGNAL).add_modifier(Modifier::BOLD),
+        ),
+        Span::raw(shown.clone()),
+    ]);
+    frame.render_widget(Clear, bottom);
+    frame.render_widget(Paragraph::new(line), bottom);
+    frame.set_cursor_position((bottom.x + (label.width() + shown.width()) as u16, bottom.y));
 }
 
 fn side_bar(frame: &mut Frame, app: &App, area: Rect) {
@@ -186,6 +208,34 @@ fn side_bar(frame: &mut Frame, app: &App, area: Rect) {
             Span::styled(format!("{badge} "), badge_style),
         ]));
     }
+    // Saved searches, each with the number of unseen mails it finds.
+    if !app.saved.is_empty() {
+        lines.push(Line::styled("─".repeat(width), Style::default().fg(SOFT)));
+        let here = app.saved_here().map(|saved| saved.id);
+        for saved in &app.saved {
+            let badge = if saved.unread > 0 {
+                saved.unread.to_string()
+            } else {
+                String::new()
+            };
+            let name = cell(&format!("⌕ {}", saved.name), width.saturating_sub(badge.len() + 2));
+            let chosen = here == Some(saved.id);
+            let mut style = Style::default();
+            if chosen {
+                style = style.add_modifier(Modifier::BOLD);
+                if app.focus == Focus::Side {
+                    style = style.add_modifier(Modifier::REVERSED);
+                }
+            } else {
+                style = style.fg(SOFT);
+            }
+            lines.push(Line::from(vec![
+                Span::styled(if chosen { "▌" } else { " " }, Style::default().fg(ACCENT)),
+                Span::styled(name, style),
+                Span::styled(format!("{badge} "), Style::default().fg(SOFT)),
+            ]));
+        }
+    }
     frame.render_widget(Paragraph::new(lines), area);
 }
 
@@ -206,7 +256,10 @@ fn mail_row(
     let soft = Style::default().fg(SOFT);
     let date = short_date(thread.date, now);
     let who_width = if width >= 70 { 20 } else { 14 };
-    let count = if thread.count > 1 {
+    // A search result names the list it is found in, where a list shows the number of mails.
+    let count = if !thread.tag.is_empty() {
+        format!("[{}] ", thread.tag)
+    } else if thread.count > 1 {
         format!("{} ", thread.count)
     } else {
         String::new()
@@ -327,6 +380,24 @@ fn list(frame: &mut Frame, app: &App, area: Rect) {
     frame.render_widget(Paragraph::new(lines), area);
 }
 
+/// Every mail of the list, one below the other.
+fn one_page(frame: &mut Frame, app: &mut App, area: Rect) {
+    let inner = Rect {
+        x: area.x + 1,
+        width: area.width.saturating_sub(2),
+        ..area
+    };
+    let width = (inner.width as usize).min(100);
+    let height = inner.height as usize;
+    let Some(reading) = &mut app.reading else { return };
+    let lines = crate::text::page(&reading.messages, width);
+    app.page = height;
+    app.lines = lines.len();
+    reading.scroll = reading.scroll.min(lines.len().saturating_sub(height));
+    let shown: Vec<Line> = lines.into_iter().skip(reading.scroll).take(height).collect();
+    frame.render_widget(Paragraph::new(shown), inner);
+}
+
 fn mail(frame: &mut Frame, app: &mut App, area: Rect, beside: bool) {
     // A line between the list and the mail, on the side they meet.
     let block = Block::default()
@@ -405,6 +476,17 @@ const KEYS: &[(&str, &[(&str, &str)])] = &[
             ("t", "Add or edit your note (Enter saves, Esc cancels)"),
             ("m", "Move to a folder of the mail account"),
             ("v", "Select several: Space ticks, * ticks all, Esc stops"),
+        ],
+    ),
+    (
+        "Search and lists",
+        &[
+            ("/", "Search: words, from: to: subject: note: attachment: received:"),
+            ("Shift F", "All mail from the sender of this mail"),
+            ("Shift S", "Save the shown search in the side bar, or rename it"),
+            ("Shift X", "Remove the saved search from the side bar"),
+            ("Shift U", "Unseen mail only, in Nice to know, Junk and Archive"),
+            ("Shift P", "Read all mails of the list on one page (not Junk)"),
         ],
     ),
     (

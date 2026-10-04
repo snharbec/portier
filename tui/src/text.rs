@@ -250,6 +250,63 @@ pub fn conversation(thread: &Thread, width: usize, all: bool, unseen_at_open: &H
     lines
 }
 
+/// The mails of a list one below the other, each in full, as the web client's
+/// "Read all on one page" shows them.
+pub fn page(messages: &[Message], width: usize) -> Vec<Line<'static>> {
+    let bold = Style::default().add_modifier(Modifier::BOLD);
+    let soft = Style::default().fg(SOFT);
+    let mut lines: Vec<Line<'static>> = Vec::new();
+    for message in messages {
+        if !lines.is_empty() {
+            lines.push(Line::raw(""));
+        }
+        lines.push(Line::styled("━".repeat(width), soft));
+        let subject = if message.subject.is_empty() {
+            "(no subject)"
+        } else {
+            &message.subject
+        };
+        for line in wrap(subject, width) {
+            lines.push(Line::styled(line, bold));
+        }
+        let who = if message.is_outgoing {
+            "You".to_string()
+        } else {
+            display_name(Some(&message.from.name), Some(&message.from.address))
+        };
+        let date = full_date(message.date);
+        let mark = if message.seen || message.is_outgoing {
+            ""
+        } else {
+            "● "
+        };
+        let gap = width.saturating_sub(mark.width() + who.width() + date.width());
+        lines.push(Line::from(vec![
+            Span::styled(mark, Style::default().fg(ACCENT)),
+            Span::raw(who),
+            Span::raw(" ".repeat(gap.max(1))),
+            Span::styled(date, soft),
+        ]));
+        lines.push(Line::raw(""));
+        for line in body_lines(message, width) {
+            let quoted = line.trim_start().starts_with('>');
+            lines.push(if quoted {
+                Line::styled(line, soft)
+            } else {
+                Line::raw(line)
+            });
+        }
+        for file in &message.attachments {
+            lines.push(Line::from(vec![
+                Span::styled("📎 ", soft),
+                Span::raw(file.filename.clone()),
+                Span::styled(format!("  {}", size(file.size)), soft),
+            ]));
+        }
+    }
+    lines
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

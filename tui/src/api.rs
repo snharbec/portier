@@ -41,6 +41,76 @@ pub struct ThreadSummary {
     pub snoozed_until: Option<i64>,
     #[serde(default)]
     pub note: String,
+    /// For a search result: the list it is found in. Lists leave it empty.
+    #[serde(default)]
+    pub tag: String,
+}
+
+/// One mail the search found.
+#[derive(Debug, Clone, Deserialize)]
+pub struct SearchHit {
+    /// The mail itself; `thread_id` is its conversation.
+    pub id: i64,
+    pub thread_id: i64,
+    pub account_id: i64,
+    pub subject: String,
+    pub from_name: String,
+    pub from_addr: String,
+    pub date: i64,
+    pub seen: bool,
+    pub excerpt: String,
+    #[serde(default)]
+    pub note: String,
+    #[serde(default)]
+    pub place: String,
+}
+
+impl SearchHit {
+    /// The side bar's name of the list the mail is found in.
+    pub fn place_name(&self) -> &'static str {
+        match self.place.as_str() {
+            "home" => "Home",
+            "flagged" => "Important",
+            "delayed" => "Delayed",
+            "feed" => "Nice to know",
+            "screener" => "Screener",
+            "archive" => "Archive",
+            "sent" => "Sent",
+            "junk" => "Junk",
+            "trash" => "Trash",
+            _ => "",
+        }
+    }
+
+    /// As a row of a mail list: the conversation, shown by this mail.
+    pub fn row(self) -> ThreadSummary {
+        ThreadSummary {
+            id: self.thread_id,
+            tag: self.place_name().to_string(),
+            subject: self.subject,
+            count: 1,
+            unread: i64::from(!self.seen),
+            date: self.date,
+            snippet: self.excerpt,
+            from_name: self.from_name,
+            from_addr: self.from_addr,
+            is_outgoing: false,
+            account_id: self.account_id,
+            sender_name: None,
+            sender_address: None,
+            snoozed_until: None,
+            note: self.note,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct SavedSearch {
+    pub id: i64,
+    pub name: String,
+    pub query: String,
+    /// Unseen mails the search finds right now.
+    pub unread: i64,
 }
 
 impl ThreadSummary {
@@ -80,6 +150,8 @@ pub struct Attachment {
 #[derive(Debug, Clone, Deserialize)]
 pub struct Message {
     pub id: i64,
+    #[serde(default)]
+    pub subject: String,
     pub from: Addr,
     pub to: Vec<Addr>,
     pub cc: Vec<Addr>,
@@ -249,6 +321,18 @@ impl Client {
             .header(reqwest::header::COOKIE, self.cookie())
             .timeout(Duration::from_secs(30))
             .json(&body)
+            .send()
+            .await
+            .with_context(|| format!("cannot reach {}", self.base))?;
+        Self::answer(response).await
+    }
+
+    pub async fn delete<T: DeserializeOwned>(&self, path: &str) -> Result<T> {
+        let response = self
+            .http
+            .delete(format!("{}/api{path}", self.base))
+            .header(reqwest::header::COOKIE, self.cookie())
+            .timeout(Duration::from_secs(30))
             .send()
             .await
             .with_context(|| format!("cannot reach {}", self.base))?;
