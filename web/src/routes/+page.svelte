@@ -1,17 +1,21 @@
 <script lang="ts">
 	import { page } from '$app/state';
 	import { untrack } from 'svelte';
-	import { api, type ThreadSummary } from '#lib/api.ts';
+	import { api, type BriefingEntry, type ThreadSummary } from '#lib/api.ts';
 	import { app } from '#lib/app.svelte.ts';
 	import SelectAll from '#lib/components/SelectAll.svelte';
 	import SelectionBar from '#lib/components/SelectionBar.svelte';
 	import ThreadList from '#lib/components/ThreadList.svelte';
+	import { displayName, shortDate } from '#lib/format.ts';
+	import { startReading } from '#lib/reading.ts';
 	import { createSelection } from '#lib/selection.svelte.ts';
 
 	/** Conversations of Home, and those set apart as Important (flagged). */
 	let threads = $state<ThreadSummary[] | null>(null);
 	let flagged = $state<ThreadSummary[] | null>(null);
 	let error = $state('');
+	/** What the local model says about the unseen mail, when summaries are on. */
+	let briefing = $state<BriefingEntry[]>([]);
 	const selection = createSelection();
 
 	$effect(() => {
@@ -25,6 +29,10 @@
 				flagged = important;
 			})
 			.catch((e) => (error = e.message));
+		// The briefing is an extra: without it the page is complete.
+		api.get<{ on: boolean; entries: BriefingEntry[] }>('/briefing')
+			.then((answer) => (briefing = answer.entries))
+			.catch(() => (briefing = []));
 	});
 
 	// In split view, opening an unseen mail makes it seen at once. Mails read this way keep their
@@ -52,6 +60,9 @@
 	// Reading order follows the page: unseen, important, seen.
 	const sequence = $derived(shown.map((t) => t.id));
 	const picked = $derived(selection.visible(shown, (t) => t.id));
+
+	/** Where a briefing entry leads: beside the list in split view, else to the mail's page. */
+	const mailHref = (threadId: number) => (app.splitActive ? `/?open=${threadId}` : `/thread/${threadId}`);
 
 	// Which areas are folded away; kept in this browser.
 	const KEY = 'emscreen.inbox.collapsed';
@@ -112,6 +123,40 @@
 			onall={() => selection.set(shown.map((t) => t.id))}
 			onnone={selection.clear}
 		/>
+	{/if}
+	{#if briefing.length}
+		<details class="area briefing" open={!collapsed.briefing} ontoggle={(event) => toggled('briefing', event.currentTarget.open)}>
+			<summary>
+				<svg viewBox="0 0 12 8" aria-hidden="true"><path d="M1 1.5 6 6.5l5-5" /></svg>
+				<h2>Briefing</h2>
+				<span class="count">{briefing.length} new {briefing.length === 1 ? 'mail' : 'mails'}</span>
+			</summary>
+			<ul class="sheet">
+				{#each briefing as entry (entry.message_id)}
+					<li>
+						<a
+							href={mailHref(entry.thread_id)}
+							data-sveltekit-noscroll={app.splitActive ? '' : undefined}
+							onclick={() => startReading(sequence, '/')}
+						>
+							<span class="who">
+								<strong>{displayName(entry.from_name, entry.from_addr)}</strong>
+								<span class="about">{entry.subject || '(no subject)'}</span>
+								<time>{shortDate(entry.date)}</time>
+							</span>
+							{#if entry.pending}
+								<span class="pending">Being summarized</span>
+							{:else}
+								<span class="says">{entry.summary}</span>
+							{/if}
+							{#each entry.attachments as file}
+								<span class="file"><span class="name">{file.filename}</span>{file.text}</span>
+							{/each}
+						</a>
+					</li>
+				{/each}
+			</ul>
+		</details>
 	{/if}
 	{#each areas as area (area.id)}
 		<details
@@ -184,6 +229,65 @@
 	.area .count {
 		font-size: 0.85rem;
 		color: var(--ink-soft);
+	}
+	/* The briefing: what the unseen mail says, before the list of it. */
+	.briefing ul {
+		list-style: none;
+		margin: 0;
+		padding: 0;
+	}
+	.briefing li + li {
+		border-top: 1px solid var(--line);
+	}
+	.briefing a {
+		display: grid;
+		gap: 0.2rem;
+		padding: 0.7rem 1rem;
+		text-decoration: none;
+	}
+	.briefing a:hover,
+	.briefing a:focus-visible {
+		background: color-mix(in srgb, var(--important) 6%, transparent);
+	}
+	.briefing .who {
+		display: flex;
+		align-items: baseline;
+		gap: 0.6rem;
+	}
+	.briefing .about {
+		min-width: 0;
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
+		color: var(--ink-soft);
+		font-size: 0.925rem;
+	}
+	.briefing time {
+		margin-left: auto;
+		flex: none;
+		font-size: 0.85rem;
+		color: var(--ink-soft);
+	}
+	.briefing .says {
+		max-width: 80ch;
+	}
+	.briefing .pending {
+		color: var(--ink-soft);
+		font-style: italic;
+	}
+	.briefing .file {
+		max-width: 80ch;
+		font-size: 0.925rem;
+		color: var(--ink-soft);
+	}
+	.briefing .file .name {
+		margin-right: 0.5rem;
+		padding: 0 0.45rem;
+		border: 1px solid var(--line);
+		border-radius: 6px;
+		color: var(--ink);
+		font-weight: 600;
+		font-size: 0.85rem;
 	}
 	.nothing {
 		margin: 0;

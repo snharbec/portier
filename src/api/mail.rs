@@ -284,15 +284,15 @@ struct ThreadHead {
 
 /// SQL conditions on a thread `t`, shared by the lists, the counts and the one-page views.
 /// Received mail of it that is neither archived nor in the Trash:
-const RECEIVED: &str = "EXISTS (SELECT 1 FROM messages rm JOIN folders rf ON rf.id = rm.folder_id
+pub(crate) const RECEIVED: &str = "EXISTS (SELECT 1 FROM messages rm JOIN folders rf ON rf.id = rm.folder_id
     WHERE rm.thread_id = t.id AND rm.is_outgoing = 0 AND rf.role NOT IN ('archive', 'trash', 'limbo'))";
 /// A flagged mail of it sits in the inbox (or the "Nice to know" folder): the conversation is in Important.
-const FLAGGED: &str = "EXISTS (SELECT 1 FROM messages fm JOIN folders ff ON ff.id = fm.folder_id
+pub(crate) const FLAGGED: &str = "EXISTS (SELECT 1 FROM messages fm JOIN folders ff ON ff.id = fm.folder_id
     WHERE fm.thread_id = t.id AND fm.flagged = 1 AND ff.role IN ('inbox', 'feed', 'delayed'))";
 /// A message `m` in folder `f` that is neither archived nor in the Trash.
 const HERE: &str = "f.role NOT IN ('archive', 'trash', 'limbo')";
 /// It is delayed and has not come back yet.
-const DELAYED: &str = "(t.snoozed_until IS NOT NULL AND t.snoozed_until > unixepoch())";
+pub(crate) const DELAYED: &str = "(t.snoozed_until IS NOT NULL AND t.snoozed_until > unixepoch())";
 
 pub async fn threads(
     State(state): State<AppState>,

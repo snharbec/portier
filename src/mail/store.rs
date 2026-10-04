@@ -246,6 +246,10 @@ pub async fn store_message(
         tokio::fs::create_dir_all(dir).await?;
     }
     tokio::fs::write(&path, raw).await?;
+    if !seen && !is_outgoing {
+        // New mail to read: worth a summary, if summaries are on.
+        state.summarize.notify_one();
+    }
 
     Ok(Some(Stored {
         junk_sender: !is_outgoing && category.as_deref() == Some("junk"),

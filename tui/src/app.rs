@@ -7,7 +7,8 @@ use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use serde_json::{Value, json};
 
 use crate::api::{
-    Client, Counts, Draft, Message, SavedSearch, ScreenerEntry, SearchHit, Thread, ThreadSummary, display_name,
+    Briefing, BriefingEntry, Client, Counts, Draft, Message, SavedSearch, ScreenerEntry, SearchHit, Thread,
+    ThreadSummary, display_name,
 };
 use crate::compose::Compose;
 use crate::pictures::{Picture, free_path, safe_name};
@@ -134,6 +135,11 @@ pub enum Row {
     },
     /// What an empty area or list says.
     Empty(String),
+    /// A line of a summary in the briefing, under the mail it is about.
+    Said {
+        text: String,
+        soft: bool,
+    },
 }
 
 impl Row {
@@ -262,6 +268,8 @@ pub struct App {
     /// Lists narrowed to unseen mail.
     narrowed: HashSet<&'static str>,
     pub reading: Option<Reading>,
+    /// How wide the list was drawn last, for text that is wrapped into its rows.
+    pub list_width: std::cell::Cell<usize>,
     /// How many pages of the current list are loaded, and whether it has older mail still.
     pages: usize,
     more: bool,
@@ -273,6 +281,52 @@ pub struct App {
     /// Height of the mail area and number of its lines, as last drawn; paging needs both.
     pub page: usize,
     pub lines: usize,
+}
+
+/// The rows of the briefing: per mail a line that opens it, then what the model says about it
+/// and about its attachments, wrapped to the list.
+fn briefing_rows(entries: Vec<BriefingEntry>, width: usize) -> Vec<Row> {
+    // Before the first frame the list has no width yet: the window's, less the side bar.
+    let width = match width {
+        0 => ratatui::crossterm::terminal::size().map_or(80, |(columns, _)| (columns as usize).saturating_sub(21)),
+        width => width,
+    };
+    let mut rows = Vec::new();
+    for entry in entries {
+        rows.push(Row::Entry {
+            who: display_name(Some(&entry.from_name), Some(&entry.from_addr)),
+            text: if entry.subject.is_empty() {
+                "(no subject)".into()
+            } else {
+                entry.subject
+            },
+            date: entry.date,
+            sender: None,
+            thread: Some(entry.thread_id),
+            draft: None,
+        });
+        if entry.pending {
+            rows.push(Row::Said {
+                text: "Being summarized".into(),
+                soft: true,
+            });
+            continue;
+        }
+        let room = width.saturating_sub(6).max(20);
+        rows.extend(
+            crate::text::wrap(&entry.summary, room)
+                .into_iter()
+                .map(|text| Row::Said { text, soft: false }),
+        );
+        for file in entry.attachments {
+            rows.extend(
+                crate::text::wrap(&format!("[{}] {}", file.filename, file.text), room)
+                    .into_iter()
+                    .map(|text| Row::Said { text, soft: true }),
+            );
+        }
+    }
+    rows
 }
 
 /// Conversations a list asks the server for at a time.
@@ -312,6 +366,7 @@ impl App {
             saved: Vec::new(),
             narrowed: HashSet::new(),
             reading: None,
+            list_width: std::cell::Cell::new(0),
             pages: 1,
             more: false,
             flagged: HashSet::new(),
@@ -366,6 +421,15 @@ impl App {
                 let (unseen, seen): (Vec<_>, Vec<_>) =
                     inbox.into_iter().partition(|t| t.unread > 0 || held.contains(&t.id));
                 let truly_unseen = unseen.iter().filter(|t| t.unread > 0).count();
+                // The briefing is an extra: a server without summaries simply has none.
+                let briefing: Briefing = self.client.get("/briefing").await.unwrap_or_default();
+                if !briefing.entries.is_empty() {
+                    rows.push(Row::Header {
+                        title: "Briefing",
+                        count: briefing.entries.len(),
+                    });
+                    rows.extend(briefing_rows(briefing.entries, self.list_width.get()));
+                }
                 let areas = [
                     ("Unseen", truly_unseen, unseen, "No unseen messages. Area is empty."),
                     (

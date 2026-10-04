@@ -1,4 +1,5 @@
 mod accounts;
+mod ai;
 mod auth;
 pub(crate) mod autoarchive;
 mod bulk;
@@ -26,6 +27,9 @@ pub fn router() -> Router<AppState> {
         .route("/logout", post(auth::logout))
         .route("/password", post(auth::change_password))
         .route("/settings", get(auth::settings).put(auth::update_settings))
+        .route("/settings/ai", get(ai::settings).put(ai::update))
+        .route("/settings/ai/models", post(ai::models))
+        .route("/briefing", get(ai::briefing))
         .route("/settings/auto-archive", put(autoarchive::update))
         .route("/settings/auto-archive/preview", get(autoarchive::preview))
         .route("/users", get(auth::list_users).post(auth::create_user))
@@ -1318,6 +1322,125 @@ mod tests {
             list("&limit=5&offset=2").await,
             ["Old 307", "Old 306", "Old 305", "Old 304", "Old 303"]
         );
+    }
+
+    #[tokio::test]
+    async fn new_mail_in_home_is_summarized_by_the_local_model() {
+        use axum::Json;
+        use std::sync::{Arc, Mutex};
+
+        // A stand-in for Ollama: lists one model and answers every chat with the same sentence,
+        // remembering what it was asked.
+        let asked: Arc<Mutex<Vec<Value>>> = Arc::new(Mutex::new(Vec::new()));
+        let seen = asked.clone();
+        let ollama = Router::new()
+            .route(
+                "/api/tags",
+                axum::routing::get(|| async { Json(json!({ "models": [{ "name": "tiny:1b" }] })) }),
+            )
+            .route(
+                "/api/chat",
+                axum::routing::post(move |Json(body): Json<Value>| {
+                    let seen = seen.clone();
+                    async move {
+                        seen.lock().unwrap().push(body);
+                        Json(json!({ "message": { "content": "<think>hm</think> Anna shares confidential words." } }))
+                    }
+                }),
+            );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = format!("http://{}", listener.local_addr().unwrap());
+        tokio::spawn(async move { axum::serve(listener, ollama).await.unwrap() });
+
+        let (app, state) = test_app().await;
+        let admin = json!({ "email": "admin@example.org", "password": "password1" });
+        let (_, cookie, _) = call(&app, "POST", "/api/register", None, Some(admin)).await;
+        let cookie = cookie.unwrap();
+        let (thread, message, sender) = seed_mail(&state, 1).await;
+        let db = &state.db;
+        sqlx::query("UPDATE messages SET seen = 0, date = unixepoch(), from_name = 'Anna'")
+            .execute(db)
+            .await
+            .unwrap();
+        let entries = async || -> Vec<Value> {
+            let (_, _, briefing) = call(&app, "GET", "/api/briefing", Some(&cookie), None).await;
+            briefing["entries"].as_array().unwrap().clone()
+        };
+
+        // Off until an address and a model are set; an unscreened sender's mail is never due.
+        assert!(entries().await.is_empty());
+        let (_, _, models) = call(
+            &app,
+            "POST",
+            "/api/settings/ai/models",
+            Some(&cookie),
+            Some(json!({ "url": url })),
+        )
+        .await;
+        assert_eq!(models["models"], json!(["tiny:1b"]));
+        let setting = json!({ "url": url, "model": "tiny:1b", "language": "German" });
+        let (status, _, _) = call(&app, "PUT", "/api/settings/ai", Some(&cookie), Some(setting.clone())).await;
+        assert_eq!(status, StatusCode::OK);
+        crate::mail::summary::round(&state).await.unwrap();
+        assert!(
+            asked.lock().unwrap().is_empty(),
+            "the sender is still waiting in the Screener"
+        );
+        assert!(entries().await.is_empty());
+
+        // Let into Home: the mail is in the briefing, first as pending, then with its summary.
+        sqlx::query("UPDATE senders SET category = 'important' WHERE id = ?")
+            .bind(sender)
+            .execute(db)
+            .await
+            .unwrap();
+        let pending = entries().await;
+        assert_eq!((pending.len(), pending[0]["pending"].as_bool()), (1, Some(true)));
+        crate::mail::summary::round(&state).await.unwrap();
+        let done = entries().await;
+        assert_eq!(
+            done[0]["summary"], "Anna shares confidential words.",
+            "reasoning is cut off"
+        );
+        assert_eq!(
+            (done[0]["thread_id"].as_i64(), done[0]["message_id"].as_i64()),
+            (Some(thread), Some(message))
+        );
+        {
+            let asked = asked.lock().unwrap();
+            assert_eq!(asked.len(), 1);
+            let (system, mail) = (&asked[0]["messages"][0]["content"], &asked[0]["messages"][1]["content"]);
+            assert!(system.as_str().unwrap().contains("Answer in German"));
+            assert!(
+                mail.as_str().unwrap().contains("confidential words")
+                    && mail.as_str().unwrap().contains("Subject: Secret")
+            );
+            assert_eq!(
+                (&asked[0]["model"], &asked[0]["stream"]),
+                (&json!("tiny:1b"), &json!(false))
+            );
+        }
+        // Made once: another round asks nothing.
+        crate::mail::summary::round(&state).await.unwrap();
+        assert_eq!(asked.lock().unwrap().len(), 1);
+
+        // Read mail leaves the briefing. Other users see only their own, and cannot set the model.
+        sqlx::query("UPDATE messages SET seen = 1").execute(db).await.unwrap();
+        assert!(entries().await.is_empty());
+        let other = json!({ "email": "other@example.org", "password": "password2" });
+        call(&app, "POST", "/api/users", Some(&cookie), Some(other.clone())).await;
+        let (_, other_cookie, _) = call(&app, "POST", "/api/login", None, Some(other)).await;
+        let (status, _, _) = call(&app, "PUT", "/api/settings/ai", other_cookie.as_deref(), Some(setting)).await;
+        assert_eq!(status, StatusCode::FORBIDDEN);
+        let (_, _, theirs) = call(&app, "GET", "/api/settings/ai", other_cookie.as_deref(), None).await;
+        assert_eq!(
+            (theirs["on"].as_bool(), theirs.get("url")),
+            (Some(true), None),
+            "on, but not where"
+        );
+        let bad = json!({ "url": "file:///etc/passwd", "model": "x", "language": "English" });
+        let (status, _, _) = call(&app, "PUT", "/api/settings/ai", Some(&cookie), Some(bad)).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
     }
 
     #[tokio::test]

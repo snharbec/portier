@@ -111,6 +111,7 @@ async fn main() -> Result<()> {
     mail::sync::start_all(&state).await?;
     tokio::spawn(mail::delay::run(state.clone()));
     tokio::spawn(api::autoarchive::run(state.clone()));
+    tokio::spawn(mail::summary::run(state.clone()));
 
     let Some((cert, key)) = state.config.tls.clone() else {
         if !bind.ip().is_loopback() {

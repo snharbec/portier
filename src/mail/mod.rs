@@ -6,4 +6,5 @@ pub mod preview;
 pub mod sanitize;
 pub mod smtp;
 pub mod store;
+pub mod summary;
 pub mod sync;

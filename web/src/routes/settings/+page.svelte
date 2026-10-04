@@ -148,6 +148,57 @@
 		}
 	}
 
+	// ---- Summaries by a local model ----
+	let ai = $state({ on: false, reads_pdf: true, url: '', model: '', language: 'English' });
+	let aiModels = $state<string[]>([]);
+	let aiError = $state('');
+	let aiNote = $state('');
+	let aiBusy = $state(false);
+
+	$effect(() => {
+		api.get<typeof ai>('/settings/ai')
+			.then((saved) => {
+				ai = { ...ai, ...saved };
+				if (saved.model) aiModels = [saved.model];
+			})
+			.catch(() => {});
+	});
+
+	/** Asks the Ollama at the address which models it has; also shows that the address works. */
+	async function findModels() {
+		aiError = aiNote = '';
+		aiBusy = true;
+		try {
+			const found = await api.post<{ models: string[] }>('/settings/ai/models', { url: ai.url });
+			aiModels = found.models;
+			if (!found.models.includes(ai.model)) ai.model = found.models[0] ?? '';
+			aiNote = found.models.length
+				? `Ollama answers and offers ${found.models.length} ${found.models.length === 1 ? 'model' : 'models'}.`
+				: 'Ollama answers but has no model yet. Pull one with "ollama pull".';
+		} catch (e) {
+			aiError = (e as Error).message;
+		} finally {
+			aiBusy = false;
+		}
+	}
+
+	async function saveAi(event: SubmitEvent) {
+		event.preventDefault();
+		aiError = aiNote = '';
+		aiBusy = true;
+		try {
+			await api.put('/settings/ai', { url: ai.url, model: ai.model, language: ai.language });
+			ai.on = !!ai.url.trim() && !!ai.model;
+			aiNote = ai.on
+				? 'Saved. New unseen mail in Home is summarized from now on.'
+				: 'Saved. Summaries are off.';
+		} catch (e) {
+			aiError = (e as Error).message;
+		} finally {
+			aiBusy = false;
+		}
+	}
+
 	// ---- Automatic archive ----
 	let archiveOn = $state(app.autoArchiveWeeks > 0);
 	let archiveWeeks = $state(app.autoArchiveWeeks || 8);
@@ -255,6 +306,7 @@
 	<a class="btn small" href="#look">Look</a>
 	<a class="btn small" href="#sliding">Sliding</a>
 	<a class="btn small" href="#archive">Automatic archive</a>
+	<a class="btn small" href="#summaries">Summaries</a>
 	{#if app.user?.is_admin}<a class="btn small" href="#users">Users</a>{/if}
 	<a class="btn small" href="#password">Password</a>
 </nav>
@@ -546,6 +598,47 @@
 	{#if archiveNote}<p class="ok" role="status">{archiveNote}</p>{/if}
 </section>
 
+<section id="summaries">
+	<h2>Summaries</h2>
+	<p class="muted">
+		A language model running on your own machines (Ollama) writes a sentence or two about each new, unseen mail
+		in Home and about its text and PDF attachments. The briefing shows above the Unseen area. Mail from senders
+		you have not let into Home is never given to the model, and nothing leaves for a service on the internet.
+	</p>
+	{#if app.user?.is_admin}
+		<form class="ai" onsubmit={saveAi}>
+			<label class="field">
+				Address of Ollama
+				<input bind:value={ai.url} placeholder="http://127.0.0.1:11434" autocomplete="off" spellcheck="false" />
+			</label>
+			<button type="button" class="btn" onclick={findModels} disabled={aiBusy || !ai.url.trim()}>Find models</button>
+			<label class="field">
+				Model
+				<select bind:value={ai.model} disabled={!aiModels.length}>
+					{#each aiModels as name}<option value={name}>{name}</option>{/each}
+					{#if !aiModels.length}<option value="">Find models first</option>{/if}
+				</select>
+			</label>
+			<label class="field">
+				Language of the summaries
+				<input bind:value={ai.language} placeholder="English" />
+			</label>
+			<button class="btn primary" disabled={aiBusy}>Save</button>
+		</form>
+		<p class="muted note">
+			An empty address turns summaries off. A small, fast model is enough; each mail is summarized once, when it
+			arrives.
+			{#if !ai.reads_pdf}
+				PDF attachments are left out on this server: the program pdftotext (poppler) is not installed.
+			{/if}
+		</p>
+		{#if aiError}<p class="error" role="alert">{aiError}</p>{/if}
+		{#if aiNote}<p class="ok" role="status">{aiNote}</p>{/if}
+	{:else}
+		<p>{ai.on ? 'Summaries are on.' : 'Summaries are off.'} The administrator of this Portier sets the model.</p>
+	{/if}
+</section>
+
 {#if app.user?.is_admin}
 	<section id="users">
 		<h2>Users</h2>
@@ -756,6 +849,20 @@
 		.grid.server {
 			grid-template-columns: 1fr 1fr;
 		}
+	}
+	.ai {
+		display: grid;
+		grid-template-columns: minmax(0, 1fr) auto;
+		gap: 0.75rem;
+		align-items: end;
+		margin-top: 0.75rem;
+	}
+	.ai .field:nth-of-type(n + 2),
+	.ai .btn.primary {
+		grid-column: 1;
+	}
+	.ai .btn.primary {
+		justify-self: start;
 	}
 	.auto {
 		display: flex;

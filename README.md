@@ -229,6 +229,26 @@ Conversion runs headless, one document at a time, on a copy of the file in a thr
 It still means LibreOffice opens files that strangers sent you. Set `PORTIER_SOFFICE=off` if
 you do not want that.
 
+## Summaries of new mail
+
+Portier can have a language model on your own machines write a sentence or two about each new
+mail. It talks to [Ollama](https://ollama.com); nothing is sent to a service on the internet.
+
+Set it up under Settings, Summaries (administrator only): the address of Ollama (usually
+`http://127.0.0.1:11434`), "Find models", choose one, name the language, save. An empty address
+turns summaries off.
+
+- Summarized is unseen mail in Home, from senders you let in, that arrived in the last two
+  weeks. Mail waiting in the Screener, Nice to know and Junk are never given to the model.
+- Each mail is summarized once, in the background, when it arrives. Plain text and PDF
+  attachments get a line of their own (the first three per mail; PDFs need `pdftotext` from
+  poppler on the server).
+- Home shows the result as "Briefing" above the Unseen area, in the web UI and in the terminal
+  client alike. Every entry opens its mail, and a mail leaves the briefing once it is seen.
+- What a mail says is handed to the model as text to summarize, not as instructions, and the
+  model can do nothing but answer with text. A summary can still be wrong or incomplete: it is
+  a pointer to the mail, not a replacement for it.
+
 ## Development
 
     cargo run                       # API on :8080

@@ -342,6 +342,7 @@ fn mail_row(
 fn list(frame: &mut Frame, app: &App, area: Rect) {
     let width = area.width as usize;
     let height = area.height as usize;
+    app.list_width.set(width);
     let now = Local::now();
     let open_id = app.open.as_ref().map(|open| open.thread.id);
     // Keep the cursor in view, with the heading of its area when that fits.
@@ -393,6 +394,14 @@ fn list(frame: &mut Frame, app: &App, area: Rect) {
                 ])
             }
             Row::Empty(text) => Line::styled(format!("   {text}"), Style::default().fg(SOFT)),
+            Row::Said { text, soft } => Line::styled(
+                format!("    {text}"),
+                if *soft {
+                    Style::default().fg(SOFT)
+                } else {
+                    Style::default()
+                },
+            ),
         };
         if index == app.cursor && app.focus == Focus::List && matches!(row, Row::Mail(_) | Row::Entry { .. }) {
             line = line.style(Style::default().bg(Color::Indexed(238)));

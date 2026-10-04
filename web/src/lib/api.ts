@@ -197,6 +197,20 @@ export interface Counts {
 	drafts: number;
 }
 
+/** One unseen mail of Home with what the local model says about it. */
+export interface BriefingEntry {
+	message_id: number;
+	thread_id: number;
+	from_name: string;
+	from_addr: string;
+	subject: string;
+	date: number;
+	summary: string;
+	attachments: { filename: string; text: string }[];
+	/** The summary is still being written. */
+	pending: boolean;
+}
+
 export class ApiError extends Error {
 	constructor(
 		public status: number,

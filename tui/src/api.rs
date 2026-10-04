@@ -195,6 +195,37 @@ pub struct Thread {
     pub messages: Vec<Message>,
 }
 
+/// What the local model says about the unseen mail of Home; empty when summaries are off.
+#[derive(Debug, Clone, Default, Deserialize)]
+pub struct Briefing {
+    #[serde(default)]
+    pub entries: Vec<BriefingEntry>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct BriefingEntry {
+    pub thread_id: i64,
+    #[serde(default)]
+    pub from_name: String,
+    #[serde(default)]
+    pub from_addr: String,
+    #[serde(default)]
+    pub subject: String,
+    pub date: i64,
+    #[serde(default)]
+    pub summary: String,
+    #[serde(default)]
+    pub attachments: Vec<BriefingFile>,
+    #[serde(default)]
+    pub pending: bool,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct BriefingFile {
+    pub filename: String,
+    pub text: String,
+}
+
 #[derive(Debug, Clone, Deserialize)]
 pub struct ScreenerEntry {
     /// The sender, for deciding where their mail goes.
