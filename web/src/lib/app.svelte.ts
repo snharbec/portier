@@ -9,7 +9,18 @@ export const app = $state({
 	openRegistration: false,
 	/** Whether the server can turn Office documents into previews (LibreOffice installed). */
 	officePreviews: false,
-	counts: { screener: 0, unread_important: 0, unread_flagged: 0, delayed: 0, drafts: 0 } as Counts,
+	counts: {
+		screener: 0,
+		unread_important: 0,
+		unread_flagged: 0,
+		unread_feed: 0,
+		unread_junk: 0,
+		unread_delayed: 0,
+		unread_archive: 0,
+		unread_trash: 0,
+		delayed: 0,
+		drafts: 0
+	} as Counts,
 	accounts: [] as Account[],
 	/** Searches saved under a name, shown in the side bar. */
 	searches: [] as SavedSearch[],

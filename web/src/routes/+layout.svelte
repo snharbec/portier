@@ -19,18 +19,20 @@
 		loadSession().catch((e) => (loadError = e.message));
 	});
 
+	// `badge` is the number of unseen conversations (for the Screener waiting senders, for Drafts
+	// the drafts). `quiet` lists show it without the signal colour: they do not ask for attention.
 	const places = $derived([
 		{ group: 1, href: '/', icon: 'M4 13.5 6.5 5h11L20 13.5V19H4zM4 13.5h4.5l1 2.5h5l1-2.5H20', label: 'Home', hint: 'Mail from people you let in', key: 'H', badge: app.counts.unread_important },
 		{ group: 1, href: '/important', icon: 'M12 3.5l2.6 5.3 5.9.9-4.3 4.1 1 5.8L12 16.9l-5.2 2.7 1-5.8L3.5 9.7l5.9-.9z', label: 'Important', hint: 'Conversations you set apart', key: 'I', badge: app.counts.unread_flagged },
-		{ group: 1, href: '/delayed', icon: 'M12 4a8 8 0 1 0 0 16 8 8 0 0 0 0-16zM12 8v4.5l3 2', label: 'Delayed', hint: 'Waiting to return to Home', key: 'D', badge: 0 },
-		{ group: 1, href: '/feed', icon: 'M5 5h11v14H7a2 2 0 0 1-2-2zM16 9h3v8a2 2 0 0 1-2 2M8 9h5M8 12.5h5M8 16h3', label: 'Nice to know', hint: 'Newsletters and updates, ready to read', key: 'N', badge: 0 },
+		{ group: 1, href: '/delayed', icon: 'M12 4a8 8 0 1 0 0 16 8 8 0 0 0 0-16zM12 8v4.5l3 2', label: 'Delayed', hint: 'Waiting to return to Home', key: 'D', badge: app.counts.unread_delayed, quiet: true },
+		{ group: 1, href: '/feed', icon: 'M5 5h11v14H7a2 2 0 0 1-2-2zM16 9h3v8a2 2 0 0 1-2 2M8 9h5M8 12.5h5M8 16h3', label: 'Nice to know', hint: 'Newsletters and updates, ready to read', key: 'N', badge: app.counts.unread_feed, quiet: true },
 		{ group: 2, href: '/screener', icon: 'M4 5h16l-6 7.5V19l-4-2v-4.5z', label: 'Screener', hint: 'New senders waiting for your decision', key: '2', badge: app.counts.screener },
 		{ group: 3, href: '/files', icon: 'M20 11.5l-8.1 8.1a5 5 0 0 1-7.1-7.1l8.5-8.5a3.3 3.3 0 0 1 4.7 4.7l-8.5 8.5a1.7 1.7 0 0 1-2.4-2.4l7.8-7.8', label: 'Attachments', hint: 'Files from the last four weeks', key: '4', badge: 0 },
-		{ group: 4, href: '/archive', icon: 'M4 5h16v4H4zM5.5 9v10h13V9M10 13h4', label: 'Archive', hint: 'Mail you filed away', key: '', badge: 0 },
+		{ group: 4, href: '/archive', icon: 'M4 5h16v4H4zM5.5 9v10h13V9M10 13h4', label: 'Archive', hint: 'Mail you filed away', key: '', badge: app.counts.unread_archive, quiet: true },
 		{ group: 4, href: '/sent', icon: 'M21 3L10.5 13.5M21 3l-6.5 18-4-7.5-7.5-4z', label: 'Sent', hint: '', key: '', badge: 0 },
 		{ group: 4, href: '/drafts', icon: 'M4 20l1-4.5L16.5 4a2.1 2.1 0 0 1 3 3L8 18.5zM14.5 6l3 3', label: 'Drafts', hint: '', key: '', badge: app.counts.drafts },
-		{ group: 4, href: '/junk', icon: 'M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18zM5.7 5.7l12.6 12.6', label: 'Junk', hint: 'Senders you turned away', key: '', badge: 0 },
-		{ group: 4, href: '/trash', icon: 'M5 7h14M10 7V4.5h4V7M7 7l.8 12h8.4L17 7M10.5 10.5v5M13.5 10.5v5', label: 'Trash', hint: 'Mail you deleted', key: '', badge: 0 },
+		{ group: 4, href: '/junk', icon: 'M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18zM5.7 5.7l12.6 12.6', label: 'Junk', hint: 'Senders you turned away', key: '', badge: app.counts.unread_junk, quiet: true },
+		{ group: 4, href: '/trash', icon: 'M5 7h14M10 7V4.5h4V7M7 7l.8 12h8.4L17 7M10.5 10.5v5M13.5 10.5v5', label: 'Trash', hint: 'Mail you deleted', key: '', badge: app.counts.unread_trash, quiet: true },
 		{ group: 5, href: '/settings', icon: 'M4 7h9M17 7h3M4 17h3M11 17h9M15 4.5v5M9 14.5v5', label: 'Settings', hint: 'Mail accounts, senders, users', key: '', badge: 0 }
 	]);
 	// What each group holds: reading lists, the Screener, attachments, put-away mail, settings.
@@ -342,7 +344,7 @@
 							>
 								<span class="label">{place.label}</span>
 								<span class="hint">{place.hint}</span>
-								{#if place.badge}<span class="badge">{place.badge}</span>{/if}
+								{#if place.badge}<span class="badge" class:quiet={'quiet' in place}>{place.badge}</span>{/if}
 								{#if place.key}<kbd>{keyLabel(place.key)}</kbd>{/if}
 							</a>
 						</li>
@@ -378,7 +380,7 @@
 					>
 						<svg viewBox="0 0 24 24" aria-hidden="true"><path d={place.icon} /></svg>
 						<span class="name">{place.label}</span>
-						{#if place.badge}<span class="badge">{place.badge}</span>{/if}
+						{#if place.badge}<span class="badge" class:quiet={'quiet' in place}>{place.badge}</span>{/if}
 					</a>
 				</li>
 			{/each}
@@ -583,6 +585,12 @@
 		font-size: 0.8rem;
 		border-radius: 999px;
 		padding: 0 0.5rem;
+	}
+	.badge.quiet {
+		background: none;
+		color: var(--ink-soft);
+		font-weight: 600;
+		padding: 0 0.3rem;
 	}
 	kbd {
 		grid-column: 3;

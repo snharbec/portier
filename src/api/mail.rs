@@ -367,6 +367,32 @@ pub async fn counts(State(state): State<AppState>, user: CurrentUser) -> ApiResu
     .bind(user.id)
     .fetch_one(&state.db)
     .await?;
+    // The other lists, each counted the way its list selects conversations.
+    let unread_in = async |condition: String| -> ApiResult<i64> {
+        Ok(
+            sqlx::query_scalar(sqlx::AssertSqlSafe(format!("{unread_threads} AND {condition}")))
+                .bind(user.id)
+                .fetch_one(&state.db)
+                .await?,
+        )
+    };
+    let unread_feed = unread_in(format!("s.category = 'feed' AND NOT {FLAGGED} AND NOT {DELAYED}")).await?;
+    let unread_junk = unread_in("s.category = 'junk'".to_string()).await?;
+    let unread_delayed = unread_in(DELAYED.to_string()).await?;
+    // Archive and Trash hold mail by folder, whoever sent it.
+    let unread_folder = "SELECT COUNT(DISTINCT m.thread_id) FROM messages m
+         JOIN folders f ON f.id = m.folder_id
+         WHERE m.user_id = ? AND m.seen = 0 AND m.is_outgoing = 0 AND f.role = ?";
+    let unread_archive: i64 = sqlx::query_scalar(unread_folder)
+        .bind(user.id)
+        .bind("archive")
+        .fetch_one(&state.db)
+        .await?;
+    let unread_trash: i64 = sqlx::query_scalar(unread_folder)
+        .bind(user.id)
+        .bind("trash")
+        .fetch_one(&state.db)
+        .await?;
     let delayed: i64 = sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
         "SELECT COUNT(*) FROM threads t WHERE t.user_id = ? AND {DELAYED}"
     )))
@@ -381,6 +407,11 @@ pub async fn counts(State(state): State<AppState>, user: CurrentUser) -> ApiResu
         "screener": screener,
         "unread_important": unread,
         "unread_flagged": unread_flagged,
+        "unread_feed": unread_feed,
+        "unread_junk": unread_junk,
+        "unread_delayed": unread_delayed,
+        "unread_archive": unread_archive,
+        "unread_trash": unread_trash,
         "delayed": delayed,
         "drafts": drafts,
     })))

@@ -793,6 +793,67 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn every_list_counts_its_unseen_conversations() {
+        let (app, state) = test_app().await;
+        let admin = json!({ "email": "admin@example.org", "password": "password1" });
+        let (_, cookie, _) = call(&app, "POST", "/api/register", None, Some(admin)).await;
+        let cookie = cookie.unwrap();
+        let (thread, message, sender) = seed_mail(&state, 1).await;
+        let db = &state.db;
+        sqlx::query("UPDATE messages SET seen = 0").execute(db).await.unwrap();
+        let unread = async || -> Vec<i64> {
+            let (_, _, c) = call(&app, "GET", "/api/counts", Some(&cookie), None).await;
+            ["important", "flagged", "feed", "junk", "delayed", "archive", "trash"]
+                .iter()
+                .map(|list| c[format!("unread_{list}")].as_i64().unwrap())
+                .collect()
+        };
+        let file_under = async |category: &str| {
+            sqlx::query("UPDATE senders SET category = ? WHERE id = ?")
+                .bind(category)
+                .bind(sender)
+                .execute(db)
+                .await
+                .unwrap();
+        };
+        let move_to = async |role: &str| {
+            let folder = crate::mail::store::ensure_folder(db, 1, role, role).await.unwrap();
+            sqlx::query("UPDATE messages SET folder_id = ? WHERE id = ?")
+                .bind(folder.id)
+                .bind(message)
+                .execute(db)
+                .await
+                .unwrap();
+        };
+
+        // One unseen conversation is counted in exactly the list that shows it.
+        file_under("important").await;
+        assert_eq!(unread().await, [1, 0, 0, 0, 0, 0, 0]);
+        file_under("feed").await;
+        assert_eq!(unread().await, [0, 0, 1, 0, 0, 0, 0]);
+        file_under("junk").await;
+        assert_eq!(unread().await, [0, 0, 0, 1, 0, 0, 0]);
+        file_under("important").await;
+        sqlx::query("UPDATE threads SET snoozed_until = unixepoch() + 3600 WHERE id = ?")
+            .bind(thread)
+            .execute(db)
+            .await
+            .unwrap();
+        assert_eq!(unread().await, [0, 0, 0, 0, 1, 0, 0]);
+        sqlx::query("UPDATE threads SET snoozed_until = NULL")
+            .execute(db)
+            .await
+            .unwrap();
+        move_to("archive").await;
+        assert_eq!(unread().await, [0, 0, 0, 0, 0, 1, 0]);
+        move_to("trash").await;
+        assert_eq!(unread().await, [0, 0, 0, 0, 0, 0, 1]);
+        // Seen mail counts nowhere.
+        sqlx::query("UPDATE messages SET seen = 1").execute(db).await.unwrap();
+        assert_eq!(unread().await, [0; 7]);
+    }
+
+    #[tokio::test]
     async fn archiving_moves_a_conversation_to_the_archive_list() {
         let (app, state) = test_app().await;
         let admin = json!({ "email": "admin@example.org", "password": "password1" });

@@ -171,6 +171,12 @@ export interface Counts {
 	unread_important: number;
 	/** Unread conversations in the Important list. */
 	unread_flagged: number;
+	/** Unread conversations in Nice to know, Junk, Delayed, Archive and Trash. */
+	unread_feed: number;
+	unread_junk: number;
+	unread_delayed: number;
+	unread_archive: number;
+	unread_trash: number;
 	delayed: number;
 	drafts: number;
 }
