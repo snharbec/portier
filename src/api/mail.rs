@@ -853,6 +853,8 @@ pub struct SearchRow {
     excerpt: String,
     /// Your note on the conversation the mail belongs to.
     note: String,
+    /// The list the mail is found in: home | flagged | delayed | feed | screener | archive | sent | junk | trash.
+    place: String,
 }
 
 /// LIKE pattern matching `needle` anywhere, with LIKE's own wildcards taken literally.
@@ -877,8 +879,19 @@ pub(crate) fn search_sql(
     output: SearchOutput,
 ) -> sqlx::QueryBuilder<sqlx::Sqlite> {
     let fts = query.fts();
-    const COLUMNS: &str =
-        "m.id, m.thread_id, m.account_id, m.subject, m.from_name, m.from_addr, m.date, m.seen, t.note";
+    // `place` follows the rules the lists themselves select by.
+    let columns = format!(
+        "m.id, m.thread_id, m.account_id, m.subject, m.from_name, m.from_addr, m.date, m.seen, t.note,
+         CASE WHEN f.role = 'archive' THEN 'archive'
+              WHEN f.role = 'trash' THEN 'trash'
+              WHEN m.is_outgoing = 1 THEN 'sent'
+              WHEN f.role = 'junk' OR ts.category = 'junk' THEN 'junk'
+              WHEN {DELAYED} THEN 'delayed'
+              WHEN {FLAGGED} THEN 'flagged'
+              WHEN ts.category = 'feed' THEN 'feed'
+              WHEN t.sender_id IS NOT NULL AND ts.category IS NULL THEN 'screener'
+              ELSE 'home' END AS place"
+    );
     let mut sql = sqlx::QueryBuilder::<sqlx::Sqlite>::new("SELECT ");
     match (&output, fts.is_empty()) {
         (SearchOutput::UnreadCount, _) => {
@@ -886,11 +899,11 @@ pub(crate) fn search_sql(
         }
         // Filters only: no text to match, so the stored preview stands in for the excerpt.
         (SearchOutput::Rows, true) => {
-            sql.push(COLUMNS).push(", m.snippet AS excerpt");
+            sql.push(&columns).push(", m.snippet AS excerpt");
         }
         // The place in the mail where the words were found; a mail found by its note has none.
         (SearchOutput::Rows, false) => {
-            sql.push(COLUMNS)
+            sql.push(&columns)
                 .push(
                     ", COALESCE((SELECT snippet(messages_fts, 4, '', '', '…', 16) FROM messages_fts
                                  WHERE messages_fts MATCH ",
@@ -899,8 +912,11 @@ pub(crate) fn search_sql(
                 .push(" AND messages_fts.rowid = m.id), m.snippet) AS excerpt");
         }
     }
-    sql.push(" FROM messages m JOIN threads t ON t.id = m.thread_id WHERE m.user_id = ")
-        .push_bind(user_id);
+    sql.push(
+        " FROM messages m JOIN threads t ON t.id = m.thread_id JOIN folders f ON f.id = m.folder_id
+          LEFT JOIN senders ts ON ts.id = t.sender_id WHERE m.user_id = ",
+    )
+    .push_bind(user_id);
     if !fts.is_empty() {
         // Words are looked for in the mail, and in your note on its conversation; a conversation
         // found by its note is listed once, with its newest mail.

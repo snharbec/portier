@@ -18,6 +18,19 @@
 	const picked = $derived(selection.visible(search.hits ?? [], (h) => h.id));
 	let picker: FolderPicker;
 
+	/** The list a found mail sits in, by the names of the side bar. */
+	const places: Record<SearchHit['place'], { name: string; tone: string }> = {
+		home: { name: 'Home', tone: 'important' },
+		flagged: { name: 'Important', tone: 'important' },
+		delayed: { name: 'Delayed', tone: '' },
+		feed: { name: 'Nice to know', tone: 'feed' },
+		screener: { name: 'Screener', tone: '' },
+		archive: { name: 'Archive', tone: '' },
+		sent: { name: 'Sent', tone: '' },
+		junk: { name: 'Junk', tone: 'junk' },
+		trash: { name: 'Trash', tone: 'junk' }
+	};
+
 	// ---- Split view: a result opens beside the list instead of on a page of its own ----
 	const hrefOf = (index: number) =>
 		app.splitActive ? `/search?open=${search.hits![index].thread_id}&hit=${index}` : resultPath(index);
@@ -187,6 +200,11 @@
 				>
 					<span class="top">
 						<strong title={hit.from_addr}>{displayName(hit.from_name, hit.from_addr)}</strong>
+						{#if places[hit.place]}
+							<span class="tag place {places[hit.place].tone}" title="Found in {places[hit.place].name}"
+								>{places[hit.place].name}</span
+							>
+						{/if}
 						<time class="muted">{shortDate(hit.date)}</time>
 					</span>
 					<span>{hit.subject || '(no subject)'}</span>
@@ -237,6 +255,15 @@
 		overflow: hidden;
 		text-overflow: ellipsis;
 		white-space: nowrap;
+	}
+	.tag.place {
+		flex: none;
+		font-size: 0.75rem;
+		border-width: 1px;
+	}
+	/* Lists without a colour of their own. */
+	.tag.place:not(.important, .feed, .junk) {
+		color: var(--ink-soft);
 	}
 	.input.name {
 		width: min(18rem, 100%);
@@ -291,7 +318,8 @@
 	li + li {
 		border-top: 1px solid var(--line);
 	}
-	a {
+	/* The result rows only: the page's other links (buttons in the head) keep their own shape. */
+	a[data-row] {
 		display: grid;
 		flex: 1;
 		min-width: 0;
@@ -300,10 +328,18 @@
 	}
 	.top {
 		display: flex;
-		justify-content: space-between;
-		gap: 1rem;
+		align-items: baseline;
+		gap: 0.6rem;
+	}
+	.top strong {
+		min-width: 0;
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
 	}
 	time {
+		margin-left: auto;
+		flex: none;
 		font-size: 0.85rem;
 	}
 </style>

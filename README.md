@@ -151,6 +151,9 @@ with unseen mail; it is kept per browser and per list.
 In a mail list, the person icon at the end of a row shows all mail from that row's sender, as a
 `from:` search you can refine or save.
 
+Each result names the list it is found in (Home, Important, Delayed, Nice to know, Screener,
+Archive, Sent, Junk).
+
 A search can be saved under a name with "Save this search" on the results page. Saved searches
 are listed in the side bar with the number of unread mails they currently find, and are run afresh
 each time, so `received:last month` keeps meaning the previous month.

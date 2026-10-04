@@ -913,6 +913,34 @@ mod tests {
         let by_text = hits("confidential").await;
         assert!(by_text[0]["excerpt"].as_str().unwrap().contains("confidential"));
 
+        // Each hit says which list it is found in.
+        assert_eq!(by_text[0]["place"], "home");
+        for (change, place) in [
+            ("UPDATE senders SET category = 'feed'", "feed"),
+            ("UPDATE senders SET category = NULL", "screener"),
+            ("UPDATE senders SET category = 'junk'", "junk"),
+            (
+                "UPDATE senders SET category = 'important'; UPDATE messages SET flagged = 1",
+                "flagged",
+            ),
+            ("UPDATE threads SET snoozed_until = unixepoch() + 3600", "delayed"),
+            (
+                "UPDATE threads SET snoozed_until = NULL; UPDATE messages SET flagged = 0, is_outgoing = 1",
+                "sent",
+            ),
+            (
+                "UPDATE messages SET is_outgoing = 0; UPDATE folders SET role = 'archive'",
+                "archive",
+            ),
+        ] {
+            sqlx::raw_sql(change).execute(&state.db).await.unwrap();
+            assert_eq!(hits("confidential").await[0]["place"], place, "{change}");
+        }
+        sqlx::raw_sql("UPDATE folders SET role = 'inbox'")
+            .execute(&state.db)
+            .await
+            .unwrap();
+
         // Limits: length, and other people's conversations.
         let long = json!({ "note": "x".repeat(2001) });
         let (status, _, _) = call(&app, "PUT", &path, Some(&cookie), Some(long)).await;

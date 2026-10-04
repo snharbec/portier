@@ -165,6 +165,8 @@ export interface SearchHit {
 	excerpt: string;
 	/** Your note on the conversation the mail belongs to. */
 	note: string;
+	/** The list the mail is found in. */
+	place: 'home' | 'flagged' | 'delayed' | 'feed' | 'screener' | 'archive' | 'sent' | 'junk' | 'trash';
 }
 
 export interface SavedSearch {
