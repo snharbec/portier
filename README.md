@@ -1,4 +1,4 @@
-# emscreen
+# Portier
 
 Self-hosted web mail client that screens mail by sender. Each new sender waits in the
 Screener until you put them in one of three places:
@@ -22,7 +22,7 @@ their mail back. Without it such mail stays in the inbox.
 
 **Delayed folder** (optional, per mail account in Settings): with a folder name set, a delayed
 conversation waits in that folder on the mail server and moves back to the inbox, unseen, when it
-returns. Without it delayed mail stays where it is on the server and is only hidden in Email Screen.
+returns. Without it delayed mail stays where it is on the server and is only hidden in Portier.
 
 **Important** is a list below Home for conversations you want set apart. Drag a row by its
 handle onto Important in the side bar, use the button in the selection bar, or press `i` while
@@ -31,12 +31,12 @@ so other mail programs show it as flag or star, and mail flagged there appears i
 
 **Notes**: in an opened mail, "Add note" (key `t`) attaches a text of your own to the conversation,
 e.g. "tax 2026" or "warranty until May". It shows on the mail, in the lists and in search results,
-is kept in Email Screen only (not on the mail server), and the search finds its words: typed
+is kept in Portier only (not on the mail server), and the search finds its words: typed
 plainly, or with `note:`.
 
 **Delay** takes a conversation out of Home for 1, 2, 3 or 7 days. It waits in the Delayed
 list and returns at 7:00 (server time) on that day, unseen and at the top. A new mail in the
-conversation ends the delay early. Delays are kept in Email Screen only.
+conversation ends the delay early. Delays are kept in Portier only.
 
 **Split view** (two buttons in the top bar) shows the opened mail together with the mail list:
 beside it, or below it; while no mail is open the list has the whole page. It works on the
@@ -60,7 +60,7 @@ first page. Selecting one opens the document on the page, with a link to its ema
 In Home, Nice to know, Junk, Sent and the search results, "Select" above the list shows a
 checkbox on every mail (Escape or "Stop selecting" hides them again). Tick several mails and
 mark them seen or unseen, move them to the account's Trash folder, or move them to any folder
-on the mail server. Email Screen mirrors only Inbox, Sent, Junk, Archive and Trash, so mail moved elsewhere
+on the mail server. Portier mirrors only Inbox, Sent, Junk, Archive and Trash, so mail moved elsewhere
 leaves its views and stays on the server.
 
 Rows in the mail lists and search results can also be slid left or right, by finger or mouse.
@@ -74,13 +74,16 @@ can share one installation; each has their own accounts and sender decisions.
 
     cd web && npm install && npm run build && cd ..
     cargo build --release
-    ./target/release/emscreen
+    ./target/release/portier
 
 The frontend is embedded in the binary, so build `web/` before `cargo build`. Open
 http://127.0.0.1:8080. The first user to register manages the installation and can add
 further users under Settings.
 
 ## Configuration (environment)
+
+The variables, the database file `emscreen.db` and the session cookie carry the app's earlier
+name, emscreen. They were kept so that an existing installation goes on working unchanged.
 
 | Variable | Default | Meaning |
 |---|---|---|
@@ -114,7 +117,7 @@ LibreOffice. It is optional: without it those files appear as plain tiles and ca
     brew install --cask libreoffice      # macOS
     apt install libreoffice-core libreoffice-writer libreoffice-calc libreoffice-impress
 
-emscreen looks for `soffice` on the PATH and in `/Applications/LibreOffice.app` at start-up.
+Portier looks for `soffice` on the PATH and in `/Applications/LibreOffice.app` at start-up.
 Conversion runs headless, one document at a time, on a copy of the file in a throwaway directory.
 It still means LibreOffice opens files that strangers sent you. Set `EMSCREEN_SOFFICE=off` if
 you do not want that.
@@ -163,7 +166,7 @@ each time, so `received:last month` keeps meaning the previous month.
 Senders show a picture looked up for their address (Gravatar, or their domain's BIMI logo). With
 "Picture", on an opened mail next to the sender or in Settings in the list of senders, you choose
 one of your own instead: an image file from your computer, or the web address of a picture.
-Email Screen keeps a small copy and shows it for that sender; "Remove your picture" goes back to
+Portier keeps a small copy and shows it for that sender; "Remove your picture" goes back to
 the looked-up one.
 
 ## Look

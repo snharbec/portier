@@ -262,7 +262,7 @@
 <section id="accounts">
 	<h2>Mail accounts</h2>
 	{#if app.accounts.length === 0 && !form}
-		<p class="muted">No account connected yet. Email Screen works with any mailbox that offers IMAP and SMTP.</p>
+		<p class="muted">No account connected yet. Portier works with any mailbox that offers IMAP and SMTP.</p>
 	{/if}
 	{#if app.accounts.length}
 		<ul class="sheet list">
@@ -280,7 +280,7 @@
 						{/if}
 					</div>
 					{#if removing === account.id}
-						<span class="small">Remove this account and its mail from Email Screen? The mailbox itself is untouched.</span>
+						<span class="small">Remove this account and its mail from Portier? The mailbox itself is untouched.</span>
 						<button class="btn small danger" onclick={() => removeAccount(account.id)}>Remove account</button>
 						<button class="btn small" onclick={() => (removing = null)}>Keep</button>
 					{:else}
@@ -373,8 +373,8 @@
 				With a Nice to know folder, e.g. <em>Nice to know</em>, mail from senders you filed under Nice to know is
 				moved there on the mail server, out of the inbox. With a Delayed folder, e.g. <em>Delayed</em>, a
 				conversation you delay waits there and moves back to the inbox when it returns. Both folders are created
-				if they are missing, and in Email Screen the mail shows as before. Before you empty one of these fields
-				again, move its mail back to the inbox with another mail program: Email Screen then no longer looks into
+				if they are missing, and in Portier the mail shows as before. Before you empty one of these fields
+				again, move its mail back to the inbox with another mail program: Portier then no longer looks into
 				that folder.
 			</p>
 			<label class="check">
@@ -459,7 +459,7 @@
 
 <section id="look">
 	<h2>Look</h2>
-	<p class="muted">Colours of Email Screen in this browser. Mails that bring their own design keep their white page.</p>
+	<p class="muted">Colours of Portier in this browser. Mails that bring their own design keep their white page.</p>
 	<fieldset class="choices">
 		<legend>Light or dark</legend>
 		{#each modes as mode}

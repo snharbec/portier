@@ -88,7 +88,7 @@
 			/>
 			<button class="btn small" disabled={busy}>{busy ? 'Loading' : 'Use this picture'}</button>
 		</form>
-		<p class="muted small">JPEG, PNG, GIF or WebP, up to 5 MB. Email Screen keeps a small copy; the web address is not asked again.</p>
+		<p class="muted small">JPEG, PNG, GIF or WebP, up to 5 MB. Portier keeps a small copy; the web address is not asked again.</p>
 		{#if error}<p class="error" role="alert">{error}</p>{/if}
 	</div>
 </div>

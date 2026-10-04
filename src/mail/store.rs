@@ -77,7 +77,7 @@ async fn find_thread(db: &SqlitePool, user_id: i64, p: &parse::Parsed) -> Result
     )
 }
 
-/// Stores one message. `uid` is `None` for mail emscreen sent itself and has not yet seen on the
+/// Stores one message. `uid` is `None` for mail Portier sent itself and has not yet seen on the
 /// server. Returns `None` if the bytes are not a parseable message.
 pub async fn store_message(
     state: &AppState,
@@ -96,11 +96,13 @@ pub async fn store_message(
         // moves between folders.
         let digest = Sha256::digest(raw);
         let hex: String = digest.iter().take(16).map(|b| format!("{b:02x}")).collect();
+        // The name in this identifier is the app's former one. It stays: mail stored earlier is
+        // recognised by it.
         p.message_id = format!("{hex}@emscreen.local");
     }
     let db = &state.db;
 
-    // A copy emscreen already knows about (sent by it, or moved by it) now shows up on the server.
+    // A copy Portier already knows about (sent by it, or moved by it) now shows up on the server.
     if let Some(uid) = uid {
         let pending: Option<i64> = sqlx::query_scalar(
             "SELECT id FROM messages WHERE folder_id = ? AND message_id = ? AND uid IS NULL LIMIT 1",

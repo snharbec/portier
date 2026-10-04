@@ -33,7 +33,7 @@ async fn keep(state: &AppState, user_id: i64, sender_id: i64, bytes: Vec<u8>, so
         .await
         .map_err(anyhow::Error::from)?
         .map_err(|_| {
-            ApiError::bad_request("This is not a picture Email Screen can read. Use a JPEG, PNG, GIF or WebP image.")
+            ApiError::bad_request("This is not a picture Portier can read. Use a JPEG, PNG, GIF or WebP image.")
         })?;
     sqlx::query(
         "INSERT INTO sender_pictures (sender_id, data, source, updated_at) VALUES (?, ?, ?, ?)

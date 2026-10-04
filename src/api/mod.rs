@@ -101,7 +101,7 @@ mod tests {
     /// `avatars`: whether sender pictures may be looked up (tests never reach the internet:
     /// they only use what is already in the cache).
     async fn test_app_with(avatars: bool) -> (Router, AppState) {
-        let data_dir = std::env::temp_dir().join(format!("emscreen-test-{}", crypto::random_token()));
+        let data_dir = std::env::temp_dir().join(format!("portier-test-{}", crypto::random_token()));
         std::fs::create_dir_all(&data_dir).unwrap();
         let db = crate::open_database(&format!("sqlite://{}", data_dir.join("test.db").display()))
             .await
@@ -977,7 +977,7 @@ mod tests {
         let avatar = "/api/avatar?address=anna@example.com";
 
         let upload = async |cookie: &str, file: Vec<u8>| -> StatusCode {
-            let boundary = "----emscreen-test";
+            let boundary = "----portier-test";
             let mut body = format!(
                 "--{boundary}\r\nContent-Disposition: form-data; name=\"file\"; filename=\"a.png\"\r\n\
                  Content-Type: image/png\r\n\r\n"

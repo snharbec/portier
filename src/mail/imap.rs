@@ -1,4 +1,4 @@
-//! Thin layer over async-imap: connecting, folder discovery and the few commands emscreen uses.
+//! Thin layer over async-imap: connecting, folder discovery and the few commands Portier uses.
 
 use std::{collections::HashSet, fmt::Debug, sync::Arc, time::Duration};
 

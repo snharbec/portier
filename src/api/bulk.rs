@@ -178,7 +178,7 @@ async fn set_flagged(state: &AppState, targets: &[Target], flagged: bool) -> Api
 }
 
 /// Delays the conversations of the selection until `until`, or ends their delay with `None`.
-/// Kept in Email Screen only: on the mail server nothing changes until the mail returns.
+/// Kept in Portier only: on the mail server nothing changes until the mail returns.
 async fn set_delay(state: &AppState, user_id: i64, targets: &[Target], until: Option<i64>) -> ApiResult<usize> {
     let mut threads: Vec<i64> = targets.iter().map(|t| t.thread_id).collect();
     threads.sort_unstable();
@@ -265,7 +265,7 @@ enum Shelf {
 }
 
 /// Moves mail to the account's Archive or Trash folder, or out of the Trash back to the inbox or
-/// Sent. Unlike other moves the mail stays in Email Screen: these folders are mirrored and shown
+/// Sent. Unlike other moves the mail stays in Portier: these folders are mirrored and shown
 /// as their own lists.
 async fn file_away(state: &AppState, user_id: i64, targets: Vec<Target>, shelf: Shelf) -> ApiResult<usize> {
     let (role, what) = match shelf {
@@ -369,7 +369,7 @@ async fn file_away(state: &AppState, user_id: i64, targets: Vec<Target>, shelf: 
 }
 
 /// Moves mail on the server to `folder`, or to each account's Trash when `folder` is `None`.
-/// The target is not a folder Email Screen mirrors, so locally the mail is simply removed; if the
+/// The target is not a folder Portier mirrors, so locally the mail is simply removed; if the
 /// server refuses the move, the next sync brings it back.
 async fn relocate(state: &AppState, user_id: i64, targets: Vec<Target>, folder: Option<String>) -> ApiResult<usize> {
     let mut by_account: HashMap<i64, Vec<Target>> = HashMap::new();

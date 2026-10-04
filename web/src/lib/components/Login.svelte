@@ -25,7 +25,7 @@
 
 <main>
 	<div class="door">
-		<h1>{app.setupNeeded ? 'Set up Email Screen' : mode === 'login' ? 'Sign in to Email Screen' : 'Create your user'}</h1>
+		<h1>{app.setupNeeded ? 'Set up Portier' : mode === 'login' ? 'Sign in to Portier' : 'Create your user'}</h1>
 		<p class="muted">
 			{#if app.setupNeeded}
 				Nobody has signed in yet. The user you create now manages this installation.

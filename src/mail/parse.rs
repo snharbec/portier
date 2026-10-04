@@ -1,4 +1,4 @@
-//! Turns raw RFC 5322 bytes into the fields emscreen stores.
+//! Turns raw RFC 5322 bytes into the fields Portier stores.
 
 use mail_parser::{Address, MessageParser, MimeHeaders};
 

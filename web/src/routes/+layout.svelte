@@ -40,7 +40,7 @@
 	const keyLabel = (key: string) => (/^[A-Z]$/.test(key) ? `Shift ${key}` : key);
 	let keyHelp: KeyHelp | undefined = $state();
 	const startsGroup = (index: number) => index > 0 && places[index].group !== places[index - 1].group;
-	const here = $derived(places.find((p) => p.href === page.url.pathname)?.label ?? 'Email Screen');
+	const here = $derived(places.find((p) => p.href === page.url.pathname)?.label ?? 'Portier');
 
 	let searchField: HTMLInputElement | undefined = $state();
 	let searchTimer: ReturnType<typeof setTimeout> | undefined;
@@ -299,7 +299,7 @@
 <svelte:window {onkeydown} />
 
 {#if loadError}
-	<p class="empty"><strong>Email Screen is not responding</strong>{loadError}</p>
+	<p class="empty"><strong>Portier is not responding</strong>{loadError}</p>
 {:else if !app.ready}
 	<p class="empty" aria-busy="true">Loading</p>
 {:else if !app.user}

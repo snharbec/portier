@@ -136,7 +136,7 @@ async fn session_loop(state: &AppState, account_id: i64, wake: &Notify) -> Resul
         Some(store::ensure_folder(&state.db, account.id, &account.junk_folder, "junk").await?)
     };
     folders.extend(junk.clone());
-    // The folders for "Nice to know" and delayed mail are the only ones Email Screen creates on
+    // The folders for "Nice to know" and delayed mail are the only ones Portier creates on
     // the server.
     let feed = if account.feed_folder.is_empty() {
         None

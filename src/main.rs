@@ -46,7 +46,7 @@ async fn main() -> Result<()> {
     tracing_subscriber::fmt()
         .with_env_filter(
             tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| "emscreen=info,tower_http=warn".into()),
+                .unwrap_or_else(|_| "portier=info,tower_http=warn".into()),
         )
         .init();
 
@@ -66,7 +66,7 @@ async fn main() -> Result<()> {
     tokio::spawn(api::autoarchive::run(state.clone()));
 
     let listener = tokio::net::TcpListener::bind(bind).await?;
-    tracing::info!("emscreen listening on http://{bind}");
+    tracing::info!("Portier listening on http://{bind}");
     axum::serve(listener, app(state)).await?;
     Ok(())
 }
