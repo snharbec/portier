@@ -1,10 +1,12 @@
 <script lang="ts">
 	import type { ThreadSummary } from '#lib/api.ts';
 	import { app } from '#lib/app.svelte.ts';
+	import { goto } from '$app/navigation';
 	import { page } from '$app/state';
 	import { startDrag } from '#lib/drag.ts';
 	import { displayName, hue, returnTime, shortDate } from '#lib/format.ts';
 	import { startReading } from '#lib/reading.ts';
+	import { runSearch, search } from '#lib/search.svelte.ts';
 	import type { Selection } from '#lib/selection.svelte.ts';
 	import { swipeLabel, swipeMail, type SwipeAction } from '#lib/swipe.ts';
 	import Avatar from './Avatar.svelte';
@@ -29,6 +31,13 @@
 	const openId = $derived(app.splitActive ? Number(page.url.searchParams.get('open')) : 0);
 
 	const opened = () => startReading(sequence ?? threads.map((t) => t.id), page.url.pathname);
+
+	/** Shows every mail of the row's sender, as a search the reader can refine or save. */
+	function allFrom(address: string) {
+		search.query = `from:${address}`;
+		runSearch();
+		goto('/search');
+	}
 
 	const accountLabel = (id: number) => app.accounts.find((a) => a.id === id)?.label ?? '';
 
@@ -55,6 +64,7 @@
 		{@const who = thread.is_outgoing && thread.sender_address
 			? displayName(thread.sender_name, thread.sender_address)
 			: displayName(thread.from_name, thread.from_addr)}
+		{@const address = thread.is_outgoing && thread.sender_address ? thread.sender_address : thread.from_addr}
 		<li>
 			<Swipeable
 				left={app.swipe.left}
@@ -119,6 +129,13 @@
 					></span>
 				{/if}
 			</a>
+			{#if address}
+				<button class="from" onclick={() => allFrom(address)} title="All mail from {who}" aria-label="All mail from {who}">
+					<svg viewBox="0 0 24 24" aria-hidden="true"
+						><path d="M9.5 11a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7zM3 19.5c0-3 2.9-5 6.5-5 1 0 2 .2 2.8.5M17 13.5a3 3 0 1 0 0 6 3 3 0 0 0 0-6zM19.200 18.700 21.500 21" /></svg
+					>
+				</button>
+			{/if}
 			</Swipeable>
 		</li>
 	{/each}
@@ -222,6 +239,41 @@
 			stroke: var(--ink-soft);
 			stroke-width: 2.4;
 			stroke-linecap: round;
+		}
+	}
+	/* "All mail from this sender": at the end of the row, shown when the row is pointed at. */
+	.from {
+		flex: none;
+		display: grid;
+		place-items: center;
+		width: 2.4rem;
+		border: 0;
+		background: none;
+		color: var(--ink-soft);
+		cursor: pointer;
+		opacity: 0;
+	}
+	.from svg {
+		width: 1.25rem;
+		height: 1.25rem;
+		fill: none;
+		stroke: currentColor;
+		stroke-width: 1.8;
+		stroke-linecap: round;
+		stroke-linejoin: round;
+	}
+	li:hover .from,
+	.from:focus-visible {
+		opacity: 0.7;
+	}
+	.from:hover {
+		opacity: 1 !important;
+		color: var(--important);
+	}
+	/* Nothing to point with: always there, quietly. */
+	@media (hover: none) {
+		.from {
+			opacity: 0.55;
 		}
 	}
 	a.open {
