@@ -3,7 +3,7 @@
 //!
 //! Both lookups talk to third parties: Gravatar sees a hash of the sender's address, the DNS
 //! resolver sees the sender's domain, and a BIMI logo is fetched from wherever the domain points.
-//! `EMSCREEN_AVATARS=off` turns all of it off.
+//! `PORTIER_AVATARS=off` turns all of it off.
 
 use std::{
     net::{IpAddr, SocketAddr},

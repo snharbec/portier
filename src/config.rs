@@ -17,21 +17,25 @@ pub struct Config {
     pub avatars: bool,
 }
 
+/// A setting from the environment: `PORTIER_<name>`, or `EMSCREEN_<name>` as installations
+/// from before the app was renamed have it. The new name wins when both are set.
+pub fn setting(name: &str) -> Option<String> {
+    std::env::var(format!("PORTIER_{name}"))
+        .or_else(|_| std::env::var(format!("EMSCREEN_{name}")))
+        .ok()
+}
+
 impl Config {
     pub fn from_env() -> Result<Self> {
-        let bind = std::env::var("EMSCREEN_BIND")
-            .unwrap_or_else(|_| "127.0.0.1:8080".into())
+        let bind = setting("BIND")
+            .unwrap_or_else(|| "127.0.0.1:8080".into())
             .parse()
-            .context("EMSCREEN_BIND is not a valid socket address")?;
-        let data_dir = PathBuf::from(std::env::var("EMSCREEN_DATA_DIR").unwrap_or_else(|_| "data".into()));
+            .context("PORTIER_BIND is not a valid socket address")?;
+        let data_dir = PathBuf::from(setting("DATA_DIR").unwrap_or_else(|| "data".into()));
         std::fs::create_dir_all(&data_dir).context("cannot create data directory")?;
         let master_key = load_master_key(&data_dir)?;
-        let open_registration = matches!(
-            std::env::var("EMSCREEN_OPEN_REGISTRATION").as_deref(),
-            Ok("1") | Ok("true")
-        );
-        let sync_max_per_folder = std::env::var("EMSCREEN_SYNC_MAX_PER_FOLDER")
-            .ok()
+        let open_registration = matches!(setting("OPEN_REGISTRATION").as_deref(), Some("1") | Some("true"));
+        let sync_max_per_folder = setting("SYNC_MAX_PER_FOLDER")
             .and_then(|v| v.parse().ok())
             .unwrap_or(5000);
         Ok(Self {
@@ -41,17 +45,17 @@ impl Config {
             open_registration,
             sync_max_per_folder,
             soffice: crate::mail::preview::find_soffice(),
-            avatars: std::env::var("EMSCREEN_AVATARS").as_deref() != Ok("off"),
+            avatars: setting("AVATARS").as_deref() != Some("off"),
         })
     }
 }
 
-/// Key comes from `EMSCREEN_MASTER_KEY` (base64, 32 bytes) or from
+/// Key comes from `PORTIER_MASTER_KEY` (base64, 32 bytes) or from
 /// `<data_dir>/master.key`, which is generated on first run.
 fn load_master_key(data_dir: &std::path::Path) -> Result<[u8; 32]> {
-    let encoded = match std::env::var("EMSCREEN_MASTER_KEY") {
-        Ok(v) => v,
-        Err(_) => {
+    let encoded = match setting("MASTER_KEY") {
+        Some(v) => v,
+        None => {
             let path = data_dir.join("master.key");
             if !path.exists() {
                 let mut key = [0u8; 32];
@@ -70,4 +74,23 @@ fn load_master_key(data_dir: &std::path::Path) -> Result<[u8; 32]> {
     bytes
         .try_into()
         .map_err(|_| anyhow::anyhow!("master key must be exactly 32 bytes"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::setting;
+
+    #[test]
+    fn settings_take_the_new_name_and_fall_back_to_the_old_one() {
+        // Names no other test or the app itself reads: the environment is shared by all tests.
+        // SAFETY: nothing else touches these three variables.
+        unsafe {
+            std::env::set_var("EMSCREEN_TEST_ONLY_OLD", "old");
+            std::env::set_var("EMSCREEN_TEST_BOTH", "old");
+            std::env::set_var("PORTIER_TEST_BOTH", "new");
+        }
+        assert_eq!(setting("TEST_ONLY_OLD").as_deref(), Some("old"));
+        assert_eq!(setting("TEST_BOTH").as_deref(), Some("new"));
+        assert_eq!(setting("TEST_NEITHER"), None);
+    }
 }

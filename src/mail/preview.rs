@@ -104,9 +104,9 @@ pub fn thumbnail(bytes: &[u8]) -> Result<Vec<u8>> {
     Ok(out)
 }
 
-/// Finds LibreOffice: `EMSCREEN_SOFFICE` (a path, or `off`), then PATH, then the macOS app bundle.
+/// Finds LibreOffice: `PORTIER_SOFFICE` (a path, or `off`), then PATH, then the macOS app bundle.
 pub fn find_soffice() -> Option<PathBuf> {
-    if let Ok(configured) = std::env::var("EMSCREEN_SOFFICE") {
+    if let Some(configured) = crate::config::setting("SOFFICE") {
         if configured == "off" {
             return None;
         }
