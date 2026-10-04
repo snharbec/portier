@@ -20,6 +20,10 @@ pub struct Account {
     pub sent_folder: String,
     pub trash_folder: String,
     pub archive_folder: String,
+    /// Where mail from "Nice to know" senders is kept on the server; empty leaves it in the inbox.
+    pub feed_folder: String,
+    /// Where delayed conversations wait on the server; empty leaves them where they are.
+    pub delayed_folder: String,
     pub append_sent: bool,
 }
 

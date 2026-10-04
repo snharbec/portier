@@ -24,6 +24,10 @@ export interface Account {
 	sent_folder: string;
 	trash_folder: string;
 	archive_folder: string;
+	/** Server folder for mail from Nice to know senders; empty keeps it in the inbox. */
+	feed_folder: string;
+	/** Server folder delayed conversations wait in; empty leaves them where they are. */
+	delayed_folder: string;
 	append_sent: boolean;
 	last_error: string | null;
 	last_sync_at: number | null;

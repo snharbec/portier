@@ -46,6 +46,21 @@ pub async fn set_category(state: &AppState, user_id: i64, sender_id: i64, catego
         )
         .await?;
     }
+    // Mail kept in the "Nice to know" folder follows the decision.
+    let was_feed = old.as_deref() == Some("feed");
+    if is_junk && was_feed {
+        move_sender_mail(state, user_id, sender_id, "feed", "junk", 0).await?;
+    }
+    if was_feed != (category == Some("feed")) {
+        // The sync sorts mail between the inbox and that folder (see `sync::sort_feed`).
+        let accounts: Vec<i64> = sqlx::query_scalar("SELECT id FROM accounts WHERE user_id = ? AND feed_folder != ''")
+            .bind(user_id)
+            .fetch_all(&state.db)
+            .await?;
+        for account_id in accounts {
+            state.wake_sync(account_id).await;
+        }
+    }
     state.notify(user_id, "senders");
     Ok(())
 }
@@ -65,11 +80,12 @@ async fn move_sender_mail(
     for account in accounts {
         let name_of = |role: &str| match role {
             "junk" => account.junk_folder.clone(),
+            "feed" => account.feed_folder.clone(),
             _ => account.inbox_folder.clone(),
         };
         let (from_name, to_name) = (name_of(from_role), name_of(to_role));
         if from_name.is_empty() || to_name.is_empty() {
-            continue; // no Junk folder on this server
+            continue; // no such folder for this account
         }
         let (Some(from), Some(to)) = (
             store::folder_by_name(&state.db, account.id, &from_name).await?,

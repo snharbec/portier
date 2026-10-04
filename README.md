@@ -15,6 +15,15 @@ conversations and the other lists are left alone. It is checked hourly.
 Trash is left out of the other lists and of search. "Move back to Home", on an opened
 mail or for mails selected in the Trash list, brings it back: received mail to the inbox, your own to Sent.
 
+**Nice to know folder** (optional, per mail account in Settings): with a folder name set, mail
+from Nice to know senders is moved there on the mail server, out of the inbox, so other mail
+programs see a tidy inbox too. The folder is created if missing. Filing a sender elsewhere moves
+their mail back. Without it such mail stays in the inbox.
+
+**Delayed folder** (optional, per mail account in Settings): with a folder name set, a delayed
+conversation waits in that folder on the mail server and moves back to the inbox, unseen, when it
+returns. Without it delayed mail stays where it is on the server and is only hidden in Email Screen.
+
 **Important** is a list below Home for conversations you want set apart. Drag a row by its
 handle onto Important in the side bar, use the button in the selection bar, or press `i` while
 reading; the same ways lead back to Home. It is stored as the mail server's "flagged" mark,
@@ -129,12 +138,20 @@ The same filter given several times means either: `from:anna from:carsten` finds
 from Carsten.
 Values with spaces go in quotes: `from:"Carsten Meier"`. Days are counted in the server's time zone.
 
+Nice to know, Junk and Archive have an "Unseen only" switch that narrows the list to conversations
+with unseen mail; it is kept per browser and per list.
+
 In a mail list, the person icon at the end of a row shows all mail from that row's sender, as a
 `from:` search you can refine or save.
 
 A search can be saved under a name with "Save this search" on the results page. Saved searches
 are listed in the side bar with the number of unread mails they currently find, and are run afresh
 each time, so `received:last month` keeps meaning the previous month.
+
+## Look
+
+Settings has four colour themes (Harbour, Forest, Plum, Graphite), each light and dark; "Like the
+system" follows the operating system. The choice is kept per browser.
 
 ## Keyboard
 

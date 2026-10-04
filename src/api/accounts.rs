@@ -36,6 +36,8 @@ pub struct AccountView {
     sent_folder: String,
     trash_folder: String,
     archive_folder: String,
+    feed_folder: String,
+    delayed_folder: String,
     append_sent: bool,
     last_error: Option<String>,
     last_sync_at: Option<i64>,
@@ -43,7 +45,7 @@ pub struct AccountView {
 
 const VIEW_COLUMNS: &str = "id, label, address, display_name, imap_host, imap_port, imap_security,
     imap_username, smtp_host, smtp_port, smtp_security, smtp_username, inbox_folder, junk_folder,
-    sent_folder, trash_folder, archive_folder, append_sent, last_error, last_sync_at";
+    sent_folder, trash_folder, archive_folder, feed_folder, delayed_folder, append_sent, last_error, last_sync_at";
 
 #[derive(Deserialize)]
 pub struct AccountInput {
@@ -74,6 +76,10 @@ pub struct AccountInput {
     trash_folder: String,
     #[serde(default)]
     archive_folder: String,
+    #[serde(default)]
+    feed_folder: String,
+    #[serde(default)]
+    delayed_folder: String,
     #[serde(default = "default_true")]
     append_sent: bool,
 }
@@ -96,6 +102,8 @@ impl AccountInput {
             &mut self.sent_folder,
             &mut self.trash_folder,
             &mut self.archive_folder,
+            &mut self.feed_folder,
+            &mut self.delayed_folder,
         ] {
             *field = field.trim().to_string();
         }
@@ -230,8 +238,9 @@ pub async fn create(
     let id: i64 = sqlx::query_scalar(
         "INSERT INTO accounts (user_id, label, address, display_name, imap_host, imap_port, imap_security,
              imap_username, smtp_host, smtp_port, smtp_security, smtp_username, password_enc, inbox_folder,
-             junk_folder, sent_folder, trash_folder, archive_folder, append_sent)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id",
+             junk_folder, sent_folder, trash_folder, archive_folder, feed_folder, delayed_folder,
+             append_sent)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id",
     )
     .bind(user.id)
     .bind(&input.label)
@@ -251,6 +260,8 @@ pub async fn create(
     .bind(&input.sent_folder)
     .bind(&input.trash_folder)
     .bind(&input.archive_folder)
+    .bind(&input.feed_folder)
+    .bind(&input.delayed_folder)
     .bind(input.append_sent)
     .fetch_one(&state.db)
     .await?;
@@ -273,7 +284,8 @@ pub async fn update(
         "UPDATE accounts SET label = ?, address = ?, display_name = ?, imap_host = ?, imap_port = ?,
              imap_security = ?, imap_username = ?, smtp_host = ?, smtp_port = ?, smtp_security = ?,
              smtp_username = ?, password_enc = ?, inbox_folder = ?, junk_folder = ?, sent_folder = ?,
-             trash_folder = ?, archive_folder = ?, append_sent = ?, last_error = NULL
+             trash_folder = ?, archive_folder = ?, feed_folder = ?, delayed_folder = ?, append_sent = ?,
+             last_error = NULL
          WHERE id = ? AND user_id = ?",
     )
     .bind(&input.label)
@@ -293,6 +305,8 @@ pub async fn update(
     .bind(&input.sent_folder)
     .bind(&input.trash_folder)
     .bind(&input.archive_folder)
+    .bind(&input.feed_folder)
+    .bind(&input.delayed_folder)
     .bind(input.append_sent)
     .bind(id)
     .bind(user.id)

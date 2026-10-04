@@ -4,6 +4,7 @@
 	import { swipeActions, type SwipeAction } from '#lib/swipe.ts';
 	import ClassifyButtons from '#lib/components/ClassifyButtons.svelte';
 	import { displayName, fullDate } from '#lib/format.ts';
+	import { look, modes, setLook, themes } from '#lib/look.svelte.ts';
 
 	// ---- Mail accounts ----
 	const blank = () => ({
@@ -25,6 +26,8 @@
 		sent_folder: '',
 		trash_folder: '',
 		archive_folder: '',
+		feed_folder: '',
+		delayed_folder: '',
 		append_sent: true
 	});
 	let form = $state<ReturnType<typeof blank> | null>(null);
@@ -245,6 +248,7 @@
 <nav class="jump" aria-label="Sections of this page">
 	<a class="btn small" href="#accounts">Mail accounts</a>
 	<a class="btn small" href="#senders">Senders</a>
+	<a class="btn small" href="#look">Look</a>
 	<a class="btn small" href="#sliding">Sliding</a>
 	<a class="btn small" href="#archive">Automatic archive</a>
 	{#if app.user?.is_admin}<a class="btn small" href="#users">Users</a>{/if}
@@ -354,7 +358,21 @@
 				<label class="field">
 					Archive folder <input bind:value={form.archive_folder} placeholder="Found automatically" />
 				</label>
+				<label class="field">
+					Nice to know folder <input bind:value={form.feed_folder} placeholder="None: stays in the inbox" />
+				</label>
+				<label class="field">
+					Delayed folder <input bind:value={form.delayed_folder} placeholder="None: stays where it is" />
+				</label>
 			</div>
+			<p class="muted note">
+				With a Nice to know folder, e.g. <em>Nice to know</em>, mail from senders you filed under Nice to know is
+				moved there on the mail server, out of the inbox. With a Delayed folder, e.g. <em>Delayed</em>, a
+				conversation you delay waits there and moves back to the inbox when it returns. Both folders are created
+				if they are missing, and in Email Screen the mail shows as before. Before you empty one of these fields
+				again, move its mail back to the inbox with another mail program: Email Screen then no longer looks into
+				that folder.
+			</p>
 			<label class="check">
 				<input type="checkbox" bind:checked={form.append_sent} />
 				Save a copy of sent mail in the Sent folder (turn off for Gmail, which does this itself)
@@ -414,6 +432,36 @@
 			{/each}
 		</ul>
 	{/if}
+</section>
+
+<section id="look">
+	<h2>Look</h2>
+	<p class="muted">Colours of Email Screen in this browser. Mails that bring their own design keep their white page.</p>
+	<fieldset class="choices">
+		<legend>Light or dark</legend>
+		{#each modes as mode}
+			<label class="check">
+				<input type="radio" name="mode" checked={look.mode === mode.id} onchange={() => setLook({ mode: mode.id })} />
+				{mode.name}
+			</label>
+		{/each}
+	</fieldset>
+	<fieldset class="themes">
+		<legend>Theme</legend>
+		{#each themes as theme}
+			<!-- Each swatch is painted in its own theme, in the light or dark that is on now. -->
+			<label class="theme" data-theme={theme.id} data-mode={look.dark ? 'dark' : 'light'}>
+				<input type="radio" name="theme" checked={look.theme === theme.id} onchange={() => setLook({ theme: theme.id })} />
+				<span class="swatch" aria-hidden="true">
+					<span class="line strong"></span>
+					<span class="line"></span>
+					<span class="dot"></span>
+				</span>
+				<strong>{theme.name}</strong>
+				<span class="hint">{theme.hint}</span>
+			</label>
+		{/each}
+	</fieldset>
 </section>
 
 <section id="sliding">
@@ -545,6 +593,90 @@
 	}
 	section > h2 {
 		margin-bottom: 0.6rem;
+	}
+	.choices,
+	.themes {
+		border: 0;
+		margin: 1rem 0 0;
+		padding: 0;
+		background: none;
+	}
+	.choices legend,
+	.themes legend {
+		padding: 0;
+		margin-bottom: 0.4rem;
+		font-weight: 600;
+		font-size: 0.9rem;
+	}
+	.choices {
+		display: flex;
+		flex-wrap: wrap;
+		gap: 0.3rem 1.25rem;
+	}
+	.themes {
+		display: grid;
+		grid-template-columns: repeat(auto-fill, minmax(9.5rem, 1fr));
+		gap: 0.75rem;
+	}
+	/* A swatch card carries its theme's tokens itself (data-theme on the label), so the colours
+	   inside are that theme's, whatever the page is set to. */
+	.theme {
+		position: relative;
+		display: grid;
+		gap: 0.15rem;
+		padding: 0.6rem;
+		border: 1px solid var(--line);
+		border-radius: var(--radius);
+		background: var(--surface);
+		color: var(--ink);
+		cursor: pointer;
+	}
+	.theme:has(input:checked) {
+		outline: 3px solid var(--important);
+		outline-offset: 1px;
+	}
+	.theme:has(input:focus-visible) {
+		outline: 3px solid var(--signal);
+		outline-offset: 2px;
+	}
+	.theme input {
+		position: absolute;
+		opacity: 0;
+		pointer-events: none;
+	}
+	.swatch {
+		display: grid;
+		grid-template-columns: 1fr auto;
+		gap: 0.35rem 0.5rem;
+		align-items: center;
+		padding: 0.7rem;
+		margin-bottom: 0.4rem;
+		border-radius: 9px;
+		background: var(--paper);
+		border: 1px solid var(--line);
+	}
+	.swatch .line {
+		grid-column: 1;
+		height: 0.4rem;
+		width: 60%;
+		border-radius: 999px;
+		background: var(--ink-soft);
+	}
+	.swatch .line.strong {
+		width: 85%;
+		background: var(--ink);
+	}
+	.swatch .dot {
+		grid-column: 2;
+		grid-row: 1 / span 2;
+		width: 1.5rem;
+		height: 1.5rem;
+		border-radius: 999px;
+		background: var(--important);
+	}
+	.theme .hint {
+		font-size: 0.85rem;
+		color: var(--ink-soft);
 	}
 	h3 {
 		font-size: 1.15rem;

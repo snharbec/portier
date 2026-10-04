@@ -215,6 +215,19 @@ pub async fn all_uids(session: &mut Session) -> Result<HashSet<u32>> {
 
 /// Moves messages out of the currently selected folder. Uses MOVE, or COPY + delete when the
 /// server lacks it.
+/// Makes sure a folder exists, creating (and subscribing to) it when the server does not have it.
+pub async fn ensure_mailbox(session: &mut Session, name: &str) -> Result<()> {
+    // Opening it is the one check every server answers the same way; listing by name trips over
+    // names with spaces or a server's own hierarchy rules.
+    if session.examine(name).await.is_ok() {
+        return Ok(());
+    }
+    session.create(name).await?;
+    // Not every server knows subscriptions, and a missing one only hides the folder elsewhere.
+    let _ = session.subscribe(name).await;
+    Ok(())
+}
+
 pub async fn move_uids(session: &mut Session, uids: &[u32], target: &str) -> Result<()> {
     if uids.is_empty() {
         return Ok(());

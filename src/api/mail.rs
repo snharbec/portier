@@ -244,9 +244,9 @@ pub struct ThreadRow {
 /// Received mail of it that is neither archived nor in the Trash:
 const RECEIVED: &str = "EXISTS (SELECT 1 FROM messages rm JOIN folders rf ON rf.id = rm.folder_id
     WHERE rm.thread_id = t.id AND rm.is_outgoing = 0 AND rf.role NOT IN ('archive', 'trash'))";
-/// A flagged mail of it sits in the inbox: the conversation is in Important.
+/// A flagged mail of it sits in the inbox (or the "Nice to know" folder): the conversation is in Important.
 const FLAGGED: &str = "EXISTS (SELECT 1 FROM messages fm JOIN folders ff ON ff.id = fm.folder_id
-    WHERE fm.thread_id = t.id AND fm.flagged = 1 AND ff.role = 'inbox')";
+    WHERE fm.thread_id = t.id AND fm.flagged = 1 AND ff.role IN ('inbox', 'feed', 'delayed'))";
 /// A message `m` in folder `f` that is neither archived nor in the Trash.
 const HERE: &str = "f.role NOT IN ('archive', 'trash')";
 /// It is delayed and has not come back yet.
@@ -329,7 +329,7 @@ pub(crate) async fn seen_inbox_older_than(
                            WHERE um.thread_id = t.id AND um.seen = 0 AND um.is_outgoing = 0
                              AND uf.role NOT IN ('archive', 'trash'))
            AND EXISTS (SELECT 1 FROM messages am JOIN folders af ON af.id = am.folder_id
-                       WHERE am.thread_id = t.id AND af.role IN ('inbox', 'junk') AND am.uid IS NOT NULL)
+                       WHERE am.thread_id = t.id AND af.role IN ('inbox', 'junk', 'feed', 'delayed') AND am.uid IS NOT NULL)
            AND MAX(lm.date, COALESCE(t.returned_at, 0)) < ?2
          ORDER BY lm.date LIMIT ?3"
     );
@@ -550,7 +550,7 @@ pub async fn thread(State(state): State<AppState>, user: CurrentUser, Path(id): 
     // Archiving applies to received mail that still sits in the inbox (or Junk).
     let can_archive: bool = sqlx::query_scalar(
         "SELECT EXISTS (SELECT 1 FROM messages m JOIN folders f ON f.id = m.folder_id
-                        WHERE m.thread_id = ? AND f.role IN ('inbox', 'junk') AND m.uid IS NOT NULL)",
+                        WHERE m.thread_id = ? AND f.role IN ('inbox', 'junk', 'feed', 'delayed') AND m.uid IS NOT NULL)",
     )
     .bind(id)
     .fetch_one(&state.db)

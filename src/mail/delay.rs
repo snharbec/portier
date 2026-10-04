@@ -44,18 +44,26 @@ pub async fn wake_due(state: &AppState) -> Result<usize> {
             .await?;
         let received: Vec<(i64, i64, String, Option<u32>)> = sqlx::query_as(
             "SELECT m.id, m.account_id, f.name, m.uid FROM messages m JOIN folders f ON f.id = m.folder_id
-             WHERE m.thread_id = ? AND m.is_outgoing = 0 AND f.role = 'inbox'",
+             WHERE m.thread_id = ? AND m.is_outgoing = 0 AND f.role IN ('inbox', 'feed', 'delayed')",
         )
         .bind(thread_id)
         .fetch_all(&state.db)
         .await?;
         sqlx::query(
             "UPDATE messages SET seen = 0 WHERE thread_id = ? AND is_outgoing = 0
-             AND folder_id IN (SELECT id FROM folders WHERE role = 'inbox')",
+             AND folder_id IN (SELECT id FROM folders WHERE role IN ('inbox', 'feed', 'delayed'))",
         )
         .bind(thread_id)
         .execute(&state.db)
         .await?;
+
+        // Where delayed mail waits in a folder of its own, the sync brings it back from there.
+        let mut accounts: Vec<i64> = received.iter().map(|(_, account_id, _, _)| *account_id).collect();
+        accounts.sort_unstable();
+        accounts.dedup();
+        for account_id in accounts {
+            state.wake_sync(account_id).await;
+        }
 
         let mut by_folder: HashMap<(i64, String), Vec<u32>> = HashMap::new();
         for (_, account_id, folder, uid) in received {

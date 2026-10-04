@@ -112,19 +112,21 @@ async fn session_loop(state: &AppState, account_id: i64, wake: &Notify) -> Resul
     }
 
     // Forget folders that are no longer configured.
-    sqlx::query("DELETE FROM folders WHERE account_id = ? AND name NOT IN (?, ?, ?, ?, ?, ?)")
+    sqlx::query("DELETE FROM folders WHERE account_id = ? AND name NOT IN (?, ?, ?, ?, ?, ?, ?, ?)")
         .bind(account.id)
         .bind(&account.inbox_folder)
         .bind(&account.junk_folder)
         .bind(&account.sent_folder)
         .bind(&account.archive_folder)
         .bind(&account.trash_folder)
+        .bind(&account.feed_folder)
+        .bind(&account.delayed_folder)
         .bind(LOCAL_SENT)
         .execute(&state.db)
         .await?;
 
     let inbox = store::ensure_folder(&state.db, account.id, &account.inbox_folder, "inbox").await?;
-    let mut folders = vec![inbox];
+    let mut folders = vec![inbox.clone()];
     if !account.sent_folder.is_empty() {
         folders.push(store::ensure_folder(&state.db, account.id, &account.sent_folder, "sent").await?);
     }
@@ -134,6 +136,22 @@ async fn session_loop(state: &AppState, account_id: i64, wake: &Notify) -> Resul
         Some(store::ensure_folder(&state.db, account.id, &account.junk_folder, "junk").await?)
     };
     folders.extend(junk.clone());
+    // The folders for "Nice to know" and delayed mail are the only ones Email Screen creates on
+    // the server.
+    let feed = if account.feed_folder.is_empty() {
+        None
+    } else {
+        imap::ensure_mailbox(&mut session, &account.feed_folder).await?;
+        Some(store::ensure_folder(&state.db, account.id, &account.feed_folder, "feed").await?)
+    };
+    folders.extend(feed.clone());
+    let delayed = if account.delayed_folder.is_empty() {
+        None
+    } else {
+        imap::ensure_mailbox(&mut session, &account.delayed_folder).await?;
+        Some(store::ensure_folder(&state.db, account.id, &account.delayed_folder, "delayed").await?)
+    };
+    folders.extend(delayed.clone());
     if !account.archive_folder.is_empty() {
         folders.push(store::ensure_folder(&state.db, account.id, &account.archive_folder, "archive").await?);
     }
@@ -148,6 +166,13 @@ async fn session_loop(state: &AppState, account_id: i64, wake: &Notify) -> Resul
         let mut inbox_state = (0, None);
         for folder in &folders {
             let folder_state = sync_folder(state, &mut session, &account, folder, junk.as_ref()).await?;
+            // Delayed first: a delayed conversation waits in its folder whoever sent it.
+            if let Some(delayed) = &delayed {
+                sort_delayed(state, &mut session, folder, &inbox, delayed).await?;
+            }
+            if let Some(feed) = &feed {
+                sort_feed(state, &mut session, folder, &inbox, feed).await?;
+            }
             if folder.role == "inbox" {
                 inbox_state = folder_state;
             }
@@ -294,6 +319,78 @@ async fn sync_folder(
     // What the folder looked like when this pass started; moves made above change it, which
     // makes the caller run one more pass.
     Ok((mailbox.exists, mailbox.uid_next))
+}
+
+/// Keeps "Nice to know" mail in its own folder: out of the inbox what such senders sent, and
+/// back to the inbox what sits in that folder from a sender who is no longer one of them.
+/// `folder` is the selected folder, just synced. Runs on every pass, so it also carries out a
+/// changed decision about a sender and catches up when the folder is first set.
+async fn sort_feed(
+    state: &AppState,
+    session: &mut Session,
+    folder: &Folder,
+    inbox: &Folder,
+    feed: &Folder,
+) -> Result<()> {
+    let (wanted, target) = match folder.role.as_str() {
+        "inbox" => ("s.category = 'feed'", feed),
+        "feed" => ("(s.category IS NULL OR s.category != 'feed')", inbox),
+        _ => return Ok(()),
+    };
+    let uids: Vec<u32> = sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
+        "SELECT m.uid FROM messages m LEFT JOIN senders s ON s.id = m.sender_id
+         WHERE m.folder_id = ? AND m.uid IS NOT NULL AND m.is_outgoing = 0 AND {wanted}"
+    )))
+    .bind(folder.id)
+    .fetch_all(&state.db)
+    .await?;
+    if !uids.is_empty() {
+        move_messages(state, session, folder, &uids, target).await?;
+    }
+    Ok(())
+}
+
+/// Keeps delayed conversations in their own folder: out of the inbox (and the "Nice to know"
+/// folder) while the delay lasts, back to the inbox once it is over. `folder` is the selected
+/// folder, just synced. Runs on every pass, like `sort_feed`.
+async fn sort_delayed(
+    state: &AppState,
+    session: &mut Session,
+    folder: &Folder,
+    inbox: &Folder,
+    delayed: &Folder,
+) -> Result<()> {
+    const WAITING: &str = "(t.snoozed_until IS NOT NULL AND t.snoozed_until > unixepoch())";
+    let (wanted, target) = match folder.role.as_str() {
+        "inbox" | "feed" => (WAITING.to_string(), delayed),
+        "delayed" => (format!("NOT {WAITING}"), inbox),
+        _ => return Ok(()),
+    };
+    // With each mail: whether its conversation came back because the delay ran out.
+    let rows: Vec<(u32, bool)> = sqlx::query_as(sqlx::AssertSqlSafe(format!(
+        "SELECT m.uid, t.returned_at IS NOT NULL FROM messages m JOIN threads t ON t.id = m.thread_id
+         WHERE m.folder_id = ? AND m.uid IS NOT NULL AND m.is_outgoing = 0 AND {wanted}"
+    )))
+    .bind(folder.id)
+    .fetch_all(&state.db)
+    .await?;
+    if rows.is_empty() {
+        return Ok(());
+    }
+    let uids: Vec<u32> = rows.iter().map(|(uid, _)| *uid).collect();
+    if folder.role == "delayed" {
+        // Returned mail arrives unseen, whatever happened to its mark while it waited.
+        let returned: Vec<u32> = rows.iter().filter(|(_, back)| *back).map(|(uid, _)| *uid).collect();
+        if !returned.is_empty() {
+            imap::set_seen(session, &returned, false).await?;
+            sqlx::query("UPDATE messages SET seen = 0 WHERE folder_id = ? AND uid IN (SELECT value FROM json_each(?))")
+                .bind(folder.id)
+                .bind(serde_json::to_string(&returned)?)
+                .execute(&state.db)
+                .await?;
+        }
+    }
+    move_messages(state, session, folder, &uids, target).await
 }
 
 /// Local rows as they were before a move: (message id, UID in the folder they left).

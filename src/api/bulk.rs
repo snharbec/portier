@@ -146,7 +146,10 @@ pub async fn apply(
 
 /// Important is the server's flag on mail in the inbox; other mail programs show it as flag or star.
 async fn set_flagged(state: &AppState, targets: &[Target], flagged: bool) -> ApiResult<usize> {
-    let in_inbox: Vec<&Target> = targets.iter().filter(|t| t.folder_role == "inbox").collect();
+    let in_inbox: Vec<&Target> = targets
+        .iter()
+        .filter(|t| matches!(t.folder_role.as_str(), "inbox" | "feed" | "delayed"))
+        .collect();
     let ids: Vec<i64> = in_inbox.iter().map(|t| t.id).collect();
     sqlx::query("UPDATE messages SET flagged = ? WHERE id IN (SELECT value FROM json_each(?))")
         .bind(flagged)
@@ -189,6 +192,13 @@ async fn set_delay(state: &AppState, user_id: i64, targets: &[Target], until: Op
     .bind(serde_json::to_string(&threads).map_err(anyhow::Error::from)?)
     .execute(&state.db)
     .await?;
+    // Where delayed mail has a folder of its own on the server, the sync moves it there or back.
+    let mut accounts: Vec<i64> = targets.iter().map(|t| t.account_id).collect();
+    accounts.sort_unstable();
+    accounts.dedup();
+    for account_id in accounts {
+        state.wake_sync(account_id).await;
+    }
     Ok(result.rows_affected() as usize)
 }
 
@@ -267,7 +277,7 @@ async fn file_away(state: &AppState, user_id: i64, targets: Vec<Target>, shelf: 
     let mut by_account: HashMap<i64, Vec<Target>> = HashMap::new();
     for target in targets {
         let movable = match shelf {
-            Shelf::Archive => matches!(target.folder_role.as_str(), "inbox" | "junk"),
+            Shelf::Archive => matches!(target.folder_role.as_str(), "inbox" | "junk" | "feed" | "delayed"),
             Shelf::Trash => target.folder_role != "trash",
             Shelf::Inbox | Shelf::Sent => target.folder_role == "trash",
         };
