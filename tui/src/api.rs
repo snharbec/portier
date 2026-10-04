@@ -143,8 +143,14 @@ pub struct Addr {
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct Attachment {
+    /// Its number within the mail, by which it is fetched.
+    #[serde(default)]
+    pub idx: i64,
     pub filename: String,
     pub size: i64,
+    /// image | pdf | office | other
+    #[serde(default)]
+    pub kind: String,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -338,6 +344,25 @@ impl Client {
             .await
             .with_context(|| format!("cannot reach {}", self.base))?;
         Self::answer(response).await
+    }
+
+    /// The bytes behind an address of the API: an attachment, a sender's picture.
+    pub async fn bytes(&self, path: &str) -> Result<Vec<u8>> {
+        let response = self
+            .http
+            .get(format!("{}/api{path}", self.base))
+            .header(reqwest::header::COOKIE, self.cookie())
+            .timeout(Duration::from_secs(120))
+            .send()
+            .await
+            .with_context(|| format!("cannot reach {}", self.base))?;
+        if response.status() == reqwest::StatusCode::UNAUTHORIZED {
+            return Err(SignedOut.into());
+        }
+        if !response.status().is_success() {
+            bail!("{}", error_text(response).await);
+        }
+        Ok(response.bytes().await?.to_vec())
     }
 
     /// Sends a file of this computer as an attachment of a draft.

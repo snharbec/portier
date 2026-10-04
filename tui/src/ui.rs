@@ -143,9 +143,16 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
         Mode::Search { text } => input(frame, bottom, " Search: ", text),
         Mode::Name { text } => input(frame, bottom, " Name for the side bar: ", text),
         Mode::Folders { names, cursor, .. } => folders(frame, area, names, *cursor),
+        _ if app.files.is_some() || app.viewing.is_some() => {}
         Mode::Normal | Mode::Delay => {}
     }
 
+    if let Some(files) = &app.files {
+        attachments(frame, area, files, app.picker.is_some());
+    }
+    if app.viewing.is_some() {
+        picture(frame, app, middle, bottom);
+    }
     if app.help {
         help(frame, area);
     }
@@ -673,6 +680,14 @@ fn mail(frame: &mut Frame, app: &mut App, area: Rect, beside: bool) {
 
     // Text is easier to read in a column than across a very wide terminal.
     let width = (inner.width as usize).min(100);
+    // The sender's picture sits at the top right; the text keeps clear of it.
+    const PICTURE: (u16, u16) = (8, 4);
+    let pictured = open.picture.is_some() && app.picker.is_some() && inner.height >= 10 && width >= 50;
+    let width = if pictured {
+        width - PICTURE.0 as usize - 2
+    } else {
+        width
+    };
     let lines = conversation(&open.thread, width, open.all, &open.unseen_at_open);
     let height = inner.height as usize;
     app.page = height;
@@ -680,6 +695,19 @@ fn mail(frame: &mut Frame, app: &mut App, area: Rect, beside: bool) {
     open.scroll = open.scroll.min(lines.len().saturating_sub(height));
     let shown: Vec<Line> = lines.into_iter().skip(open.scroll).take(height).collect();
     frame.render_widget(Paragraph::new(shown), inner);
+    if pictured && open.scroll == 0 {
+        let spot = Rect {
+            x: inner.x + width as u16 + 2,
+            y: inner.y,
+            width: PICTURE.0,
+            height: PICTURE.1,
+        };
+        if let (Some(picker), Some(picture)) = (&app.picker, &mut open.picture)
+            && let Some(protocol) = picture.fitted(picker, spot)
+        {
+            frame.render_widget(ratatui_image::Image::new(protocol), spot);
+        }
+    }
 
     // Where in the mail the reader is, when it does not fit.
     if app.lines > height {
@@ -778,6 +806,7 @@ const KEYS: &[(&str, &[(&str, &str)])] = &[
             ("Backspace", "Page up (also Ctrl ↑, PgUp)"),
             ("x", "All mails of the conversation in full, or only the newest"),
             ("o", "Open the mail in the web browser"),
+            ("Shift A", "Attachments: Enter shows or opens one, s saves it"),
             ("Esc", "Close the mail"),
         ],
     ),
@@ -825,6 +854,68 @@ fn help(frame: &mut Frame, area: Rect) {
         Layout::horizontal([Constraint::Percentage(50), Constraint::Percentage(50)]).areas(inner);
     frame.render_widget(Paragraph::new(lines), left_area);
     frame.render_widget(Paragraph::new(right), right_area);
+}
+
+/// The attachments of the opened conversation.
+fn attachments(frame: &mut Frame, area: Rect, files: &crate::app::Files, pictures: bool) {
+    let height = (files.items.len() as u16 + 2).min(area.height.saturating_sub(2)).max(3);
+    let popup = centered(area, 70.min(area.width.saturating_sub(2)), height);
+    let rows = height.saturating_sub(2) as usize;
+    let first = if files.cursor < rows {
+        0
+    } else {
+        files.cursor + 1 - rows
+    };
+    let room = popup.width.saturating_sub(14) as usize;
+    let lines: Vec<Line> = files
+        .items
+        .iter()
+        .enumerate()
+        .skip(first)
+        .take(rows)
+        .map(|(index, file)| {
+            let size = format!("{} KB", (file.size + 1023) / 1024);
+            let line = Line::from(vec![
+                Span::raw(format!(" {} ", cell(&file.name, room))),
+                Span::styled(format!("{size:>9} "), Style::default().fg(SOFT)),
+            ]);
+            if index == files.cursor {
+                line.style(Style::default().add_modifier(Modifier::REVERSED))
+            } else {
+                line
+            }
+        })
+        .collect();
+    let keys = if pictures {
+        " Enter shows or opens, o opens, s saves, Esc closes "
+    } else {
+        " Enter opens, s saves to Downloads, Esc closes "
+    };
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .title(" Attachments ")
+        .title_bottom(keys);
+    frame.render_widget(Clear, popup);
+    frame.render_widget(Paragraph::new(lines).block(block), popup);
+}
+
+/// An image attachment, as large as the window allows.
+fn picture(frame: &mut Frame, app: &mut App, area: Rect, bottom: Rect) {
+    frame.render_widget(Clear, area);
+    let Some(viewing) = &mut app.viewing else { return };
+    let caption = Line::styled(format!(" {}   any key closes", viewing.name), Style::default().fg(SOFT));
+    frame.render_widget(Clear, bottom);
+    frame.render_widget(Paragraph::new(caption), bottom);
+    let spot = Rect {
+        x: area.x + 1,
+        width: area.width.saturating_sub(2),
+        ..area
+    };
+    if let Some(picker) = &app.picker
+        && let Some(protocol) = viewing.picture.fitted(picker, spot)
+    {
+        frame.render_widget(ratatui_image::Image::new(protocol), spot);
+    }
 }
 
 /// The folders of the mail account, to choose where mail moves to.

@@ -10,6 +10,7 @@ use crate::api::{
     Client, Counts, Draft, Message, SavedSearch, ScreenerEntry, SearchHit, Thread, ThreadSummary, display_name,
 };
 use crate::compose::Compose;
+use crate::pictures::{Picture, free_path, safe_name};
 
 /// The lists of the side bar, in the web client's order.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -198,10 +199,38 @@ pub struct Open {
     /// Show every mail of the conversation in full.
     pub all: bool,
     pub unseen_at_open: HashSet<i64>,
+    /// The sender's picture, where the terminal can show one.
+    pub picture: Option<Picture>,
+}
+
+/// One attachment of the opened conversation.
+#[derive(Clone)]
+pub struct File {
+    pub message: i64,
+    pub idx: i64,
+    pub name: String,
+    pub size: i64,
+    pub image: bool,
+}
+
+/// The attachments of the opened conversation, to open or save one.
+pub struct Files {
+    pub items: Vec<File>,
+    pub cursor: usize,
+}
+
+/// An image attachment shown in the terminal.
+pub struct Viewing {
+    pub name: String,
+    pub picture: Picture,
 }
 
 pub struct App {
     pub(crate) client: Client,
+    /// How pictures are drawn in this terminal; `None` when they are not.
+    pub picker: Option<ratatui_image::picker::Picker>,
+    pub files: Option<Files>,
+    pub viewing: Option<Viewing>,
     /// The mail being written, if one is.
     pub compose: Option<Compose>,
     /// The text of the draft is to be handed to the reader's own editor.
@@ -250,6 +279,9 @@ impl App {
     pub async fn new(client: Client, user: String) -> Result<Self> {
         let mut app = Self {
             client,
+            picker: None,
+            files: None,
+            viewing: None,
             compose: None,
             wants_editor: false,
             user,
@@ -600,11 +632,22 @@ impl App {
         if was_unseen && self.split != Split::Off && !self.held.contains(&id) {
             self.held.push(id);
         }
+        // The sender's picture, fetched only where it can be shown.
+        let picture = match (&self.picker, thread.sender.as_ref()) {
+            (Some(_), Some(sender)) => self
+                .client
+                .bytes(&format!("/avatar?address={}", encode(&sender.address)))
+                .await
+                .ok()
+                .and_then(|bytes| Picture::decode(&bytes)),
+            _ => None,
+        };
         self.open = Some(Open {
             thread,
             scroll: 0,
             all: false,
             unseen_at_open,
+            picture,
         });
         if read_now {
             // The list and the counts show it as seen.
@@ -749,6 +792,13 @@ impl App {
         }
         if self.compose.is_some() {
             return self.compose_key(key).await;
+        }
+        if self.viewing.take().is_some() {
+            // Any key closes the picture.
+            return Ok(());
+        }
+        if self.files.is_some() {
+            return self.files_key(key).await;
         }
         match std::mem::replace(&mut self.mode, Mode::Normal) {
             Mode::Normal => {}
@@ -919,6 +969,31 @@ impl App {
                 if let Some(open) = &mut self.open {
                     open.all = !open.all;
                     open.scroll = 0;
+                }
+            }
+            KeyCode::Char('A') => {
+                // The attachments of the opened conversation.
+                let items: Vec<File> = self
+                    .open
+                    .iter()
+                    .flat_map(|open| &open.thread.messages)
+                    .flat_map(|message| {
+                        message.attachments.iter().map(|file| File {
+                            message: message.id,
+                            idx: file.idx,
+                            // The name as it would be saved: without any path a mail gave it.
+                            name: safe_name(&file.filename),
+                            size: file.size,
+                            image: file.kind == "image",
+                        })
+                    })
+                    .collect();
+                if items.is_empty() {
+                    if self.open.is_some() {
+                        self.status = "This conversation has no attachments".into();
+                    }
+                } else {
+                    self.files = Some(Files { items, cursor: 0 });
                 }
             }
             KeyCode::Char('o') => {
@@ -1140,6 +1215,62 @@ impl App {
             _ => self.mode = Mode::Folders { account, names, cursor },
         }
         Ok(())
+    }
+
+    /// Keys on the list of attachments: Enter shows or opens one, `s` saves it.
+    async fn files_key(&mut self, key: KeyEvent) -> Result<()> {
+        let Some(files) = &mut self.files else { return Ok(()) };
+        let file = files.items[files.cursor].clone();
+        match key.code {
+            KeyCode::Esc | KeyCode::Char('q') => self.files = None,
+            KeyCode::Down | KeyCode::Char('j') => files.cursor = (files.cursor + 1).min(files.items.len() - 1),
+            KeyCode::Up | KeyCode::Char('k') => files.cursor = files.cursor.saturating_sub(1),
+            KeyCode::Char('s') => {
+                let bytes = self.fetch_file(&file).await?;
+                let home = std::env::var_os("HOME")
+                    .map(std::path::PathBuf::from)
+                    .unwrap_or_default();
+                let downloads = home.join("Downloads");
+                let dir = if downloads.is_dir() { downloads } else { home };
+                let path = free_path(&dir, &safe_name(&file.name));
+                std::fs::write(&path, bytes)?;
+                self.status = format!("Saved as {}", path.display());
+            }
+            KeyCode::Enter | KeyCode::Char('o') => {
+                let bytes = self.fetch_file(&file).await?;
+                // An image is shown right here where the terminal can; Enter asks for that.
+                let shown = match (&self.picker, file.image && key.code == KeyCode::Enter) {
+                    (Some(_), true) => Picture::decode(&bytes),
+                    _ => None,
+                };
+                match shown {
+                    Some(picture) => {
+                        self.files = None;
+                        self.viewing = Some(Viewing {
+                            name: file.name.clone(),
+                            picture,
+                        });
+                    }
+                    None => {
+                        // Everything else goes to the program this computer opens such files with.
+                        let dir = std::env::temp_dir().join(format!("portier-{}", std::process::id()));
+                        std::fs::create_dir_all(&dir)?;
+                        let path = free_path(&dir, &safe_name(&file.name));
+                        std::fs::write(&path, bytes)?;
+                        open_in_browser(&path.to_string_lossy());
+                        self.status = format!("Opened {}", file.name);
+                    }
+                }
+            }
+            _ => {}
+        }
+        Ok(())
+    }
+
+    async fn fetch_file(&self, file: &File) -> Result<Vec<u8>> {
+        self.client
+            .bytes(&format!("/messages/{}/attachments/{}", file.message, file.idx))
+            .await
     }
 
     /// Keys while the mails of a list are read on one page.

@@ -117,9 +117,17 @@ its path, `Ctrl+O` shows the mail being answered, and `Ctrl+E` hands the text to
 (`$VISUAL`, `$EDITOR`, else vi). The text is plain and is sent as simple paragraphs; a draft that
 was given formatting in the web client loses it when edited here.
 
-Mails written as HTML are shown as text with their links; pictures and designed layouts are
-not. `o` opens such a mail in the browser. Mail accounts, users and the other settings are
-managed in the web client.
+`Shift+A` lists the attachments of the opened conversation: Enter opens one with the program
+your computer uses for it, `s` saves it to Downloads (never over an existing file).
+
+In terminals that draw pictures (kitty, iTerm2, WezTerm, Ghostty, and others with sixel) the
+sender's picture is shown on the opened mail, and Enter on an image attachment shows the image
+in the terminal. `PORTIER_TUI_IMAGES` changes that: `off` shows none, `on` tries in a terminal
+the client does not know, `blocks` draws coarse pictures from block characters anywhere.
+
+Mails written as HTML are shown as text with their links; designed layouts and pictures inside
+the mail text are not. `o` opens such a mail in the browser. Mail accounts, users and the other
+settings are managed in the web client.
 
 ## Configuration (environment)
 

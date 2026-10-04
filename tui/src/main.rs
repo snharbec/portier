@@ -3,6 +3,7 @@
 mod api;
 mod app;
 mod compose;
+mod pictures;
 mod text;
 mod ui;
 
@@ -137,7 +138,10 @@ fn print_screen(app: &mut App, width: u16, height: u16) -> Result<()> {
     for y in 0..height {
         let mut line = String::new();
         for x in 0..width {
-            line.push_str(buffer[(x, y)].symbol());
+            let cell = &buffer[(x, y)];
+            // A cell that is only colour (a picture drawn with blocks) would not show as text.
+            let picture = cell.symbol() == " " && matches!(cell.bg, ratatui::style::Color::Rgb(..));
+            line.push_str(if picture { "█" } else { cell.symbol() });
         }
         println!("{}", line.trim_end());
     }
@@ -145,6 +149,9 @@ fn print_screen(app: &mut App, width: u16, height: u16) -> Result<()> {
 }
 
 async fn interactive(app: &mut App, client: Client) -> Result<()> {
+    let mut terminal = ratatui::init();
+    // Asked before anything else reads the terminal: the answer comes in on the same way keys do.
+    app.picker = pictures::picker(true);
     let (changed_tx, mut changed) = tokio::sync::mpsc::unbounded_channel();
     tokio::spawn(client.watch(changed_tx));
     // The terminal's keys are read on a thread of their own: reading blocks.
@@ -157,7 +164,6 @@ async fn interactive(app: &mut App, client: Client) -> Result<()> {
         }
     });
 
-    let mut terminal = ratatui::init();
     let result: Result<()> = async {
         while !app.quit {
             terminal.draw(|frame| ui::draw(frame, app))?;
@@ -230,6 +236,7 @@ async fn main() -> Result<()> {
     let (client, user) = sign_in(url).await?;
     let mut app = App::new(client.clone(), user).await?;
     if let Some((width, height)) = print {
+        app.picker = pictures::picker(false);
         // Keys are pressed one screen at a time: paging needs to know how tall the mail is.
         for key in split_keys(&script) {
             print_screen_silently(&mut app, width, height)?;
