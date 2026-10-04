@@ -1,4 +1,6 @@
 <script lang="ts">
+	import { page } from '$app/state';
+	import { untrack } from 'svelte';
 	import { api, type ThreadSummary } from '#lib/api.ts';
 	import { app } from '#lib/app.svelte.ts';
 	import SelectAll from '#lib/components/SelectAll.svelte';
@@ -25,8 +27,22 @@
 			.catch((e) => (error = e.message));
 	});
 
-	const unseen = $derived(threads?.filter((t) => t.unread > 0) ?? []);
-	const seen = $derived(threads?.filter((t) => t.unread === 0) ?? []);
+	// In split view, opening an unseen mail makes it seen at once. Mails read this way keep their
+	// place in the Unseen area for as long as the mail area stays open, so that the arrow keys go
+	// on to the unseen mail after them and the list does not shuffle under the reader. Closing
+	// the mail area files them under Seen.
+	const openId = $derived(app.splitActive ? Number(page.url.searchParams.get('open')) : 0);
+	let held = $state<number[]>([]);
+	$effect(() => {
+		const id = openId;
+		untrack(() => {
+			if (!id) held = [];
+			else if (!held.includes(id) && threads?.some((t) => t.id === id && t.unread > 0)) held.push(id);
+		});
+	});
+
+	const unseen = $derived(threads?.filter((t) => t.unread > 0 || held.includes(t.id)) ?? []);
+	const seen = $derived(threads?.filter((t) => t.unread === 0 && !held.includes(t.id)) ?? []);
 	const areas = $derived([
 		{ id: 'unseen', title: 'Unseen', list: unseen, empty: 'No unseen messages. Area is empty.' },
 		{ id: 'important', title: 'Important', list: flagged ?? [], empty: 'No flagged messages. Area is empty.' },
@@ -106,7 +122,8 @@
 			<summary>
 				<svg viewBox="0 0 12 8" aria-hidden="true"><path d="M1 1.5 6 6.5l5-5" /></svg>
 				<h2>{area.title}</h2>
-				<span class="count">{area.list.length}</span>
+				<!-- Mails only kept in place while reading (see `held`) are not counted as unseen. -->
+				<span class="count">{area.id === 'unseen' ? area.list.filter((t) => t.unread > 0).length : area.list.length}</span>
 			</summary>
 			{#if area.list.length}
 				<ThreadList threads={area.list} {selection} {sequence} />
