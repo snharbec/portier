@@ -11,7 +11,7 @@ use ratatui::{
 use unicode_width::UnicodeWidthStr;
 
 use crate::{
-    app::{App, Focus, Place, Row, Split},
+    app::{App, Focus, Mode, Place, Row, Split},
     text::{ACCENT, SIGNAL, SOFT, cell, conversation, fit, short_date},
 };
 
@@ -65,16 +65,55 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
 
     let hint = if app.status.is_empty() {
         // As many hints as fit, the most needed first.
-        let hints = [
-            "? keys",
-            "↑↓ mail",
-            "Enter open",
-            "Esc close",
-            "Space page",
-            "s split",
-            "Tab side bar",
-            "q quit",
-        ];
+        let hints: &[&str] = if app.selecting {
+            &[
+                "Space tick",
+                "* all",
+                "a archive",
+                "d trash",
+                "u unseen",
+                "i important",
+                "z delay",
+                "m move",
+                "Esc stop",
+            ]
+        } else if app.place == Place::Screener {
+            &[
+                "? keys",
+                "Enter read",
+                "i Home",
+                "n Nice to know",
+                "J Junk",
+                "Esc close",
+                "q quit",
+            ]
+        } else if app.open.is_some() {
+            &[
+                "? keys",
+                "↑↓ mail",
+                "Space page",
+                "a archive",
+                "d trash",
+                "u unseen",
+                "i important",
+                "z delay",
+                "t note",
+                "Esc close",
+            ]
+        } else {
+            &[
+                "? keys",
+                "↑↓ mail",
+                "Enter open",
+                "a archive",
+                "d trash",
+                "t note",
+                "v select",
+                "s split",
+                "Tab side bar",
+                "q quit",
+            ]
+        };
         let mut text = String::new();
         for hint in hints {
             if text.width() + hint.width() + 3 > area.width as usize {
@@ -88,6 +127,28 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
         Line::raw(format!(" {}", fit(&app.status, area.width.saturating_sub(2) as usize)))
     };
     frame.render_widget(Paragraph::new(hint), bottom);
+
+    match &app.mode {
+        Mode::Note { text, .. } => {
+            // The note is written on the bottom line, with the cursor at its end.
+            let label = " Note: ";
+            let room = (area.width as usize).saturating_sub(label.width() + 1);
+            // The end of a long note stays in view while typing.
+            let mut shown = text.clone();
+            while shown.width() > room {
+                shown.remove(0);
+            }
+            let line = Line::from(vec![
+                Span::styled(label, Style::default().fg(SIGNAL).add_modifier(Modifier::BOLD)),
+                Span::raw(shown.clone()),
+            ]);
+            frame.render_widget(Clear, bottom);
+            frame.render_widget(Paragraph::new(line), bottom);
+            frame.set_cursor_position((bottom.x + (label.width() + shown.width()) as u16, bottom.y));
+        }
+        Mode::Folders { names, cursor, .. } => folders(frame, area, names, *cursor),
+        Mode::Normal | Mode::Delay => {}
+    }
 
     if app.help {
         help(frame, area);
@@ -224,8 +285,27 @@ fn list(frame: &mut Frame, app: &App, area: Rect) {
                 ),
                 Span::styled(format!(" {count}"), Style::default().fg(SOFT)),
             ]),
-            Row::Mail(thread) => mail_row(thread, width, now, open_id == Some(thread.id)),
-            Row::Entry { who, text, date } => {
+            Row::Mail(thread) => {
+                let mut line = mail_row(
+                    thread,
+                    width.saturating_sub(if app.selecting { 4 } else { 0 }),
+                    now,
+                    open_id == Some(thread.id),
+                );
+                if app.selecting {
+                    // The tick of the selection, in front of the row.
+                    let ticked = app.selected.contains(&thread.id);
+                    let style = if ticked {
+                        Style::default().fg(ACCENT).add_modifier(Modifier::BOLD)
+                    } else {
+                        Style::default().fg(SOFT)
+                    };
+                    line.spans
+                        .insert(0, Span::styled(if ticked { "[x] " } else { "[ ] " }, style));
+                }
+                line
+            }
+            Row::Entry { who, text, date, .. } => {
                 let date = short_date(*date, now);
                 let room = width.saturating_sub(2 + 28 + 1 + date.width() + 1);
                 Line::from(vec![
@@ -314,12 +394,35 @@ const KEYS: &[(&str, &[(&str, &str)])] = &[
         ],
     ),
     (
+        "Acting on mail: opened, under the cursor, or ticked",
+        &[
+            ("a", "Archive"),
+            ("d", "Move to Trash"),
+            ("b", "Move back to Home, out of the Trash"),
+            ("u", "Mark as unseen; an unseen mail in the list: as seen"),
+            ("i", "Move to Important, or back to Home"),
+            ("z", "Delay, then 1 2 3 7 for the days; delayed mail: back to Home"),
+            ("t", "Add or edit your note (Enter saves, Esc cancels)"),
+            ("m", "Move to a folder of the mail account"),
+            ("v", "Select several: Space ticks, * ticks all, Esc stops"),
+        ],
+    ),
+    (
+        "Screener",
+        &[
+            ("Enter", "Read the sender's newest mail"),
+            ("i", "Sender goes to Home"),
+            ("n", "Sender is nice to know"),
+            ("Shift J", "Sender is junk"),
+        ],
+    ),
+    (
         "Reading a mail",
         &[
             ("↓ ↑", "Next, previous mail"),
             ("Space", "Page down (also Ctrl ↓, PgDn)"),
             ("Backspace", "Page up (also Ctrl ↑, PgUp)"),
-            ("x", "Show every mail of the conversation in full, or only the newest"),
+            ("x", "All mails of the conversation in full, or only the newest"),
             ("o", "Open the mail in the web browser"),
             ("Esc", "Close the mail"),
         ],
@@ -339,13 +442,61 @@ fn help(frame: &mut Frame, area: Rect) {
         lines.push(Line::raw(""));
     }
     lines.pop();
-    let width = 76.min(area.width.saturating_sub(2));
-    let height = (lines.len() as u16 + 2).min(area.height);
-    let popup = centered(area, width, height);
     let block = Block::default()
         .borders(Borders::ALL)
         .title(" Keyboard shortcuts ")
         .title_bottom(" any key closes ");
+    // One column when it fits the height, else two side by side.
+    let tall = lines.len() as u16 + 2;
+    if tall <= area.height || area.width < 120 {
+        let popup = centered(area, 84.min(area.width.saturating_sub(2)), tall.min(area.height));
+        frame.render_widget(Clear, popup);
+        frame.render_widget(Paragraph::new(lines).block(block), popup);
+        return;
+    }
+    // Split at the blank line nearest the middle, so no group is torn apart.
+    let middle = lines.len() / 2;
+    let cut = (0..lines.len())
+        .filter(|&index| lines[index].spans.iter().all(|span| span.content.is_empty()))
+        .min_by_key(|&index| index.abs_diff(middle))
+        .unwrap_or(middle);
+    let right = lines.split_off(cut + 1);
+    lines.pop();
+    let height = (lines.len().max(right.len()) as u16 + 2).min(area.height);
+    let popup = centered(area, 150.min(area.width.saturating_sub(2)), height);
+    frame.render_widget(Clear, popup);
+    let inner = block.inner(popup);
+    frame.render_widget(block, popup);
+    let [left_area, right_area] =
+        Layout::horizontal([Constraint::Percentage(50), Constraint::Percentage(50)]).areas(inner);
+    frame.render_widget(Paragraph::new(lines), left_area);
+    frame.render_widget(Paragraph::new(right), right_area);
+}
+
+/// The folders of the mail account, to choose where mail moves to.
+fn folders(frame: &mut Frame, area: Rect, names: &[String], cursor: usize) {
+    let height = (names.len() as u16 + 2).min(area.height.saturating_sub(2)).max(3);
+    let popup = centered(area, 50.min(area.width.saturating_sub(2)), height);
+    let rows = height.saturating_sub(2) as usize;
+    let first = if cursor < rows { 0 } else { cursor + 1 - rows };
+    let lines: Vec<Line> = names
+        .iter()
+        .enumerate()
+        .skip(first)
+        .take(rows)
+        .map(|(index, name)| {
+            let line = Line::raw(format!(" {name}"));
+            if index == cursor {
+                line.style(Style::default().add_modifier(Modifier::REVERSED))
+            } else {
+                line
+            }
+        })
+        .collect();
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .title(" Move to folder ")
+        .title_bottom(" Enter moves, Esc cancels ");
     frame.render_widget(Clear, popup);
     frame.render_widget(Paragraph::new(lines).block(block), popup);
 }

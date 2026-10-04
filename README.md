@@ -91,12 +91,18 @@ and needs nothing else.
 The first start asks for the server address, email and password; after that the session is kept
 in `~/.config/portier/session.json` (readable by you only; `--logout` forgets it).
 
-So far it is a reader: the side bar with its counts, every list (Home with its Unseen, Important
-and Seen areas), the conversation view, split view beside or below the list, and live updates.
-Keys are those of the web client where they exist (`?` lists them): arrows for the next and
-previous mail, Enter, Space and Backspace to page, `Shift+H` / `I` / `D` / `N` for the lists,
-`s` for the split view, `o` to open the mail in the web browser. Acting on mail (archive, trash,
-delay, notes), search and writing mail are done in the web client for now.
+It shows the side bar with its counts, every list (Home with its Unseen, Important and Seen
+areas), the conversation view, split view beside or below the list, and live updates. Keys are
+those of the web client where they exist (`?` lists them): arrows for the next and previous mail,
+Enter, Space and Backspace to page, `Shift+H` / `I` / `D` / `N` for the lists, `s` for the split
+view, `o` to open the mail in the web browser.
+
+Mail is acted on with the same letters: `a` archive, `d` move to Trash, `u` unseen, `i` important,
+`z` delay (then `1`, `2`, `3` or `7`), `t` note; also `b` to move mail back out of the Trash and
+`m` to move it to a folder. They apply to the opened mail, to the one under the cursor, or, after
+`v`, to the mails ticked with Space. In the Screener, Enter reads a waiting sender's mail and
+`i`, `n` or `Shift+J` sends them to Home, Nice to know or Junk. Search and writing mail are done
+in the web client for now.
 
 Mails written as HTML are shown as text with their links; pictures and designed layouts are
 not. `o` opens such a mail in the browser.

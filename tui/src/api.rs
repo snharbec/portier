@@ -35,6 +35,7 @@ pub struct ThreadSummary {
     pub from_name: String,
     pub from_addr: String,
     pub is_outgoing: bool,
+    pub account_id: i64,
     pub sender_name: Option<String>,
     pub sender_address: Option<String>,
     pub snoozed_until: Option<i64>,
@@ -100,6 +101,14 @@ pub struct SenderHead {
 #[derive(Debug, Clone, Deserialize)]
 pub struct Thread {
     pub id: i64,
+    /// Some received mail of it is still in the inbox, so it can be archived or delayed.
+    pub can_archive: bool,
+    /// Some mail of it is not in the Trash yet.
+    pub can_trash: bool,
+    /// Some mail of it is in the Trash and can be moved back.
+    pub can_restore: bool,
+    /// It is in the Important list.
+    pub important: bool,
     pub subject: String,
     pub snoozed_until: Option<i64>,
     #[serde(default)]
@@ -110,6 +119,10 @@ pub struct Thread {
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct ScreenerEntry {
+    /// The sender, for deciding where their mail goes.
+    pub id: i64,
+    /// Their newest conversation, to read before deciding.
+    pub thread_id: i64,
     pub address: String,
     pub display_name: String,
     pub count: i64,
@@ -220,6 +233,19 @@ impl Client {
         let response = self
             .http
             .post(format!("{}/api{path}", self.base))
+            .header(reqwest::header::COOKIE, self.cookie())
+            .timeout(Duration::from_secs(30))
+            .json(&body)
+            .send()
+            .await
+            .with_context(|| format!("cannot reach {}", self.base))?;
+        Self::answer(response).await
+    }
+
+    pub async fn put<T: DeserializeOwned>(&self, path: &str, body: Value) -> Result<T> {
+        let response = self
+            .http
+            .put(format!("{}/api{path}", self.base))
             .header(reqwest::header::COOKIE, self.cookie())
             .timeout(Duration::from_secs(30))
             .json(&body)
