@@ -80,20 +80,43 @@ The frontend is embedded in the binary, so build `web/` before `cargo build`. Op
 http://127.0.0.1:8080. The first user to register manages the installation and can add
 further users under Settings.
 
+## Terminal client
+
+`portier-tui` shows the same lists and mails in a terminal. It talks to a running Portier server
+and needs nothing else.
+
+    cargo build --release -p portier-tui
+    ./target/release/portier-tui --url http://127.0.0.1:8080
+
+The first start asks for the server address, email and password; after that the session is kept
+in `~/.config/portier/session.json` (readable by you only; `--logout` forgets it).
+
+So far it is a reader: the side bar with its counts, every list (Home with its Unseen, Important
+and Seen areas), the conversation view, split view beside or below the list, and live updates.
+Keys are those of the web client where they exist (`?` lists them): arrows for the next and
+previous mail, Enter, Space and Backspace to page, `Shift+H` / `I` / `D` / `N` for the lists,
+`s` for the split view, `o` to open the mail in the web browser. Acting on mail (archive, trash,
+delay, notes), search and writing mail are done in the web client for now.
+
+Mails written as HTML are shown as text with their links; pictures and designed layouts are
+not. `o` opens such a mail in the browser.
+
 ## Configuration (environment)
 
-The variables, the database file `emscreen.db` and the session cookie carry the app's earlier
-name, emscreen. They were kept so that an existing installation goes on working unchanged.
+The app was called emscreen before. Each variable is still read under its earlier name too
+(`EMSCREEN_BIND` and so on) when the `PORTIER_` one is not set. The database file `emscreen.db`
+and the session cookie keep the earlier name, so an existing installation goes on working
+unchanged.
 
 | Variable | Default | Meaning |
 |---|---|---|
-| `EMSCREEN_BIND` | `127.0.0.1:8080` | Listen address |
-| `EMSCREEN_DATA_DIR` | `data` | SQLite database, raw mail, drafts, key file |
-| `EMSCREEN_MASTER_KEY` | generated in `<data dir>/master.key` | Base64 of 32 bytes; encrypts mail account passwords |
-| `EMSCREEN_OPEN_REGISTRATION` | off | `1` lets anyone create a user |
-| `EMSCREEN_SYNC_MAX_PER_FOLDER` | `5000` | Newest messages mirrored per folder |
-| `EMSCREEN_SOFFICE` | found automatically | Path to LibreOffice's `soffice`, or `off` |
-| `EMSCREEN_AVATARS` | on | `off` stops looking up sender pictures |
+| `PORTIER_BIND` | `127.0.0.1:8080` | Listen address |
+| `PORTIER_DATA_DIR` | `data` | SQLite database, raw mail, drafts, key file |
+| `PORTIER_MASTER_KEY` | generated in `<data dir>/master.key` | Base64 of 32 bytes; encrypts mail account passwords |
+| `PORTIER_OPEN_REGISTRATION` | off | `1` lets anyone create a user |
+| `PORTIER_SYNC_MAX_PER_FOLDER` | `5000` | Newest messages mirrored per folder |
+| `PORTIER_SOFFICE` | found automatically | Path to LibreOffice's `soffice`, or `off` |
+| `PORTIER_AVATARS` | on | `off` stops looking up sender pictures |
 
 Serve it behind HTTPS (reverse proxy) when it is reachable from other machines. Keep
 `master.key` with your backups: without it the stored account passwords cannot be read.
@@ -106,7 +129,7 @@ is cached in the database (pictures for 30 days, misses for 3), so each sender i
 
 These lookups leave your server: Gravatar receives a hash of the sender's address, your DNS
 resolver sees the sender's domain, and the logo is fetched from the address the domain names.
-Logo addresses must be https and resolve to public addresses only. Set `EMSCREEN_AVATARS=off`
+Logo addresses must be https and resolve to public addresses only. Set `PORTIER_AVATARS=off`
 to keep initials and make no such requests.
 
 ## Previews of Office documents
@@ -119,7 +142,7 @@ LibreOffice. It is optional: without it those files appear as plain tiles and ca
 
 Portier looks for `soffice` on the PATH and in `/Applications/LibreOffice.app` at start-up.
 Conversion runs headless, one document at a time, on a copy of the file in a throwaway directory.
-It still means LibreOffice opens files that strangers sent you. Set `EMSCREEN_SOFFICE=off` if
+It still means LibreOffice opens files that strangers sent you. Set `PORTIER_SOFFICE=off` if
 you do not want that.
 
 ## Development

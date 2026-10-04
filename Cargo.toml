@@ -38,3 +38,8 @@ webpki-roots = "1.0.9"
 [dev-dependencies]
 http-body-util = "0.1.5"
 tower = { version = "0.5.3", features = ["util"] }
+
+# The server is the package above; the terminal client lives beside it.
+[workspace]
+members = [".", "tui"]
+default-members = ["."]
