@@ -1,4 +1,4 @@
-//! The search box language: free text plus `from:`, `to:`, `subject:` (or `title:`),
+//! The search box language: free text plus `from:`, `to:`, `subject:` (or `title:`), `note:`,
 //! `attachment:` and `received:` filters.
 //!
 //! Different filters narrow the search together (AND). The same filter given several times
@@ -13,6 +13,10 @@ pub struct SearchQuery {
     pub from: Vec<String>,
     pub to: Vec<String>,
     pub subject: Vec<String>,
+    /// Words looked for in your own notes on conversations.
+    pub note: Vec<String>,
+    /// `note:` without a word: conversations that have any note.
+    pub noted: bool,
     /// `None` when not asked for, or when both `true` and `false` were given (which is every mail).
     pub attachment: Option<bool>,
     /// Periods as first and last day, both included. Either end may be open.
@@ -151,6 +155,8 @@ pub fn parse(input: &str, today: NaiveDate) -> Result<SearchQuery, String> {
             "from" if !value.is_empty() => query.from.push(value),
             "to" if !value.is_empty() => query.to.push(value),
             "subject" | "title" if !value.is_empty() => query.subject.push(value),
+            "note" | "notes" if value.is_empty() => query.noted = true,
+            "note" | "notes" => query.note.push(value),
             "attachment" | "attachments" => match value.to_lowercase().as_str() {
                 "true" | "yes" | "1" | "" => with_attachment = true,
                 "false" | "no" | "0" => without_attachment = true,

@@ -238,6 +238,8 @@ pub struct ThreadRow {
     sender_address: Option<String>,
     /// When a delayed conversation returns to the inbox.
     snoozed_until: Option<i64>,
+    /// Your own note on the conversation; empty when there is none.
+    note: String,
 }
 
 /// SQL conditions on a thread `t`, shared by the lists, the counts and the one-page views.
@@ -292,7 +294,7 @@ pub async fn threads(
                 (SELECT COUNT(*) FROM messages m WHERE m.thread_id = t.id AND m.seen = 0 AND m.is_outgoing = 0) AS unread,
                 lm.date, lm.snippet, lm.from_name, lm.from_addr, lm.is_outgoing, lm.account_id,
                 EXISTS (SELECT 1 FROM messages m WHERE m.thread_id = t.id AND m.has_attachments = 1) AS has_attachments,
-                s.display_name AS sender_name, s.address AS sender_address, t.snoozed_until
+                s.display_name AS sender_name, s.address AS sender_address, t.snoozed_until, t.note
          FROM threads t
          JOIN messages lm ON lm.id = (
              SELECT id FROM messages WHERE thread_id = t.id ORDER BY date DESC, id DESC LIMIT 1)
@@ -526,8 +528,15 @@ async fn to_views(state: &AppState, rows: Vec<MessageRow>) -> ApiResult<Vec<Mess
 }
 
 pub async fn thread(State(state): State<AppState>, user: CurrentUser, Path(id): Path<i64>) -> ApiResult<Json<Value>> {
-    let head: (String, Option<i64>, Option<String>, Option<String>, Option<String>) = sqlx::query_as(
-        "SELECT t.subject, s.id, s.address, s.display_name, s.category
+    let head: (
+        String,
+        Option<i64>,
+        Option<String>,
+        Option<String>,
+        Option<String>,
+        String,
+    ) = sqlx::query_as(
+        "SELECT t.subject, s.id, s.address, s.display_name, s.category, t.note
          FROM threads t LEFT JOIN senders s ON s.id = t.sender_id
          WHERE t.id = ? AND t.user_id = ?",
     )
@@ -587,6 +596,7 @@ pub async fn thread(State(state): State<AppState>, user: CurrentUser, Path(id): 
         "important": flagged,
         "snoozed_until": snoozed_until,
         "subject": head.0,
+        "note": head.5,
         "sender": head.1.map(|sender_id| json!({
             "id": sender_id, "address": head.2, "display_name": head.3, "category": head.4,
         })),
@@ -616,7 +626,7 @@ pub async fn message(
 
 #[derive(Deserialize)]
 pub struct Page {
-    /// important (the Inbox) | flagged (Important) | feed | junk | sent | archive | trash
+    /// important (the Inbox) | flagged (Important) | delayed | feed | junk | sent | archive | trash
     #[serde(rename = "box", default = "default_box")]
     mailbox: String,
     #[serde(default)]
@@ -643,6 +653,7 @@ pub async fn feed(
         "feed" => format!("m.is_outgoing = 0 AND {HERE} AND ts.category = 'feed' AND NOT {FLAGGED} AND NOT {DELAYED}"),
         "junk" => format!("m.is_outgoing = 0 AND {HERE} AND ts.category = 'junk'"),
         "flagged" => format!("m.is_outgoing = 0 AND {HERE} AND {FLAGGED} AND NOT {DELAYED}"),
+        "delayed" => format!("m.is_outgoing = 0 AND {HERE} AND {DELAYED}"),
         "sent" => "m.is_outgoing = 1 AND f.role != 'trash'".to_string(),
         "archive" => "f.role = 'archive'".to_string(),
         "trash" => "f.role = 'trash'".to_string(),
@@ -664,6 +675,39 @@ pub async fn feed(
     .fetch_all(&state.db)
     .await?;
     Ok(Json(to_views(&state, rows).await?))
+}
+
+#[derive(Deserialize)]
+pub struct NoteInput {
+    note: String,
+}
+
+const MAX_NOTE: usize = 2000;
+
+/// Sets your note on a conversation; an empty one removes it.
+pub async fn set_note(
+    State(state): State<AppState>,
+    user: CurrentUser,
+    Path(id): Path<i64>,
+    Json(input): Json<NoteInput>,
+) -> ApiResult<Json<Value>> {
+    let note = input.note.trim();
+    if note.chars().count() > MAX_NOTE {
+        return Err(ApiError::bad_request(format!(
+            "A note can have up to {MAX_NOTE} characters."
+        )));
+    }
+    let changed = sqlx::query("UPDATE threads SET note = ? WHERE id = ? AND user_id = ?")
+        .bind(note)
+        .bind(id)
+        .bind(user.id)
+        .execute(&state.db)
+        .await?;
+    if changed.rows_affected() == 0 {
+        return Err(ApiError::not_found());
+    }
+    state.notify(user.id, "mail");
+    Ok(Json(json!({ "note": note })))
 }
 
 /// Marks every message of a thread as read, locally and on the server.
@@ -807,6 +851,8 @@ pub struct SearchRow {
     date: i64,
     seen: bool,
     excerpt: String,
+    /// Your note on the conversation the mail belongs to.
+    note: String,
 }
 
 /// LIKE pattern matching `needle` anywhere, with LIKE's own wildcards taken literally.
@@ -831,27 +877,48 @@ pub(crate) fn search_sql(
     output: SearchOutput,
 ) -> sqlx::QueryBuilder<sqlx::Sqlite> {
     let fts = query.fts();
-    let select = match (&output, fts.is_empty()) {
-        (SearchOutput::UnreadCount, _) => "COUNT(*)",
+    const COLUMNS: &str =
+        "m.id, m.thread_id, m.account_id, m.subject, m.from_name, m.from_addr, m.date, m.seen, t.note";
+    let mut sql = sqlx::QueryBuilder::<sqlx::Sqlite>::new("SELECT ");
+    match (&output, fts.is_empty()) {
+        (SearchOutput::UnreadCount, _) => {
+            sql.push("COUNT(*)");
+        }
         // Filters only: no text to match, so the stored preview stands in for the excerpt.
         (SearchOutput::Rows, true) => {
-            "m.id, m.thread_id, m.account_id, m.subject, m.from_name, m.from_addr, m.date, m.seen,
-             m.snippet AS excerpt"
+            sql.push(COLUMNS).push(", m.snippet AS excerpt");
         }
+        // The place in the mail where the words were found; a mail found by its note has none.
         (SearchOutput::Rows, false) => {
-            "m.id, m.thread_id, m.account_id, m.subject, m.from_name, m.from_addr, m.date, m.seen,
-             snippet(messages_fts, 4, '', '', '…', 16) AS excerpt"
+            sql.push(COLUMNS)
+                .push(
+                    ", COALESCE((SELECT snippet(messages_fts, 4, '', '', '…', 16) FROM messages_fts
+                                 WHERE messages_fts MATCH ",
+                )
+                .push_bind(fts.clone())
+                .push(" AND messages_fts.rowid = m.id), m.snippet) AS excerpt");
         }
-    };
-    let mut sql = sqlx::QueryBuilder::<sqlx::Sqlite>::new("SELECT ");
-    sql.push(select);
-    if fts.is_empty() {
-        sql.push(" FROM messages m WHERE m.user_id = ").push_bind(user_id);
-    } else {
-        sql.push(" FROM messages_fts JOIN messages m ON m.id = messages_fts.rowid WHERE messages_fts MATCH ")
+    }
+    sql.push(" FROM messages m JOIN threads t ON t.id = m.thread_id WHERE m.user_id = ")
+        .push_bind(user_id);
+    if !fts.is_empty() {
+        // Words are looked for in the mail, and in your note on its conversation; a conversation
+        // found by its note is listed once, with its newest mail.
+        sql.push(" AND (m.id IN (SELECT rowid FROM messages_fts WHERE messages_fts MATCH ")
             .push_bind(fts)
-            .push(" AND m.user_id = ")
-            .push_bind(user_id);
+            .push(
+                ") OR (t.note != '' AND m.id = (SELECT id FROM messages WHERE thread_id = t.id
+                                                ORDER BY date DESC, id DESC LIMIT 1)",
+            );
+        for word in &query.text {
+            sql.push(" AND t.note LIKE ")
+                .push_bind(contains(word))
+                .push(" ESCAPE '\\'");
+        }
+        sql.push("))");
+    }
+    if query.noted {
+        sql.push(" AND t.note != ''");
     }
     // What is in the Trash is not searched.
     sql.push(" AND m.folder_id NOT IN (SELECT id FROM folders WHERE role = 'trash')");
@@ -859,10 +926,11 @@ pub(crate) fn search_sql(
         sql.push(" AND m.seen = 0 AND m.is_outgoing = 0");
     }
     // Values of one filter are alternatives (OR); the filters themselves all have to hold (AND).
-    let text_filters: [(&[String], &[&str]); 3] = [
+    let text_filters: [(&[String], &[&str]); 4] = [
         (&query.from, &["m.from_name", "m.from_addr"]),
         (&query.to, &["m.to_addrs", "m.cc_addrs"]),
         (&query.subject, &["m.subject"]),
+        (&query.note, &["t.note"]),
     ];
     for (values, columns) in text_filters {
         if values.is_empty() {

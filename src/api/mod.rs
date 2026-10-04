@@ -44,6 +44,7 @@ pub fn router() -> Router<AppState> {
         .route("/threads", get(mail::threads))
         .route("/threads/{id}", get(mail::thread))
         .route("/threads/{id}/seen", post(mail::mark_seen))
+        .route("/threads/{id}/note", put(mail::set_note))
         .route("/feed", get(mail::feed))
         .route("/messages/{id}", get(mail::message))
         .route("/messages/{id}/attachments/{idx}", get(mail::attachment))
@@ -851,6 +852,81 @@ mod tests {
         // Seen mail counts nowhere.
         sqlx::query("UPDATE messages SET seen = 1").execute(db).await.unwrap();
         assert_eq!(unread().await, [0; 7]);
+    }
+
+    #[tokio::test]
+    async fn notes_are_kept_per_conversation_and_found_by_the_search() {
+        let (app, state) = test_app().await;
+        let admin = json!({ "email": "admin@example.org", "password": "password1" });
+        let (_, cookie, _) = call(&app, "POST", "/api/register", None, Some(admin)).await;
+        let cookie = cookie.unwrap();
+        let (thread, message, sender) = seed_mail(&state, 1).await;
+        sqlx::query("UPDATE senders SET category = 'important' WHERE id = ?")
+            .bind(sender)
+            .execute(&state.db)
+            .await
+            .unwrap();
+        let path = format!("/api/threads/{thread}/note");
+        let hits = async |typed: &str| -> Vec<Value> {
+            let path = format!("/api/search?q={}", typed.replace(' ', "%20"));
+            let (_, _, body) = call(&app, "GET", &path, Some(&cookie), None).await;
+            body.as_array().unwrap().clone()
+        };
+
+        assert_eq!(hits("receipt").await.len(), 0);
+        assert_eq!(hits("note:").await.len(), 0);
+        let note = json!({ "note": "  Tax 2026: receipt for the 100% bike  " });
+        let (status, _, body) = call(&app, "PUT", &path, Some(&cookie), Some(note)).await;
+        assert_eq!(
+            (status, body["note"].as_str()),
+            (StatusCode::OK, Some("Tax 2026: receipt for the 100% bike"))
+        );
+
+        // Shown with the conversation and in its list.
+        let (_, _, detail) = call(&app, "GET", &format!("/api/threads/{thread}"), Some(&cookie), None).await;
+        assert_eq!(detail["note"], "Tax 2026: receipt for the 100% bike");
+        let (_, _, list) = call(&app, "GET", "/api/threads?box=important", Some(&cookie), None).await;
+        assert_eq!(list[0]["note"], "Tax 2026: receipt for the 100% bike");
+
+        // Plain words find the note (all of them, any case), and still find mail text.
+        for (typed, expected) in [
+            ("receipt", 1),
+            ("TAX bike", 1),
+            ("tax missing", 0),
+            ("100%", 1),
+            ("10_%", 0),
+            ("note:tax", 1),
+            ("note:bike note:nothing", 1),
+            ("note:nothing", 0),
+            ("note:", 1),
+            ("note: from:anna", 1),
+            ("note: from:carsten", 0),
+            ("confidential", 1),
+        ] {
+            assert_eq!(hits(typed).await.len(), expected, "{typed}");
+        }
+        let by_note = hits("receipt").await;
+        assert_eq!(
+            (by_note[0]["id"].as_i64(), by_note[0]["note"].as_str()),
+            (Some(message), Some("Tax 2026: receipt for the 100% bike"))
+        );
+        let by_text = hits("confidential").await;
+        assert!(by_text[0]["excerpt"].as_str().unwrap().contains("confidential"));
+
+        // Limits: length, and other people's conversations.
+        let long = json!({ "note": "x".repeat(2001) });
+        let (status, _, _) = call(&app, "PUT", &path, Some(&cookie), Some(long)).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+        let other = json!({ "email": "other@example.org", "password": "password2" });
+        call(&app, "POST", "/api/users", Some(&cookie), Some(other.clone())).await;
+        let (_, other_cookie, _) = call(&app, "POST", "/api/login", None, Some(other)).await;
+        let theirs = json!({ "note": "mine now" });
+        let (status, _, _) = call(&app, "PUT", &path, other_cookie.as_deref(), Some(theirs)).await;
+        assert_eq!(status, StatusCode::NOT_FOUND);
+
+        // An empty note removes it.
+        call(&app, "PUT", &path, Some(&cookie), Some(json!({ "note": " " }))).await;
+        assert_eq!(hits("note:").await.len(), 0);
     }
 
     #[tokio::test]
