@@ -228,8 +228,14 @@
 								tabindex="-1"
 								onclick={() => accept(contact)}
 							>
-								<strong>{displayName(contact.name, contact.address)}</strong>
-								<span class="muted">{contact.address}</span>
+								{#if contact.group}
+									{@const count = contact.address.split(',').length}
+									<strong>{contact.name}</strong>
+									<span class="muted">Group, {count} {count === 1 ? 'address' : 'addresses'}: {contact.address}</span>
+								{:else}
+									<strong>{displayName(contact.name, contact.address)}</strong>
+									<span class="muted">{contact.address}</span>
+								{/if}
 							</button>
 						</li>
 					{/each}

@@ -250,6 +250,13 @@ Conversion runs headless, one document at a time, on a copy of the file in a thr
 It still means LibreOffice opens files that strangers sent you. Set `PORTIER_SOFFICE=off` if
 you do not want that.
 
+## Groups of recipients
+
+Settings, "Groups" sets up names for several addresses, per user. When writing a mail, type the
+name in the To field and pick the group from the suggestions (web and terminal client): its
+addresses are filled in. The mail is an ordinary mail to each of them; the group's name is not
+sent, and later changes to the group do not touch drafts written before.
+
 ## Summaries of new mail
 
 Portier can have a language model on your own machines write a sentence or two about each new

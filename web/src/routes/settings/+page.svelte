@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { api, type Account, type Category, type Sender, type User } from '#lib/api.ts';
+	import { api, type Account, type Category, type RecipientGroup, type Sender, type User } from '#lib/api.ts';
 	import { app, categoryNames, classify, refreshAccounts } from '#lib/app.svelte.ts';
 	import { clearOffline, offline, setOffline } from '#lib/offline.svelte.ts';
 	import { swipeActions, type SwipeAction } from '#lib/swipe.ts';
@@ -146,6 +146,57 @@
 			app.swipe = { left: saved.swipe_left, right: saved.swipe_right };
 		} catch (e) {
 			swipeError = (e as Error).message;
+		}
+	}
+
+	// ---- Groups of recipients ----
+	let groups = $state<RecipientGroup[]>([]);
+	/** The group being edited: its id, 0 for a new one, or null when the form is closed. */
+	let groupId = $state<number | null>(null);
+	let groupName = $state('');
+	let groupMembers = $state('');
+	let groupError = $state('');
+	let groupBusy = $state(false);
+
+	$effect(() => {
+		api.get<RecipientGroup[]>('/groups')
+			.then((list) => (groups = list))
+			.catch(() => {});
+	});
+
+	function editGroup(group: RecipientGroup | null) {
+		groupId = group?.id ?? 0;
+		groupName = group?.name ?? '';
+		// One address per line reads better than one long line.
+		groupMembers = group?.members.split(', ').join('\n') ?? '';
+		groupError = '';
+	}
+
+	async function saveGroup(event: SubmitEvent) {
+		event.preventDefault();
+		groupError = '';
+		groupBusy = true;
+		try {
+			const body = { name: groupName, members: groupMembers };
+			if (groupId) await api.put(`/groups/${groupId}`, body);
+			else await api.post('/groups', body);
+			groups = await api.get<RecipientGroup[]>('/groups');
+			groupId = null;
+		} catch (e) {
+			groupError = (e as Error).message;
+		} finally {
+			groupBusy = false;
+		}
+	}
+
+	async function deleteGroup(group: RecipientGroup) {
+		groupError = '';
+		try {
+			await api.delete(`/groups/${group.id}`);
+			groups = groups.filter((g) => g.id !== group.id);
+			if (groupId === group.id) groupId = null;
+		} catch (e) {
+			groupError = (e as Error).message;
 		}
 	}
 
@@ -320,6 +371,7 @@
 	<a class="btn small" href="#sliding">Sliding</a>
 	<a class="btn small" href="#archive">Automatic archive</a>
 	<a class="btn small" href="#summaries">Summaries</a>
+	<a class="btn small" href="#groups">Groups</a>
 	<a class="btn small" href="#device">Mail on this device</a>
 	{#if app.user?.is_admin}<a class="btn small" href="#users">Users</a>{/if}
 	<a class="btn small" href="#password">Password</a>
@@ -612,6 +664,48 @@
 	{#if archiveNote}<p class="ok" role="status">{archiveNote}</p>{/if}
 </section>
 
+<section id="groups">
+	<h2>Groups</h2>
+	<p class="muted">
+		A group is a name for several addresses. When writing a mail, type the name in the To field and pick the
+		group: its addresses are filled in, and the mail goes to each of them as usual.
+	</p>
+	{#if groups.length}
+		<ul class="groups">
+			{#each groups as group (group.id)}
+				{@const count = group.members.split(', ').length}
+				<li>
+					<div>
+						<strong>{group.name}</strong>
+						<span class="muted">{count} {count === 1 ? 'address' : 'addresses'}: {group.members}</span>
+					</div>
+					<button class="btn small" onclick={() => editGroup(group)}>Edit</button>
+					<button class="btn small danger" onclick={() => deleteGroup(group)}>Delete</button>
+				</li>
+			{/each}
+		</ul>
+	{/if}
+	{#if groupId === null}
+		<p><button class="btn" onclick={() => editGroup(null)}>New group</button></p>
+	{:else}
+		<form class="group" onsubmit={saveGroup}>
+			<label class="field">
+				Name
+				<input bind:value={groupName} maxlength="40" placeholder="e.g. Board" autocomplete="off" />
+			</label>
+			<label class="field">
+				Addresses, one per line or separated by commas
+				<textarea class="input" rows="5" bind:value={groupMembers} spellcheck="false" autocomplete="off"></textarea>
+			</label>
+			<div class="actions">
+				<button class="btn primary" disabled={groupBusy}>{groupId ? 'Save group' : 'Add group'}</button>
+				<button type="button" class="btn" onclick={() => (groupId = null)}>Cancel</button>
+			</div>
+		</form>
+	{/if}
+	{#if groupError}<p class="error" role="alert">{groupError}</p>{/if}
+</section>
+
 <section id="device">
 	<h2>Mail on this device</h2>
 	<p class="muted">
@@ -899,6 +993,39 @@
 		.grid.server {
 			grid-template-columns: 1fr 1fr;
 		}
+	}
+	.groups {
+		list-style: none;
+		margin: 0.75rem 0;
+		padding: 0;
+	}
+	.groups li {
+		display: flex;
+		align-items: center;
+		gap: 0.5rem;
+		padding: 0.55rem 0;
+		border-top: 1px solid var(--line);
+	}
+	.groups li div {
+		flex: 1;
+		min-width: 0;
+		display: grid;
+	}
+	.groups li span {
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
+		font-size: 0.9rem;
+	}
+	.group {
+		display: grid;
+		gap: 0.75rem;
+		max-width: 34rem;
+		margin-top: 0.75rem;
+	}
+	.group textarea {
+		resize: vertical;
+		font: inherit;
 	}
 	.kept {
 		display: flex;

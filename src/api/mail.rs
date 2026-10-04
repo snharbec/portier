@@ -141,13 +141,30 @@ pub struct ContactQuery {
     q: String,
 }
 
+/// What the composer offers for a recipient being typed.
+#[derive(Serialize)]
+pub struct Contact {
+    name: String,
+    /// The address; for a group all its addresses, separated by ", ".
+    address: String,
+    group: bool,
+}
+
 /// Recipient suggestions for the composer.
 pub async fn contacts(
     State(state): State<AppState>,
     user: CurrentUser,
     Query(q): Query<ContactQuery>,
-) -> ApiResult<Json<Vec<Addr>>> {
+) -> ApiResult<Json<Vec<Contact>>> {
     let pattern = format!("%{}%", q.q.trim().replace(['%', '_'], ""));
+    // The user's own groups first: a name that stands for all its addresses.
+    let groups: Vec<(String, String)> = sqlx::query_as(
+        "SELECT name, members FROM recipient_groups WHERE user_id = ? AND name LIKE ? ORDER BY name LIMIT 4",
+    )
+    .bind(user.id)
+    .bind(&pattern)
+    .fetch_all(&state.db)
+    .await?;
     let rows: Vec<(String, String)> = sqlx::query_as(
         "SELECT display_name, address FROM senders
          WHERE user_id = ? AND (category IS NULL OR category != 'junk')
@@ -159,8 +176,13 @@ pub async fn contacts(
     .bind(&pattern)
     .fetch_all(&state.db)
     .await?;
+    let contact = |group| move |(name, address)| Contact { name, address, group };
     Ok(Json(
-        rows.into_iter().map(|(name, address)| Addr { name, address }).collect(),
+        groups
+            .into_iter()
+            .map(contact(true))
+            .chain(rows.into_iter().map(contact(false)))
+            .collect(),
     ))
 }
 

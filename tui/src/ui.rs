@@ -604,13 +604,28 @@ fn compose(frame: &mut Frame, app: &mut App, area: Rect, bottom: Rect) {
             .iter()
             .enumerate()
             .map(|(index, contact)| {
-                let line = Line::from(vec![
-                    Span::raw(format!(
-                        " {} ",
-                        crate::api::display_name(Some(&contact.name), Some(&contact.address))
-                    )),
-                    Span::styled(format!("{} ", contact.address), soft),
-                ]);
+                let line = if contact.group {
+                    let count = contact.address.split(',').count();
+                    Line::from(vec![
+                        Span::raw(format!(" {} ", contact.name)),
+                        Span::styled(
+                            format!(
+                                "group, {count} {}: {} ",
+                                if count == 1 { "address" } else { "addresses" },
+                                contact.address
+                            ),
+                            soft,
+                        ),
+                    ])
+                } else {
+                    Line::from(vec![
+                        Span::raw(format!(
+                            " {} ",
+                            crate::api::display_name(Some(&contact.name), Some(&contact.address))
+                        )),
+                        Span::styled(format!("{} ", contact.address), soft),
+                    ])
+                };
                 if compose.picked == Some(index) {
                     line.style(Style::default().add_modifier(Modifier::REVERSED))
                 } else {

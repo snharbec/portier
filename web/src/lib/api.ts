@@ -36,6 +36,16 @@ export interface Account {
 export interface Addr {
 	name: string;
 	address: string;
+	/** A suggestion that is a group of recipients: `address` holds all its addresses. */
+	group?: boolean;
+}
+
+/** A name that stands for several addresses when writing. */
+export interface RecipientGroup {
+	id: number;
+	name: string;
+	/** The addresses, separated by ", ". */
+	members: string;
 }
 
 export interface ScreenerEntry {

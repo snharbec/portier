@@ -139,6 +139,9 @@ pub fn display_name(name: Option<&str>, address: Option<&str>) -> String {
 pub struct Addr {
     pub name: String,
     pub address: String,
+    /// A suggestion that is a group of recipients: `address` holds all its addresses.
+    #[serde(default)]
+    pub group: bool,
 }
 
 #[derive(Debug, Clone, Deserialize)]

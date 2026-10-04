@@ -5,6 +5,7 @@ pub(crate) mod autoarchive;
 mod bulk;
 mod compose;
 mod files;
+mod groups;
 mod mail;
 mod pictures;
 mod saved;
@@ -52,6 +53,8 @@ pub fn router() -> Router<AppState> {
         )
         .route("/senders/{id}/picture/url", post(pictures::from_url))
         .route("/contacts", get(mail::contacts))
+        .route("/groups", get(groups::list).post(groups::create))
+        .route("/groups/{id}", put(groups::update).delete(groups::delete))
         .route("/avatar", get(mail::avatar))
         .route("/counts", get(mail::counts))
         .route("/threads", get(mail::threads))
@@ -1545,6 +1548,77 @@ mod tests {
             ("inbox".to_string(), Some(1)),
             "mail is back in the inbox with its UID"
         );
+    }
+
+    #[tokio::test]
+    async fn groups_of_recipients_are_offered_by_name_when_writing() {
+        let (app, state) = test_app().await;
+        let admin = json!({ "email": "admin@example.org", "password": "password1" });
+        let (_, cookie, _) = call(&app, "POST", "/api/register", None, Some(admin)).await;
+        let cookie = cookie.unwrap();
+        seed_mail(&state, 1).await;
+
+        // Addresses may come with names, on lines or with semicolons; each is kept once, bare.
+        let team = json!({ "name": "Board", "members": "Anna <anna@example.org>\nbob@example.org; ANNA@example.org" });
+        let (status, _, made) = call(&app, "POST", "/api/groups", Some(&cookie), Some(team.clone())).await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(made["members"], "anna@example.org, bob@example.org");
+        let id = made["id"].as_i64().unwrap();
+
+        for (bad, why) in [
+            (json!({ "name": "", "members": "a@example.org" }), "no name"),
+            (
+                json!({ "name": "A, B", "members": "a@example.org" }),
+                "comma in the name",
+            ),
+            (json!({ "name": "Empty", "members": " " }), "no member"),
+            (
+                json!({ "name": "Wrong", "members": "not an address" }),
+                "not an address",
+            ),
+            (
+                json!({ "name": "board", "members": "a@example.org" }),
+                "name taken, whatever the case",
+            ),
+        ] {
+            let (status, _, _) = call(&app, "POST", "/api/groups", Some(&cookie), Some(bad)).await;
+            assert_eq!(status, StatusCode::BAD_REQUEST, "{why}");
+        }
+
+        // The composer's suggestions: the group first, standing for its addresses.
+        let (_, _, found) = call(&app, "GET", "/api/contacts?q=boa", Some(&cookie), None).await;
+        assert_eq!(found[0]["name"], "Board");
+        assert_eq!(found[0]["address"], "anna@example.org, bob@example.org");
+        assert_eq!(found[0]["group"], true);
+        let (_, _, found) = call(&app, "GET", "/api/contacts?q=zzz", Some(&cookie), None).await;
+        assert_eq!(found, json!([]));
+
+        let path = format!("/api/groups/{id}");
+        let renamed = json!({ "name": "Directors", "members": "carol@example.org" });
+        let (status, _, _) = call(&app, "PUT", &path, Some(&cookie), Some(renamed)).await;
+        assert_eq!(status, StatusCode::OK);
+        let (_, _, listed) = call(&app, "GET", "/api/groups", Some(&cookie), None).await;
+        assert_eq!(
+            listed,
+            json!([{ "id": id, "name": "Directors", "members": "carol@example.org" }])
+        );
+
+        // Another user neither sees nor changes it.
+        let other = json!({ "email": "other@example.org", "password": "password2" });
+        call(&app, "POST", "/api/users", Some(&cookie), Some(other.clone())).await;
+        let (_, other_cookie, _) = call(&app, "POST", "/api/login", None, Some(other)).await;
+        let other_cookie = other_cookie.as_deref();
+        let (_, _, theirs) = call(&app, "GET", "/api/groups", other_cookie, None).await;
+        assert_eq!(theirs, json!([]));
+        let (_, _, found) = call(&app, "GET", "/api/contacts?q=dir", other_cookie, None).await;
+        assert_eq!(found, json!([]));
+        let (status, _, _) = call(&app, "DELETE", &path, other_cookie, None).await;
+        assert_eq!(status, StatusCode::NOT_FOUND);
+
+        let (status, _, _) = call(&app, "DELETE", &path, Some(&cookie), None).await;
+        assert_eq!(status, StatusCode::OK);
+        let (_, _, listed) = call(&app, "GET", "/api/groups", Some(&cookie), None).await;
+        assert_eq!(listed, json!([]));
     }
 
     #[tokio::test]
