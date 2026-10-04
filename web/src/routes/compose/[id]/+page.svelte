@@ -16,6 +16,9 @@
 	let sending = $state(false);
 	let showCopies = $state(false);
 	let suggestions = $state<Addr[]>([]);
+	/** Suggestion picked with the arrow keys; -1 while none is. */
+	let chosen = $state(-1);
+	let toField: HTMLInputElement | undefined = $state();
 	let saveTimer: ReturnType<typeof setTimeout> | undefined;
 	let dirty = false;
 
@@ -53,6 +56,26 @@
 		if (!detail) return;
 		const term = detail.draft.to_addrs.split(',').at(-1)?.trim() ?? '';
 		suggestions = term.length >= 2 ? await api.get<Addr[]>(`/contacts?q=${encodeURIComponent(term)}`) : [];
+		chosen = -1;
+	}
+
+	/** Arrow keys walk through the suggestions, Enter or Tab takes the picked one, Escape closes them. */
+	function toKeydown(event: KeyboardEvent) {
+		if (!suggestions.length || event.ctrlKey || event.metaKey || event.altKey) return;
+		if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+			event.preventDefault();
+			const step = event.key === 'ArrowDown' ? 1 : -1;
+			// From the field itself Down picks the first and Up the last; past either end it wraps.
+			chosen = chosen < 0 && step < 0 ? suggestions.length - 1 : (chosen + step + suggestions.length) % suggestions.length;
+			document.getElementById(`to-suggestion-${chosen}`)?.scrollIntoView({ block: 'nearest' });
+		} else if ((event.key === 'Enter' || event.key === 'Tab') && chosen >= 0) {
+			event.preventDefault();
+			accept(suggestions[chosen]);
+		} else if (event.key === 'Escape') {
+			event.preventDefault();
+			suggestions = [];
+			chosen = -1;
+		}
 	}
 
 	function accept(contact: Addr) {
@@ -60,7 +83,10 @@
 		const parts = detail.draft.to_addrs.split(',').slice(0, -1).map((p) => p.trim());
 		detail.draft.to_addrs = [...parts, contact.address].join(', ') + ', ';
 		suggestions = [];
+		chosen = -1;
 		changed();
+		// Ready for the next recipient, also after a click on a suggestion.
+		toField?.focus();
 	}
 
 	async function upload(event: Event) {
@@ -150,24 +176,47 @@
 		{/if}
 		<div class="row to">
 			<label for="to">To</label>
+			<!-- The browser's own suggestions (contacts, autofill) would compete with the list below:
+			     nothing here may look like a name or address field to it, placeholder included. -->
 			<input
 				id="to"
+				type="text"
+				name="recipients-{id}"
+				role="combobox"
+				aria-autocomplete="list"
+				aria-expanded={suggestions.length > 0}
+				aria-controls="to-suggestions"
+				aria-activedescendant={chosen >= 0 ? `to-suggestion-${chosen}` : undefined}
+				bind:this={toField}
+				onkeydown={toKeydown}
 				bind:value={detail.draft.to_addrs}
 				oninput={() => {
 					changed();
 					suggest();
 				}}
 				autocomplete="off"
-				placeholder="name@example.com, another@example.com"
+				autocorrect="off"
+				autocapitalize="off"
+				spellcheck="false"
+				data-1p-ignore
+				data-lpignore="true"
+				data-form-type="other"
+				placeholder="Who is it for? Separate several with commas"
 			/>
 			{#if !showCopies}
 				<button class="btn small quiet" onclick={() => (showCopies = true)}>Cc, Bcc</button>
 			{/if}
 			{#if suggestions.length}
-				<ul class="suggestions sheet">
-					{#each suggestions as contact}
-						<li>
-							<button onclick={() => accept(contact)}>
+				<ul class="suggestions sheet" id="to-suggestions" role="listbox" aria-label="Suggested recipients">
+					{#each suggestions as contact, index}
+						<li role="presentation">
+							<button
+								id="to-suggestion-{index}"
+								role="option"
+								aria-selected={index === chosen}
+								tabindex="-1"
+								onclick={() => accept(contact)}
+							>
 								<strong>{displayName(contact.name, contact.address)}</strong>
 								<span class="muted">{contact.address}</span>
 							</button>
@@ -179,11 +228,11 @@
 		{#if showCopies}
 			<label class="row">
 				<span>Cc</span>
-				<input bind:value={detail.draft.cc_addrs} oninput={changed} autocomplete="off" />
+				<input type="text" name="copies-{id}" bind:value={detail.draft.cc_addrs} oninput={changed} autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" data-1p-ignore data-lpignore="true" data-form-type="other" />
 			</label>
 			<label class="row">
 				<span>Bcc</span>
-				<input bind:value={detail.draft.bcc_addrs} oninput={changed} autocomplete="off" />
+				<input type="text" name="blind-copies-{id}" bind:value={detail.draft.bcc_addrs} oninput={changed} autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" data-1p-ignore data-lpignore="true" data-form-type="other" />
 			</label>
 		{/if}
 		<label class="row">
@@ -301,6 +350,9 @@
 	.suggestions button:hover,
 	.suggestions button:focus-visible {
 		background: var(--paper);
+	}
+	.suggestions button[aria-selected='true'] {
+		background: color-mix(in srgb, var(--important) 14%, var(--surface));
 	}
 	.source {
 		display: grid;

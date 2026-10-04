@@ -53,7 +53,11 @@
 		},
 		{
 			title: 'Writing a mail',
-			keys: [[['Ctrl', 'Return'], 'Send the mail']]
+			keys: [
+				[['Ctrl', 'Return'], 'Send the mail'],
+				[['↓'], 'Next suggested recipient (↑ previous)'],
+				[['Enter'], 'Take the picked recipient (also Tab)']
+			]
 		},
 		{
 			title: 'Screener',
