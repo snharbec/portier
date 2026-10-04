@@ -75,6 +75,8 @@ export interface ThreadSummary {
 	sender_address: string | null;
 	/** When a delayed conversation returns to the inbox. */
 	snoozed_until: number | null;
+	/** Your own note on the conversation; empty when there is none. */
+	note: string;
 }
 
 export interface Attachment {
@@ -116,6 +118,8 @@ export interface Thread {
 	important: boolean;
 	/** Delayed until then, or null. */
 	snoozed_until: number | null;
+	/** Your own note on the conversation; empty when there is none. */
+	note: string;
 	subject: string;
 	sender: { id: number; address: string; display_name: string; category: Category | null } | null;
 	messages: Message[];
@@ -159,6 +163,8 @@ export interface SearchHit {
 	date: number;
 	seen: boolean;
 	excerpt: string;
+	/** Your note on the conversation the mail belongs to. */
+	note: string;
 }
 
 export interface SavedSearch {

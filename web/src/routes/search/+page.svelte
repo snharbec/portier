@@ -5,7 +5,9 @@
 	import SelectAll from '#lib/components/SelectAll.svelte';
 	import SelectionBar from '#lib/components/SelectionBar.svelte';
 	import Swipeable from '#lib/components/Swipeable.svelte';
+	import { page } from '$app/state';
 	import { app } from '#lib/app.svelte.ts';
+	import { startReading } from '#lib/reading.ts';
 	import { swipeLabel, swipeMail, type SwipeAction } from '#lib/swipe.ts';
 	import { api } from '#lib/api.ts';
 	import { notify, refreshCounts } from '#lib/app.svelte.ts';
@@ -15,6 +17,26 @@
 	const selection = createSelection();
 	const picked = $derived(selection.visible(search.hits ?? [], (h) => h.id));
 	let picker: FolderPicker;
+
+	// ---- Split view: a result opens beside the list instead of on a page of its own ----
+	const hrefOf = (index: number) =>
+		app.splitActive ? `/search?open=${search.hits![index].thread_id}&hit=${index}` : resultPath(index);
+	/** The result whose conversation is open: the one clicked, else the first of that conversation. */
+	const openIndex = $derived.by(() => {
+		const open = app.splitActive ? Number(page.url.searchParams.get('open')) : 0;
+		if (!open || !search.hits) return -1;
+		const clicked = Number(page.url.searchParams.get('hit') ?? -1);
+		if (search.hits[clicked]?.thread_id === open) return clicked;
+		return search.hits.findIndex((h) => h.thread_id === open);
+	});
+	/** Lets the mail view move on to the next result after archiving or trashing one. */
+	const opened = () => startReading([...new Set((search.hits ?? []).map((h) => h.thread_id))], '/search');
+
+	// Opening a result reads it: its row must not stay marked as unseen.
+	$effect(() => {
+		const hit = search.hits?.[openIndex];
+		if (hit && !hit.seen) hit.seen = true;
+	});
 
 	// ---- Saving the search under a name ----
 	const saved = $derived(app.searches.find((s) => s.query === search.answered.trim()));
@@ -83,9 +105,13 @@
 				<span class="muted">Saved as “{saved.name}”</span>
 				<button class="btn small" onclick={startNaming}>Rename</button>
 				<button class="btn small quiet danger" onclick={remove}>Remove from side bar</button>
+				{#if search.hits.length}<a class="btn small" href="/read/search">Read all on one page</a>{/if}
 			</p>
 		{:else}
-			<p class="tools"><button class="btn small" onclick={startNaming}>Save this search</button></p>
+			<p class="tools">
+				<button class="btn small" onclick={startNaming}>Save this search</button>
+				{#if search.hits.length}<a class="btn small" href="/read/search">Read all on one page</a>{/if}
+			</p>
 		{/if}
 	{/if}
 </div>
@@ -104,6 +130,8 @@
 			<dd>a recipient contains "anna"</dd>
 			<dt>subject:invoice <span>or</span> title:invoice</dt>
 			<dd>subject contains "invoice"</dd>
+			<dt>note:tax</dt>
+			<dd>conversations whose note of yours has the word; <code>note:</code> alone finds all with a note</dd>
 			<dt>attachment:true</dt>
 			<dd>only mail with attachments; attachment:false for mail without</dd>
 			<dt>received:last month</dt>
@@ -149,13 +177,21 @@
 					/>
 				</label>
 				{/if}
-				<a href={resultPath(index)}>
+				<a
+					href={hrefOf(index)}
+					data-row={hit.id}
+					class:open={index === openIndex}
+					data-sveltekit-noscroll={app.splitActive ? '' : undefined}
+					data-sveltekit-keepfocus={app.splitActive ? '' : undefined}
+					onclick={opened}
+				>
 					<span class="top">
 						<strong title={hit.from_addr}>{displayName(hit.from_name, hit.from_addr)}</strong>
 						<time class="muted">{shortDate(hit.date)}</time>
 					</span>
 					<span>{hit.subject || '(no subject)'}</span>
 					<span class="muted">{hit.excerpt}</span>
+					{#if hit.note}<span class="note">{hit.note}</span>{/if}
 				</a>
 				</Swipeable>
 			</li>
@@ -178,8 +214,29 @@
 />
 
 <style>
+	/* The row the arrow keys are on. Drawn inside the row: an outline around it would be cut
+	   off by the sliding container. */
+	a.open,
+	a[data-row]:focus {
+		outline: none;
+		background: color-mix(in srgb, var(--important) 14%, transparent);
+		box-shadow: inset 4px 0 0 var(--important);
+	}
 	.tools {
 		align-items: center;
+	}
+	.note {
+		justify-self: start;
+		max-width: 100%;
+		margin-top: 0.15rem;
+		padding: 0 0.5rem;
+		border-left: 3px solid var(--signal);
+		border-radius: 0 6px 6px 0;
+		background: color-mix(in srgb, var(--signal) 16%, var(--surface));
+		font-size: 0.85rem;
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
 	}
 	.input.name {
 		width: min(18rem, 100%);

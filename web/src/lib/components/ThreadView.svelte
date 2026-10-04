@@ -8,7 +8,7 @@
 	import DelayMenu from './DelayMenu.svelte';
 	import { displayName, returnTime } from '#lib/format.ts';
 	import { afterRemoving, listPath, neighbour } from '#lib/reading.ts';
-	import { rememberSearch, resultPath, search } from '#lib/search.svelte.ts';
+	import { rememberSearch, resultPath, runSearch, search } from '#lib/search.svelte.ts';
 	import { mailAction } from '#lib/swipe.ts';
 
 	let thread = $state<Thread | null>(null);
@@ -92,6 +92,38 @@
 		if (next !== undefined) goto(`/thread/${next}`, { replace: true });
 	}
 
+	// ---- Your own note on the conversation ----
+	/** The text being edited, or null while the note is only shown. */
+	let noteDraft = $state<string | null>(null);
+	let noteField: HTMLTextAreaElement | undefined = $state();
+
+	function editNote() {
+		noteDraft = thread?.note ?? '';
+		queueMicrotask(() => noteField?.focus());
+	}
+
+	async function saveNote() {
+		if (!thread || noteDraft === null) return;
+		try {
+			const saved = await api.put<{ note: string }>(`/threads/${thread.id}/note`, { note: noteDraft });
+			thread.note = saved.note;
+			noteDraft = null;
+			app.tick += 1;
+		} catch (e) {
+			notify((e as Error).message);
+		}
+	}
+
+	function noteKeydown(event: KeyboardEvent) {
+		if (event.key === 'Enter' && (event.ctrlKey || event.metaKey)) {
+			event.preventDefault();
+			saveNote();
+		} else if (event.key === 'Escape') {
+			event.preventDefault();
+			noteDraft = null;
+		}
+	}
+
 	async function draft(kind: string) {
 		if (last) goto(await startDraft(kind, last.id));
 	}
@@ -162,6 +194,8 @@
 			if (embedded) {
 				if (onward?.startsWith('/thread/')) openInPane(onward.slice('/thread/'.length));
 				else closePane();
+				// Beside search results: the list is a search, which has to be asked again.
+				if (page.url.pathname === '/search') runSearch();
 			} else goto(onward ?? listPath(), { replace: true });
 		}
 	}
@@ -185,6 +219,10 @@
 		else if (!embedded && (event.key === 'ArrowDown' || event.key === 'ArrowUp')) {
 			event.preventDefault();
 			toNeighbour(event.key === 'ArrowDown' ? 1 : -1);
+		}
+		else if (event.key === 't') {
+			event.preventDefault();
+			editNote();
 		}
 		else if (hit >= 0 && event.key === 'p') toResult(hit - 1);
 		else if (hit >= 0 && event.key === 'n') toResult(hit + 1);
@@ -229,6 +267,30 @@
 				<ClassifyButtons small current={thread.sender.category} onpick={pick} />
 			{/if}
 		{/if}
+		{#if noteDraft !== null}
+			<div class="note editing">
+				<label for="note-{thread.id}">Your note on this conversation</label>
+				<textarea
+					id="note-{thread.id}"
+					bind:this={noteField}
+					bind:value={noteDraft}
+					onkeydown={noteKeydown}
+					rows="3"
+					maxlength="2000"
+					placeholder="What you want to remember or find again, e.g. tax 2026, warranty until May"
+				></textarea>
+				<div class="note-tools">
+					<button class="btn small primary" onclick={saveNote}>Save note <span class="key">(Ctrl Return)</span></button>
+					<button class="btn small quiet" onclick={() => (noteDraft = null)}>Cancel</button>
+					<span class="muted">Only you see it. The search finds its words.</span>
+				</div>
+			</div>
+		{:else if thread.note}
+			<div class="note">
+				<p>{thread.note}</p>
+				<button class="btn small quiet" onclick={editNote}>Edit note <span class="key">(t)</span></button>
+			</div>
+		{/if}
 		<div class="tools">
 			<button class="btn primary" onclick={() => draft('reply')}>Reply <span class="key">(r)</span></button>
 			{#if last && last.to.length + last.cc.length > 1}
@@ -251,6 +313,9 @@
 				<button class="btn small" onclick={markUnread} disabled={trashing}>
 					Mark as unseen <span class="key">(u)</span>
 				</button>
+			{/if}
+			{#if !thread.note && noteDraft === null}
+				<button class="btn small" onclick={editNote}>Add note <span class="key">(t)</span></button>
 			{/if}
 			{#if thread.can_restore}
 				<button class="btn small" onclick={untrash} disabled={trashing} title="Take it out of the Trash">
@@ -324,5 +389,48 @@
 	.page-head .delayed {
 		color: var(--feed);
 		font-weight: 600;
+	}
+	/* Your own words, set apart from the mail by the signal colour of a sticky note. */
+	.note {
+		display: flex;
+		align-items: flex-start;
+		gap: 0.75rem;
+		margin: 0.6rem 0 0.2rem;
+		padding: 0.55rem 0.8rem;
+		border-left: 4px solid var(--signal);
+		border-radius: 0 9px 9px 0;
+		background: color-mix(in srgb, var(--signal) 16%, var(--surface));
+		max-width: 60rem;
+	}
+	.note p {
+		flex: 1;
+		margin: 0;
+		color: var(--ink);
+		white-space: pre-wrap;
+		overflow-wrap: anywhere;
+		max-width: none;
+	}
+	.note.editing {
+		display: grid;
+		gap: 0.4rem;
+	}
+	.note label {
+		font-weight: 600;
+		font-size: 0.9rem;
+	}
+	.note textarea {
+		width: 100%;
+		padding: 0.5rem 0.65rem;
+		border: 1px solid var(--line);
+		border-radius: 9px;
+		background: var(--surface);
+		resize: vertical;
+	}
+	.note-tools {
+		display: flex;
+		flex-wrap: wrap;
+		align-items: center;
+		gap: 0.5rem;
+		font-size: 0.875rem;
 	}
 </style>

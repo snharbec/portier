@@ -55,7 +55,6 @@
 	{#if threads?.length}
 		<p class="tools">
 			<button class="btn small" aria-pressed={unseenOnly} onclick={toggleUnseenOnly}>Unseen only</button>
-			<a class="btn small" href="/read/junk">Read all on one page</a>
 		</p>
 	{/if}
 </div>

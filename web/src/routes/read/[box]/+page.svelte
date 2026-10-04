@@ -6,15 +6,18 @@
 	import MessageCard from '#lib/components/MessageCard.svelte';
 	import SelectAll from '#lib/components/SelectAll.svelte';
 	import SelectionBar from '#lib/components/SelectionBar.svelte';
+	import { search } from '#lib/search.svelte.ts';
 	import { createSelection } from '#lib/selection.svelte.ts';
 	import { mailAction } from '#lib/swipe.ts';
 
 	const PAGE = 20;
+	// Junk is left out on purpose: nobody should have every junk mail opened at once.
 	const lists: Record<string, { title: string; back: string }> = {
 		important: { title: 'Home', back: '/' },
 		flagged: { title: 'Important', back: '/important' },
+		delayed: { title: 'Delayed', back: '/delayed' },
 		feed: { title: 'Nice to know', back: '/feed' },
-		junk: { title: 'Junk', back: '/junk' },
+		search: { title: 'Search results', back: '/search' },
 		sent: { title: 'Sent', back: '/sent' },
 		archive: { title: 'Archive', back: '/archive' },
 		trash: { title: 'Trash', back: '/trash' }
@@ -37,15 +40,27 @@
 		try {
 			const shown = messages?.length ?? 0;
 			const [offset, limit] = more ? [shown, PAGE] : [0, Math.max(PAGE, shown)];
-			const batch = await api.get<Message[]>(`/feed?box=${box}&offset=${offset}&limit=${limit}`);
+			const batch =
+				box === 'search'
+					? await searchBatch(offset, limit)
+					: await api.get<Message[]>(`/feed?box=${box}&offset=${offset}&limit=${limit}`);
 			messages = more ? [...(messages ?? []), ...batch] : batch;
-			done = batch.length < limit;
+			if (box !== 'search') done = batch.length < limit;
 			error = '';
 		} catch (e) {
 			error = (e as Error).message;
 		} finally {
 			busy = false;
 		}
+	}
+
+	/** The mails the last search found, in its order. One that is gone by now is left out. */
+	async function searchBatch(offset: number, limit: number): Promise<Message[]> {
+		const ids = (search.hits ?? []).slice(offset, offset + limit).map((hit) => hit.id);
+		const loaded = await Promise.all(ids.map((id) => api.get<Message>(`/messages/${id}`).catch(() => null)));
+		// A full batch must stay full for "is there more?"; the last one may be short anyway.
+		done = offset + limit >= (search.hits?.length ?? 0);
+		return loaded.filter((message): message is Message => message !== null);
 	}
 
 	let loadedBox = '';
@@ -80,7 +95,11 @@
 {:else}
 	<div class="page-head reading">
 		<h1>{list.title}, all on one page</h1>
-		<p>Every mail of this list, opened, newest first.</p>
+		{#if box === 'search'}
+			<p>Every mail found for “{search.answered}”, opened, newest first.</p>
+		{:else}
+			<p>Every mail of this list, opened, newest first.</p>
+		{/if}
 		<p class="tools">
 			<a class="btn small" href={list.back}>Show as list</a>
 			{#if unread.length}
@@ -132,7 +151,7 @@
 		archivable={box !== 'archive' && box !== 'trash'}
 		trashable={box !== 'trash'}
 		restorable={box === 'trash'}
-		list={box === 'flagged' ? 'important' : box === 'important' || box === 'feed' ? 'inbox' : 'other'}
+		list={box === 'flagged' ? 'important' : box === 'delayed' ? 'delayed' : ['important', 'feed', 'search'].includes(box) ? 'inbox' : 'other'}
 		messageIds={picked.map((m) => m.id)}
 		accountIds={[...new Set(picked.map((m) => m.account_id))]}
 		total={messages?.length ?? 0}

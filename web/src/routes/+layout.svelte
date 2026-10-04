@@ -73,7 +73,7 @@
 
 	// ---- Split view: the opened mail beside the mail list, or below it ----
 	const SPLIT_KEY = 'emscreen.split';
-	const listPages = ['/', '/important', '/delayed', '/feed', '/archive', '/sent', '/junk', '/trash'];
+	const listPages = ['/', '/important', '/delayed', '/feed', '/archive', '/sent', '/junk', '/trash', '/search'];
 	let roomy = $state(false);
 	/** Height of the top bar, which differs between wide and narrow windows. */
 	let barHeight = $state(57);
@@ -108,7 +108,8 @@
 	$effect(() => {
 		if (!openId) return;
 		if (pane) pane.scrollTop = 0;
-		document.querySelector(`main a[data-row="${CSS.escape(openId)}"]`)?.scrollIntoView({ block: 'nearest' });
+		// After the list has taken its new size and marked the row.
+		requestAnimationFrame(() => document.querySelector('main a[data-row].open')?.scrollIntoView({ block: 'nearest' }));
 	});
 
 	/**
@@ -119,7 +120,7 @@
 		const rows = [...document.querySelectorAll<HTMLElement>('main a[data-row]')].filter((row) => row.offsetParent);
 		if (!rows.length) return false;
 		const at = app.splitActive
-			? rows.findIndex((row) => row.dataset.row === openId)
+			? rows.findIndex((row) => row.classList.contains('open'))
 			: rows.indexOf(document.activeElement as HTMLElement);
 		const next = at < 0 ? rows[0] : rows[at + step];
 		if (!next) return true;
@@ -152,6 +153,13 @@
 	let size = $state({ ...DEFAULT_SIZE });
 	let mainElement: HTMLElement | undefined = $state();
 	let dragging = $state(false);
+	/** Room the two parts share, as measured. The tracks are given in whole pixels worked out
+	    here, not as percentages for the browser to resolve: the divider then sits at the same
+	    place on every page and in every browser, whatever the list holds. */
+	let mainWidth = $state(1200);
+	let mainHeight = $state(700);
+	const listWidth = $derived(Math.round(Math.min(Math.max(size.width, 256), Math.max(256, mainWidth - 336))));
+	const listHeight = $derived(Math.round(Math.min(Math.max(size.share, 0.15), 0.8) * mainHeight));
 	/** Where on the divider it was grabbed, so it does not jump under the pointer. */
 	let grab = 0;
 
@@ -247,6 +255,13 @@
 		if (event.key === 'Escape') menuOpen = false;
 		// An open dialog (the attachment viewer) owns the keyboard.
 		if (document.querySelector('dialog[open]')) return;
+		// From the search field, the arrows step into the results below it.
+		if (target === searchField && (event.key === 'ArrowDown' || event.key === 'ArrowUp') && app.user) {
+			if (!event.metaKey && !event.ctrlKey && !event.altKey && stepRow(event.key === 'ArrowDown' ? 1 : -1)) {
+				event.preventDefault();
+			}
+			return;
+		}
 		if (typing || !app.user) return;
 		// Ctrl with an arrow pages through the mail, like Space and Backspace.
 		const arrow = event.key === 'ArrowDown' ? 1 : event.key === 'ArrowUp' ? -1 : 0;
@@ -413,7 +428,9 @@
 	<main class="column" class:split={showPane} class:stacked={showPane && stacked}
 		class:dragging
 		bind:this={mainElement}
-		style="--top: {barHeight}px; --list: {size.width}px; --share: {size.share}"
+		bind:clientWidth={mainWidth}
+		bind:clientHeight={mainHeight}
+		style="--top: {barHeight}px; --list: {listWidth}px; --above: {listHeight}px"
 	>
 		{#if app.splitActive}
 			<div class="list">{@render children()}</div>
@@ -715,8 +732,8 @@
 	/* Split view: the list and the opened mail each scroll on their own, below the top bar. */
 	main.split {
 		display: grid;
-		/* The list as wide as the divider was dragged, but never crowding out the mail. */
-		grid-template-columns: min(var(--list), 100% - 21rem) auto minmax(0, 1fr);
+		/* The list as wide as the divider was dragged (see listWidth). */
+		grid-template-columns: var(--list) auto minmax(0, 1fr);
 		/* Exactly the window below the top bar, so only the two columns scroll. */
 		height: calc(100dvh - var(--top));
 		padding-bottom: 0;
@@ -724,6 +741,7 @@
 	main.split .list,
 	main.split .pane {
 		min-width: 0;
+		min-height: 0;
 		overflow-y: auto;
 		padding-bottom: 2rem;
 	}
@@ -768,7 +786,7 @@
 	/* Mail below the list: the same two parts, stacked. */
 	main.split.stacked {
 		grid-template-columns: minmax(0, 1fr);
-		grid-template-rows: calc(var(--share) * 100%) auto minmax(0, 1fr);
+		grid-template-rows: var(--above) auto minmax(0, 1fr);
 	}
 	main.split.stacked .list {
 		padding-bottom: 1rem;

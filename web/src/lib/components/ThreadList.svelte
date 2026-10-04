@@ -123,6 +123,7 @@
 						{#if thread.is_outgoing}<span class="you">You:</span>{/if}
 						{thread.snippet}
 					</span>
+					{#if thread.note}<span class="note" title="Your note: {thread.note}">{thread.note}</span>{/if}
 				</span>
 				{#if app.accounts.length > 1}
 					<span class="account" style="--h: {hue(String(thread.account_id * 97))}" title={accountLabel(thread.account_id)}
@@ -213,6 +214,20 @@
 		font-weight: 600;
 		color: var(--feed);
 	}
+	/* Your note on the conversation: a sticky-note strip, cut short. */
+	.note {
+		justify-self: start;
+		max-width: 100%;
+		margin-top: 0.15rem;
+		padding: 0 0.5rem;
+		border-left: 3px solid var(--signal);
+		border-radius: 0 6px 6px 0;
+		background: color-mix(in srgb, var(--signal) 16%, var(--surface));
+		font-size: 0.85rem;
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
+	}
 	/* Handle for dragging a row to the side bar; only where the side bar and a mouse exist. */
 	.grip {
 		display: none;
@@ -276,6 +291,13 @@
 			opacity: 0.55;
 		}
 	}
+	/* The row the arrow keys are on. Drawn inside the row: an outline around it would be cut
+	   off by the sliding container. */
+	a[data-row]:focus {
+		outline: none;
+		background: color-mix(in srgb, var(--important) 14%, transparent);
+		box-shadow: inset 4px 0 0 var(--important);
+	}
 	a.open {
 		background: color-mix(in srgb, var(--important) 12%, transparent);
 		box-shadow: inset 3px 0 0 var(--important);
@@ -316,6 +338,12 @@
 		.returns {
 			order: 5;
 			flex: none;
+		}
+		.note {
+			order: 5;
+			flex: 0 1 auto;
+			max-width: 16rem;
+			margin-top: 0;
 		}
 		time {
 			order: 6;

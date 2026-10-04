@@ -29,20 +29,26 @@ handle onto Important in the side bar, use the button in the selection bar, or p
 reading; the same ways lead back to Home. It is stored as the mail server's "flagged" mark,
 so other mail programs show it as flag or star, and mail flagged there appears in Important.
 
+**Notes**: in an opened mail, "Add note" (key `t`) attaches a text of your own to the conversation,
+e.g. "tax 2026" or "warranty until May". It shows on the mail, in the lists and in search results,
+is kept in Email Screen only (not on the mail server), and the search finds its words: typed
+plainly, or with `note:`.
+
 **Delay** takes a conversation out of Home for 1, 2, 3 or 7 days. It waits in the Delayed
 list and returns at 7:00 (server time) on that day, unseen and at the top. A new mail in the
 conversation ends the delay early. Delays are kept in Email Screen only.
 
 **Split view** (two buttons in the top bar) shows the opened mail together with the mail list:
-beside it, or below it; while no mail is open the list has the whole page. Each part scrolls on its own; drag the line between them to resize
+beside it, or below it; while no mail is open the list has the whole page. It works on the
+mail lists and on search results. Each part scrolls on its own; drag the line between them to resize
 (double-click it for the usual size). Windows narrower than about 900 px have no
 room for the two side by side and stack them. The choice is kept per browser.
 
 **Archive** files a mail away from any list or from the mail itself: it moves to the account's
 Archive folder on the server and shows in the Archive list.
 
-Home, Nice to know, Junk and Sent are conversation lists. Each has "Read all on one page",
-which shows the list's mails opened one below the other.
+The mail lists and the search results have "Read all on one page", which shows their mails
+opened one below the other. Junk is the exception: its mail is only opened one by one.
 
 Images that a mail loads from the internet are hidden until you choose "Show images". That choice
 is remembered for the sender; "Hide images and ask again" undoes it.
@@ -129,6 +135,7 @@ The field in the top bar searches subject, sender, recipients and text, and take
 | `from:carsten` | sender name or address contains "carsten" |
 | `to:anna` | a recipient contains "anna" |
 | `subject:invoice`, `title:invoice` | subject contains "invoice" |
+| `note:tax` | your note on the conversation contains "tax"; `note:` alone finds every conversation with a note |
 | `attachment:true`, `attachment:false` | mail with, or without, attachments |
 | `received:last month` | also `today`, `yesterday`, `this week`, `last week`, `this month`, `this year`, `last year` |
 | `received:01.09.2026..01.10.2026` | from first to last day, both included; also `2026/09/01..2026/10/01`, a single day, or an open end |
@@ -162,5 +169,6 @@ In the attachment viewer the left and right arrows step through files and Escape
 In the Screener `i` / `k` / `j` decide the first sender. In a conversation `r` reply, `u` mark as unseen, `i` important, `z` delay (then `1`, `2`, `3` or `7`), `a` archive, `d` move to Trash,
 `Shift+R` reply all, `f` forward.
 Arrow down and up go to the next and previous mail: in a conversation, and on a list in split
-view; on a list without split view they move from row to row and Enter opens. Space pages down
+view; on a list without split view, and in search results (also straight from the search field),
+they move from row to row and Enter opens. Space pages down
 in the mail, Backspace (or Shift+Space) pages up; Ctrl+Down and Ctrl+Up do the same.

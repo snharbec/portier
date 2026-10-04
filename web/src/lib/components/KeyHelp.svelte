@@ -26,7 +26,7 @@
 		{
 			title: 'In a mail list',
 			keys: [
-				[['↓'], 'Next mail: opens it in split view, otherwise moves to its row'],
+				[['↓'], 'Next mail: opens it in split view, otherwise moves to its row; also in search results'],
 				[['↑'], 'Previous mail'],
 				[['Enter'], 'Open the mail of the row'],
 				[['Esc'], 'Stop selecting']
@@ -47,6 +47,7 @@
 				[['u'], 'Mark as unseen'],
 				[['i'], 'Move to Important, or back to Home'],
 				[['z'], 'Delay, then 1, 2, 3 or 7 for the days'],
+				[['t'], 'Add or edit your note'],
 				[['n'], 'Next search result'],
 				[['p'], 'Previous search result']
 			]
