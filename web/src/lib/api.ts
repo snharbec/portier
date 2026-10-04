@@ -225,6 +225,12 @@ export function setUnauthorizedHandler(handler: () => void) {
 	onUnauthorized = handler;
 }
 
+/** Told when an answer came from the mail kept on this device (with the time it was kept), or from the server (`null`). */
+let onStored: (since: number | null) => void = () => {};
+export function setStoredHandler(handler: (since: number | null) => void) {
+	onStored = handler;
+}
+
 async function request<T>(method: string, path: string, body?: unknown): Promise<T> {
 	const init: RequestInit = { method, credentials: 'same-origin' };
 	if (body instanceof FormData) {
@@ -244,6 +250,8 @@ async function request<T>(method: string, path: string, body?: unknown): Promise
 		if (response.status === 401) onUnauthorized();
 		throw new ApiError(response.status, data?.error ?? `Request failed (${response.status})`);
 	}
+	const stored = response.headers.get('X-Portier-Stored');
+	onStored(stored ? Number(stored) : null);
 	return response.json();
 }
 

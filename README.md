@@ -94,9 +94,25 @@ button in the address bar, in Safari with "Add to Dock" (Mac) or "Add to Home Sc
 iPad). It then has its own icon and window, without the browser's bars.
 
 The app itself (scripts, styles, fonts, icons) is stored on the device, so it opens at once and
-also without the server. Mail is never stored there: it is always asked from the server. When the
-server cannot be reached (no connection, VPN off) the app says so and starts by itself once it
-can.
+also without the server. Mail is not stored there unless you ask for it: it is asked from the
+server. When the server cannot be reached (no connection, VPN off) the app says so and starts by
+itself once it can.
+
+### Reading without a connection
+
+Settings, "Mail on this device" turns on a store of mail in the browser, per device and off by
+default. With it on, the lists and mails you look at are kept, and the newest 50 conversations
+of Home are fetched ahead, together with the briefing. When the server cannot be reached the
+app shows what it kept and says from when it is.
+
+- The server is always asked first; the kept copy is only used when it does not answer.
+- Reading only: archiving, answering, searching and everything else that changes or asks
+  something new needs a connection. A mail read offline stays unseen on the server.
+- Kept are at most 200 conversations, none longer than two weeks. Attachments and pictures
+  inside mails are not kept.
+- Kept mail is not encrypted: whoever can use that browser profile can read it without signing
+  in. It is deleted on signing out, when the session ends, when another user signs in, when you
+  turn the setting off, and with "Delete kept mail".
 
 ## Terminal client
 

@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { api, type Account, type Category, type Sender, type User } from '#lib/api.ts';
 	import { app, categoryNames, classify, refreshAccounts } from '#lib/app.svelte.ts';
+	import { clearOffline, offline, setOffline } from '#lib/offline.svelte.ts';
 	import { swipeActions, type SwipeAction } from '#lib/swipe.ts';
 	import Avatar from '#lib/components/Avatar.svelte';
 	import ClassifyButtons from '#lib/components/ClassifyButtons.svelte';
@@ -145,6 +146,18 @@
 			app.swipe = { left: saved.swipe_left, right: saved.swipe_right };
 		} catch (e) {
 			swipeError = (e as Error).message;
+		}
+	}
+
+	// ---- Mail on this device ----
+	let offlineBusy = $state(false);
+
+	async function toggleOffline(on: boolean) {
+		offlineBusy = true;
+		try {
+			await setOffline(on);
+		} finally {
+			offlineBusy = false;
 		}
 	}
 
@@ -307,6 +320,7 @@
 	<a class="btn small" href="#sliding">Sliding</a>
 	<a class="btn small" href="#archive">Automatic archive</a>
 	<a class="btn small" href="#summaries">Summaries</a>
+	<a class="btn small" href="#device">Mail on this device</a>
 	{#if app.user?.is_admin}<a class="btn small" href="#users">Users</a>{/if}
 	<a class="btn small" href="#password">Password</a>
 </nav>
@@ -598,6 +612,42 @@
 	{#if archiveNote}<p class="ok" role="status">{archiveNote}</p>{/if}
 </section>
 
+<section id="device">
+	<h2>Mail on this device</h2>
+	<p class="muted">
+		Keeps the mail you read, and the newest 50 conversations of Home, in this browser, so that they can be read
+		when the server cannot be reached. Changing anything still needs a connection, and attachments are not kept.
+		The setting is for this device only.
+	</p>
+	{#if offline.possible}
+		<label class="check">
+			<input
+				type="checkbox"
+				checked={offline.enabled}
+				disabled={offlineBusy}
+				onchange={(event) => toggleOffline(event.currentTarget.checked)}
+			/>
+			Keep mail on this device
+		</label>
+		{#if offline.enabled}
+			<p class="kept">
+				{offline.mails}
+				{offline.mails === 1 ? 'conversation is' : 'conversations are'} kept here, at most 200 and none longer than
+				two weeks.
+				<button class="btn small" disabled={offlineBusy || offline.mails === 0} onclick={clearOffline}>
+					Delete kept mail
+				</button>
+			</p>
+		{/if}
+		<p class="muted note">
+			Kept mail is not encrypted: whoever can use this browser profile can read it without signing in. It is
+			deleted when you sign out, when your session ends, and when you turn this off.
+		</p>
+	{:else}
+		<p>This browser cannot keep mail: it needs an https address (or localhost) and a current browser.</p>
+	{/if}
+</section>
+
 <section id="summaries">
 	<h2>Summaries</h2>
 	<p class="muted">
@@ -849,6 +899,12 @@
 		.grid.server {
 			grid-template-columns: 1fr 1fr;
 		}
+	}
+	.kept {
+		display: flex;
+		flex-wrap: wrap;
+		align-items: center;
+		gap: 0.5rem 0.9rem;
 	}
 	.ai {
 		display: grid;

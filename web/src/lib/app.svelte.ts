@@ -1,6 +1,7 @@
 import { goto } from '$app/navigation';
+import { fetchAhead, offlineUser } from './offline.svelte.ts';
 import type { SwipeAction } from './swipe.ts';
-import { api, setUnauthorizedHandler, type Account, type Category, type Counts, type SavedSearch, type User } from './api.ts';
+import { api, setStoredHandler, setUnauthorizedHandler, type Account, type Category, type Counts, type SavedSearch, type User } from './api.ts';
 
 /** Session-wide state. `tick` changes whenever the server reports new or changed mail. */
 export const app = $state({
@@ -33,6 +34,8 @@ export const app = $state({
 	split: 'off' as 'off' | 'beside' | 'below',
 	/** Split view is chosen and possible right now (on a mail list). */
 	splitActive: false,
+	/** Set while the app shows mail kept on this device because the server cannot be reached: when it was kept. */
+	storedSince: null as number | null,
 	/** Short message about the last action, shown for a few seconds. */
 	notice: '',
 	/** Token that takes back the action the notice is about, while that is possible. */
@@ -43,7 +46,13 @@ export const app = $state({
 let events: EventSource | null = null;
 let refreshTimer: ReturnType<typeof setTimeout> | undefined;
 
+setStoredHandler((since) => {
+	// The oldest of what is shown is what the reader should know about.
+	app.storedSince = since === null ? null : Math.min(since, app.storedSince ?? since);
+});
+
 setUnauthorizedHandler(() => {
+	offlineUser(null);
 	app.user = null;
 	events?.close();
 	events = null;
@@ -61,9 +70,12 @@ export async function loadSession() {
 	app.openRegistration = me.open_registration;
 	app.officePreviews = me.office_previews;
 	app.ready = true;
+	// Mail kept on this device is this user's, or nobody's.
+	await offlineUser(app.user?.id ?? null);
 	if (app.user) {
 		await Promise.all([refreshCounts(), refreshAccounts(), refreshSettings()]);
 		connectEvents();
+		fetchAhead();
 	}
 }
 
@@ -139,12 +151,14 @@ function connectEvents() {
 		refreshTimer = setTimeout(() => {
 			app.tick += 1;
 			refreshCounts().catch(() => {});
+			fetchAhead();
 		}, 400);
 	};
 }
 
 export async function logout() {
 	await api.post('/logout');
+	await offlineUser(null);
 	events?.close();
 	events = null;
 	app.user = null;

@@ -46,7 +46,10 @@
 			if (firstLoad) {
 				unreadAtOpen = new Set(loaded.messages.filter((m) => !m.seen).map((m) => m.id));
 				if (unreadAtOpen.size) {
-					await api.post(`/threads/${requested}/seen`);
+					// Without the server (mail kept on this device) the mail is read all the same;
+					// it stays unseen there.
+					await api.post(`/threads/${requested}/seen`).catch(() => {});
+					if (!current()) return;
 					refreshCounts().catch(() => {});
 				}
 			}

@@ -8,6 +8,7 @@
 	import Login from '#lib/components/Login.svelte';
 	import ThreadView from '#lib/components/ThreadView.svelte';
 	import { carriesMail, dropOn, dropTargets } from '#lib/drag.ts';
+	import { fullDate } from '#lib/format.ts';
 	import { runSearch, search } from '#lib/search.svelte.ts';
 	import { onMount } from 'svelte';
 
@@ -35,6 +36,8 @@
 		const online = () => {
 			offline = false;
 			if (!app.ready) start();
+			// Back on the network: what is shown from this device is read anew.
+			else app.tick += 1;
 		};
 		const gone = () => (offline = true);
 		window.addEventListener('online', online);
@@ -348,6 +351,13 @@
 	<Login />
 {:else}
 	<header bind:offsetHeight={barHeight}>
+		{#if app.storedSince}
+			<p class="stored" role="status">
+				<strong>The server cannot be reached.</strong>
+				You are reading mail kept on this device, as of {fullDate(app.storedSince / 1000)}. Changing anything
+				needs a connection.
+			</p>
+		{/if}
 		<div class="bar column">
 			<button class="btn primary" onclick={write}>Write</button>
 			<button class="place" onclick={() => (menuOpen = !menuOpen)} aria-expanded={menuOpen} aria-controls="places">
@@ -423,7 +433,7 @@
 			</nav>
 		{/if}
 	</header>
-	<nav class="rail" aria-label="Places">
+	<nav class="rail" aria-label="Places" style="--bar: {barHeight}px">
 		<ul>
 			{#each places as place, index}
 				<li class:gap={startsGroup(index)}>
@@ -516,6 +526,17 @@
 {/if}
 
 <style>
+	.stored {
+		margin: 0;
+		padding: 0.45rem 1rem;
+		background: var(--signal);
+		color: var(--signal-ink);
+		font-size: 0.925rem;
+		text-align: center;
+	}
+	.stored strong {
+		margin-right: 0.4rem;
+	}
 	.retry {
 		display: block;
 		margin-top: 0.4rem;
@@ -688,10 +709,11 @@
 		.rail {
 			display: block;
 			position: fixed;
-			top: 5.5rem;
+			/* Below the bar, however tall it is (it grows by the notice about kept mail). */
+			top: calc(var(--bar, 57px) + 1.95rem);
 			left: 1.25rem;
 			width: 10.5rem;
-			max-height: calc(100vh - 6.5rem);
+			max-height: calc(100vh - var(--bar, 57px) - 2.95rem);
 			overflow-y: auto;
 		}
 		main {
