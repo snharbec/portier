@@ -1,5 +1,6 @@
 <script lang="ts">
-	import { api, type Account, type Category, type RecipientGroup, type Sender, type User } from '#lib/api.ts';
+	import { tick } from 'svelte';
+	import { api, type Account, type Addr, type Category, type RecipientGroup, type Sender, type User } from '#lib/api.ts';
 	import { app, categoryNames, classify, refreshAccounts } from '#lib/app.svelte.ts';
 	import { clearOffline, offline, setOffline } from '#lib/offline.svelte.ts';
 	import { swipeActions, type SwipeAction } from '#lib/swipe.ts';
@@ -170,6 +171,69 @@
 		// One address per line reads better than one long line.
 		groupMembers = group?.members.split(', ').join('\n') ?? '';
 		groupError = '';
+		memberHits = [];
+	}
+
+	// Known addresses that match what is being typed in the list of members.
+	let memberField: HTMLTextAreaElement | undefined = $state();
+	let memberHits = $state<Addr[]>([]);
+	let memberChosen = $state(-1);
+	let memberAsked = 0;
+
+	/** Where the address being typed starts: after the last comma, semicolon or line break before the cursor. */
+	function memberStart(text: string, cursor: number) {
+		const before = text.slice(0, cursor);
+		return Math.max(before.lastIndexOf(','), before.lastIndexOf(';'), before.lastIndexOf('\n')) + 1;
+	}
+
+	async function suggestMembers() {
+		if (!memberField) return;
+		const cursor = memberField.selectionStart;
+		const term = groupMembers.slice(memberStart(groupMembers, cursor), cursor).trim();
+		const asked = ++memberAsked;
+		const found = term.length >= 2 ? await api.get<Addr[]>(`/contacts?q=${encodeURIComponent(term)}`).catch(() => []) : [];
+		// An answer to something typed earlier must not replace a newer one.
+		if (asked !== memberAsked) return;
+		const taken = new Set(groupMembers.toLowerCase().split(/[,;\n]/).map((part) => part.trim()));
+		// Addresses only: a group is not put into a group, and what is in the list is not offered again.
+		memberHits = found.filter((hit) => !hit.group && !taken.has(hit.address.toLowerCase()));
+		memberChosen = -1;
+	}
+
+	/** Puts the address in place of what was typed, on a line of its own, ready for the next one. */
+	function takeMember(contact: Addr) {
+		if (!memberField) return;
+		const cursor = memberField.selectionStart;
+		const start = memberStart(groupMembers, cursor);
+		const lead = start > 0 && groupMembers[start - 1] !== '\n' ? ' ' : '';
+		const rest = groupMembers.slice(cursor).replace(/^[^\S\n]*\n?/, '');
+		const head = `${groupMembers.slice(0, start)}${lead}${contact.address}\n`;
+		groupMembers = head + rest;
+		memberHits = [];
+		memberChosen = -1;
+		const field = memberField;
+		field.focus();
+		// Once the value has reached the field, the cursor goes behind the new address.
+		tick().then(() => field.setSelectionRange(head.length, head.length));
+	}
+
+	/** Arrow keys walk through the suggestions, Enter or Tab takes the picked one, Escape closes them. */
+	function memberKeydown(event: KeyboardEvent) {
+		if (!memberHits.length || event.ctrlKey || event.metaKey || event.altKey) return;
+		if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+			event.preventDefault();
+			const step = event.key === 'ArrowDown' ? 1 : -1;
+			memberChosen =
+				memberChosen < 0 && step < 0 ? memberHits.length - 1 : (memberChosen + step + memberHits.length) % memberHits.length;
+			document.getElementById(`member-suggestion-${memberChosen}`)?.scrollIntoView({ block: 'nearest' });
+		} else if ((event.key === 'Enter' || event.key === 'Tab') && memberChosen >= 0) {
+			event.preventDefault();
+			takeMember(memberHits[memberChosen]);
+		} else if (event.key === 'Escape') {
+			event.preventDefault();
+			memberHits = [];
+			memberChosen = -1;
+		}
 	}
 
 	async function saveGroup(event: SubmitEvent) {
@@ -693,10 +757,47 @@
 				Name
 				<input bind:value={groupName} maxlength="40" placeholder="e.g. Board" autocomplete="off" />
 			</label>
-			<label class="field">
-				Addresses, one per line or separated by commas
-				<textarea class="input" rows="5" bind:value={groupMembers} spellcheck="false" autocomplete="off"></textarea>
-			</label>
+			<div class="members">
+				<label class="field" for="group-members">Addresses, one per line or separated by commas</label>
+				<textarea
+					id="group-members"
+					class="input"
+					rows="5"
+					role="combobox"
+					aria-autocomplete="list"
+					aria-expanded={memberHits.length > 0}
+					aria-controls="member-suggestions"
+					aria-activedescendant={memberChosen >= 0 ? `member-suggestion-${memberChosen}` : undefined}
+					bind:this={memberField}
+					bind:value={groupMembers}
+					oninput={suggestMembers}
+					onkeydown={memberKeydown}
+					onblur={() => setTimeout(() => (memberHits = []), 150)}
+					placeholder="Type a name or an address"
+					spellcheck="false"
+					autocomplete="off"
+					autocapitalize="off"
+				></textarea>
+				{#if memberHits.length}
+					<ul class="suggestions sheet" id="member-suggestions" role="listbox" aria-label="Known addresses">
+						{#each memberHits as contact, index}
+							<li role="presentation">
+								<button
+									type="button"
+									id="member-suggestion-{index}"
+									role="option"
+									aria-selected={index === memberChosen}
+									tabindex="-1"
+									onclick={() => takeMember(contact)}
+								>
+									<strong>{displayName(contact.name, contact.address)}</strong>
+									<span class="muted">{contact.address}</span>
+								</button>
+							</li>
+						{/each}
+					</ul>
+				{/if}
+			</div>
 			<div class="actions">
 				<button class="btn primary" disabled={groupBusy}>{groupId ? 'Save group' : 'Add group'}</button>
 				<button type="button" class="btn" onclick={() => (groupId = null)}>Cancel</button>
@@ -1026,6 +1127,38 @@
 	.group textarea {
 		resize: vertical;
 		font: inherit;
+	}
+	.members {
+		position: relative;
+		display: grid;
+		gap: 0.25rem;
+	}
+	.suggestions {
+		position: absolute;
+		top: 100%;
+		left: 0;
+		right: 0;
+		z-index: 5;
+		list-style: none;
+		margin: 0;
+		padding: 0.3rem;
+	}
+	.suggestions button {
+		display: flex;
+		gap: 0.6rem;
+		width: 100%;
+		padding: 0.45rem 0.6rem;
+		border: 0;
+		border-radius: 8px;
+		background: none;
+		text-align: left;
+		cursor: pointer;
+	}
+	.suggestions button:hover {
+		background: var(--paper);
+	}
+	.suggestions button[aria-selected='true'] {
+		background: color-mix(in srgb, var(--important) 14%, var(--surface));
 	}
 	.kept {
 		display: flex;
