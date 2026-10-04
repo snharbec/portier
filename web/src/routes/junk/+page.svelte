@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { api, type ThreadSummary } from '#lib/api.ts';
+	import { page } from '$app/state';
 	import { app } from '#lib/app.svelte.ts';
 	import SelectAll from '#lib/components/SelectAll.svelte';
 	import SelectionBar from '#lib/components/SelectionBar.svelte';
@@ -9,7 +10,36 @@
 	let threads = $state<ThreadSummary[] | null>(null);
 	let error = $state('');
 	const selection = createSelection();
-	const picked = $derived(selection.visible(threads ?? [], (t) => t.id));
+
+	// "Unseen only" narrows the list to conversations with unseen mail; kept in this browser.
+	const UNSEEN_KEY = 'emscreen.unseen-only.junk';
+	let unseenOnly = $state(restoreUnseenOnly());
+
+	function restoreUnseenOnly() {
+		try {
+			return localStorage.getItem(UNSEEN_KEY) === '1';
+		} catch {
+			return false;
+		}
+	}
+
+	function toggleUnseenOnly() {
+		unseenOnly = !unseenOnly;
+		selection.stop();
+		try {
+			localStorage.setItem(UNSEEN_KEY, unseenOnly ? '1' : '0');
+		} catch {
+			// The choice then lasts until the page is reloaded.
+		}
+	}
+
+	// The mail open beside the list stays in it, although opening it made it seen.
+	const shown = $derived(
+		unseenOnly
+			? (threads ?? []).filter((t) => t.unread > 0 || String(t.id) === page.url.searchParams.get('open'))
+			: (threads ?? [])
+	);
+	const picked = $derived(selection.visible(shown, (t) => t.id));
 
 	$effect(() => {
 		app.tick;
@@ -23,7 +53,10 @@
 	<h1>Junk</h1>
 	<p>Mail from senders you turned away. It also sits in the Junk folder of your mail account.</p>
 	{#if threads?.length}
-		<p class="tools"><a class="btn small" href="/read/junk">Read all on one page</a></p>
+		<p class="tools">
+			<button class="btn small" aria-pressed={unseenOnly} onclick={toggleUnseenOnly}>Unseen only</button>
+			<a class="btn small" href="/read/junk">Read all on one page</a>
+		</p>
 	{/if}
 </div>
 
@@ -36,23 +69,29 @@
 		<strong>No junk</strong>
 		Senders you mark as junk in the Screener end up here.
 	</div>
+{:else if shown.length === 0}
+	<div class="empty sheet">
+		<strong>No unseen mail here</strong>
+		Everything in this list has been seen.
+		<p><button class="btn" onclick={toggleUnseenOnly}>Show all mail</button></p>
+	</div>
 {:else}
 	<SelectAll
 		{selection}
 		selected={picked.length}
-		total={threads.length}
-		onall={() => selection.set((threads ?? []).map((t) => t.id))}
+		total={shown.length}
+		onall={() => selection.set(shown.map((t) => t.id))}
 		onnone={selection.clear}
 	/>
-	<ThreadList {threads} {selection} />
+	<ThreadList threads={shown} {selection} />
 {/if}
 
 <SelectionBar
 	list="other"
 	threadIds={picked.map((t) => t.id)}
 	accountIds={[...new Set(picked.map((t) => t.account_id))]}
-	total={threads?.length ?? 0}
-	onselectall={() => selection.set((threads ?? []).map((t) => t.id))}
+	total={shown.length}
+	onselectall={() => selection.set(shown.map((t) => t.id))}
 	onclear={selection.clear}
 	ondone={selection.stop}
 />

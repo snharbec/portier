@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { api, type Message } from '#lib/api.ts';
 	import { notify } from '#lib/app.svelte.ts';
+	import { look } from '#lib/look.svelte.ts';
 	import { untrack } from 'svelte';
 
 	let { message }: { message: Message } = $props();
@@ -29,10 +30,12 @@
 	const fallback = { ink: '#1a1f2e', soft: '#55607a', line: '#c9cfdd', link: '#2f4be0' };
 	let theme = $state(fallback);
 
-	// The app's colours as they are now (light or dark). Read once per mail; this must not read
-	// `theme` itself, or writing it would run the effect again without end.
+	// The app's colours as they are now. Read once per mail and again when the look changes; this
+	// must not read `theme` itself, or writing it would run the effect again without end.
 	$effect(() => {
 		message.id;
+		look.theme;
+		look.dark;
 		const css = getComputedStyle(document.documentElement);
 		const token = (name: string, otherwise: string) => css.getPropertyValue(name).trim() || otherwise;
 		theme = {
@@ -54,7 +57,7 @@
 <meta http-equiv="Content-Security-Policy" content="${csp}">
 <base target="_blank">
 <style>
-html{background:${plain ? 'transparent' : '#fff'};color:${plain ? theme.ink : '#1a1f2e'};color-scheme:${plain ? 'light dark' : 'light'}}
+html{background:${plain ? 'transparent' : '#fff'};color:${plain ? theme.ink : '#1a1f2e'};color-scheme:${plain ? (look.dark ? 'dark' : 'light') : 'light'}}
 body{margin:0;padding:4px 2px;font:16px/1.55 system-ui,sans-serif;overflow-wrap:anywhere;${plain ? 'max-width:46rem' : ''}}
 ${plain ? `a{color:${theme.link}}` : ''}
 img{max-width:100%;height:auto}

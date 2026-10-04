@@ -6,6 +6,20 @@
 		<meta name="color-scheme" content="light dark" />
 		<link rel="icon" href="%sveltekit.assets%/favicon.svg" />
 		<title>Email Screen</title>
+		<script>
+			// The chosen look, before anything is painted (see src/lib/look.svelte.ts).
+			(function () {
+				var root = document.documentElement;
+				var saved = {};
+				try {
+					saved = JSON.parse(localStorage.getItem('emscreen.look') || '{}') || {};
+				} catch (e) {}
+				var dark =
+					saved.mode === 'dark' || (saved.mode !== 'light' && matchMedia('(prefers-color-scheme: dark)').matches);
+				root.dataset.mode = dark ? 'dark' : 'light';
+				root.dataset.theme = typeof saved.theme === 'string' ? saved.theme : 'harbour';
+			})();
+		</script>
 		%sveltekit.head%
 	</head>
 	<body>

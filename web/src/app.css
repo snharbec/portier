@@ -1,13 +1,19 @@
 @import '@fontsource-variable/bricolage-grotesque';
 @import '@fontsource-variable/instrument-sans';
 
-:root {
+/* Themes are matched by attribute alone, not only on the root, so that a part of the page can
+   show another theme (the swatches in Settings). */
+:root,
+[data-theme='harbour'] {
+	/* Harbour, light: the look without any choice made. Every theme sets the same tokens. */
 	--paper: #f2f4f9;
 	--surface: #ffffff;
 	--ink: #14213d;
 	--ink-soft: #55607a;
 	--line: #d9deea;
 	--important: #2f4be0;
+	/* Text on a filled accent (primary button, slide actions). */
+	--on-accent: #ffffff;
 	--feed: #0b7f6d;
 	--junk: #b4264a;
 	--signal: #ffc83d;
@@ -19,20 +25,89 @@
 	/* Widest comfortable measure for forms and floating bars; mail lists and mails use the full window. */
 	--column: 46rem;
 	--radius: 14px;
-	color-scheme: light dark;
+	color-scheme: light;
 }
 
-@media (prefers-color-scheme: dark) {
-	:root {
-		--paper: #0f1524;
-		--surface: #182036;
-		--ink: #e9edf7;
-		--ink-soft: #9aa5c0;
-		--line: #2b3552;
-		--important: #8498ff;
-		--feed: #45c8b2;
-		--junk: #ff7d9c;
-	}
+/* Light or dark is decided in app.html and look.svelte.ts ("like the system" included) and
+   arrives here as data-mode; the theme as data-theme. */
+:root[data-mode='dark'],
+[data-theme='harbour'][data-mode='dark'] {
+	color-scheme: dark;
+	--paper: #0f1524;
+	--surface: #182036;
+	--ink: #e9edf7;
+	--ink-soft: #9aa5c0;
+	--line: #2b3552;
+	--important: #8498ff;
+	--on-accent: #0f1524;
+	--feed: #45c8b2;
+	--junk: #ff7d9c;
+}
+
+[data-theme='forest'] {
+	--paper: #eef3ec;
+	--surface: #ffffff;
+	--ink: #14281d;
+	--ink-soft: #4f6358;
+	--line: #d2ddd2;
+	--important: #1c7447;
+	--feed: #0b6c84;
+	--junk: #b4264a;
+}
+[data-theme='forest'][data-mode='dark'] {
+	--paper: #0e1712;
+	--surface: #17231c;
+	--ink: #e6f0e9;
+	--ink-soft: #98ad9f;
+	--line: #29392f;
+	--important: #5fd197;
+	--on-accent: #0e1712;
+	--feed: #5cc3dc;
+	--junk: #ff7d9c;
+}
+
+[data-theme='plum'] {
+	--paper: #f5f0f7;
+	--surface: #ffffff;
+	--ink: #2a1533;
+	--ink-soft: #675570;
+	--line: #e2d7e8;
+	--important: #8a2fb8;
+	--feed: #0b7f6d;
+	--junk: #c22d4f;
+}
+[data-theme='plum'][data-mode='dark'] {
+	--paper: #17101c;
+	--surface: #221829;
+	--ink: #f0e8f5;
+	--ink-soft: #b1a2bb;
+	--line: #382b42;
+	--important: #cf9bf0;
+	--on-accent: #17101c;
+	--feed: #45c8b2;
+	--junk: #ff7d9c;
+}
+
+[data-theme='graphite'] {
+	--paper: #f1f1ef;
+	--surface: #ffffff;
+	--ink: #1b1b1b;
+	--ink-soft: #5b5b5b;
+	--line: #dbdbd8;
+	--important: #1b1b1b;
+	--feed: #0b7f6d;
+	--junk: #b4264a;
+}
+[data-theme='graphite'][data-mode='dark'] {
+	--paper: #121212;
+	--surface: #1d1d1d;
+	--ink: #ededed;
+	--ink-soft: #a3a3a3;
+	--line: #303030;
+	--important: #ededed;
+	--on-accent: #121212;
+	--feed: #45c8b2;
+	--junk: #ff7d9c;
 }
 
 *,
@@ -171,12 +246,13 @@ textarea {
 .btn.primary {
 	background: var(--important);
 	border-color: var(--important);
-	color: #fff;
+	color: var(--on-accent);
 }
-@media (prefers-color-scheme: dark) {
-	.btn.primary {
-		color: #0f1524;
-	}
+/* A button that is a switch, while it is on. */
+.btn[aria-pressed='true'] {
+	background: var(--ink);
+	border-color: var(--ink);
+	color: var(--paper);
 }
 .btn.quiet {
 	border-color: transparent;

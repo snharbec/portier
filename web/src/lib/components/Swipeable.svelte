@@ -184,7 +184,7 @@
 		padding: 0 1rem;
 		border: 0;
 		background: var(--c);
-		color: #fff;
+		color: var(--on-accent);
 		font-weight: 700;
 		font-size: 0.9rem;
 		text-align: center;
@@ -213,11 +213,5 @@
 	}
 	.trash {
 		--c: var(--junk);
-	}
-	@media (prefers-color-scheme: dark) {
-		.hint,
-		button {
-			color: #0f1524;
-		}
 	}
 </style>
