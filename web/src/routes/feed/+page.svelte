@@ -1,96 +1,84 @@
 <script lang="ts">
-	import { api, type ThreadSummary } from '#lib/api.ts';
 	import { page } from '$app/state';
+	import { untrack } from 'svelte';
 	import { app } from '#lib/app.svelte.ts';
 	import SelectAll from '#lib/components/SelectAll.svelte';
 	import SelectionBar from '#lib/components/SelectionBar.svelte';
 	import ThreadList from '#lib/components/ThreadList.svelte';
 	import { createSelection } from '#lib/selection.svelte.ts';
+	import { createThreadList } from '#lib/threads.svelte.ts';
 
-	let threads = $state<ThreadSummary[] | null>(null);
-	let error = $state('');
+	const list = createThreadList('feed', true);
+	const threads = $derived(list.threads ?? []);
 	const selection = createSelection();
-
-	// "Unseen only" narrows the list to conversations with unseen mail; kept in this browser.
-	const UNSEEN_KEY = 'emscreen.unseen-only.feed';
-	let unseenOnly = $state(restoreUnseenOnly());
-
-	function restoreUnseenOnly() {
-		try {
-			return localStorage.getItem(UNSEEN_KEY) === '1';
-		} catch {
-			return false;
-		}
-	}
-
-	function toggleUnseenOnly() {
-		unseenOnly = !unseenOnly;
-		selection.stop();
-		try {
-			localStorage.setItem(UNSEEN_KEY, unseenOnly ? '1' : '0');
-		} catch {
-			// The choice then lasts until the page is reloaded.
-		}
-	}
-
-	// The mail open beside the list stays in it, although opening it made it seen.
-	const shown = $derived(
-		unseenOnly
-			? (threads ?? []).filter((t) => t.unread > 0 || String(t.id) === page.url.searchParams.get('open'))
-			: (threads ?? [])
-	);
-	const picked = $derived(selection.visible(shown, (t) => t.id));
+	const picked = $derived(selection.visible(threads, (t) => t.id));
 
 	$effect(() => {
 		app.tick;
-		api.get<ThreadSummary[]>('/threads?box=feed')
-			.then((list) => (threads = list))
-			.catch((e) => (error = e.message));
+		// Loading reads the list it replaces; untracked, so that storing it does not start this again.
+		untrack(() => list.load(Number(page.url.searchParams.get('open'))));
 	});
+
+	function narrow() {
+		selection.stop();
+		list.toggleUnseenOnly();
+	}
 </script>
 
 <div class="page-head">
 	<h1>Nice to know</h1>
 	<p>Newsletters and updates from senders you filed here.</p>
-	{#if threads?.length}
+	{#if threads.length || list.unseenOnly}
 		<p class="tools">
-			<button class="btn small" aria-pressed={unseenOnly} onclick={toggleUnseenOnly}>Unseen only</button>
-			<a class="btn small" href="/read/feed">Read all on one page</a>
+			<button class="btn small" aria-pressed={list.unseenOnly} onclick={narrow}>Unseen only</button>
+			{#if threads.length}<a class="btn small" href="/read/feed">Read all on one page</a>{/if}
 		</p>
 	{/if}
 </div>
 
-{#if error}
-	<p class="error" role="alert">{error}</p>
-{:else if threads === null}
+{#if list.error}
+	<p class="error" role="alert">{list.error}</p>
+{:else if list.threads === null}
 	<p class="empty" aria-busy="true">Loading</p>
+{:else if threads.length === 0 && list.unseenOnly}
+	<div class="empty sheet">
+		<strong>No unseen mail here</strong>
+		Everything in this list has been seen.
+		<p><button class="btn" onclick={narrow}>Show all mail</button></p>
+	</div>
 {:else if threads.length === 0}
 	<div class="empty sheet">
 		<strong>Nothing to read yet</strong>
 		Mark a sender as nice to know in the Screener and their mail collects here.
 	</div>
-{:else if shown.length === 0}
-	<div class="empty sheet">
-		<strong>No unseen mail here</strong>
-		Everything in this list has been seen.
-		<p><button class="btn" onclick={toggleUnseenOnly}>Show all mail</button></p>
-	</div>
 {:else}
 	<SelectAll
 		{selection}
 		selected={picked.length}
-		total={shown.length}
-		onall={() => selection.set(shown.map((t) => t.id))}
+		total={threads.length}
+		onall={() => selection.set(threads.map((t) => t.id))}
 		onnone={selection.clear}
 	/>
-	<ThreadList threads={shown} {selection} />
+	<ThreadList {threads} {selection} />
+	{#if list.more}
+		<p class="older">
+			<button class="btn" disabled={list.busy} onclick={list.older}>Show older conversations</button>
+		</p>
+	{/if}
 {/if}
 
 <SelectionBar
 	threadIds={picked.map((t) => t.id)}
 	accountIds={[...new Set(picked.map((t) => t.account_id))]}
-	total={shown.length}
-	onselectall={() => selection.set(shown.map((t) => t.id))}
+	total={threads.length}
+	onselectall={() => selection.set(threads.map((t) => t.id))}
 	onclear={selection.clear}
 	ondone={selection.stop}
 />
+
+<style>
+	.older {
+		margin: 1rem 0 0;
+		text-align: center;
+	}
+</style>

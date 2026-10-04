@@ -1257,6 +1257,70 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn long_lists_are_read_in_pages_and_can_be_narrowed_to_unseen_mail() {
+        let (app, state) = test_app().await;
+        let admin = json!({ "email": "admin@example.org", "password": "password1" });
+        let (_, cookie, _) = call(&app, "POST", "/api/register", None, Some(admin)).await;
+        let cookie = cookie.unwrap();
+        let (_, _, sender) = seed_mail(&state, 1).await;
+        let db = &state.db;
+        let archive = crate::mail::store::ensure_folder(db, 1, "Archive", "archive")
+            .await
+            .unwrap();
+        // 310 archived conversations, all seen but the two oldest.
+        for n in 0..310 {
+            let thread: i64 =
+                sqlx::query_scalar("INSERT INTO threads (user_id, subject, sender_id) VALUES (1, ?, ?) RETURNING id")
+                    .bind(format!("Old {n}"))
+                    .bind(sender)
+                    .fetch_one(db)
+                    .await
+                    .unwrap();
+            sqlx::query(
+                "INSERT INTO messages (user_id, account_id, folder_id, uid, thread_id, sender_id, message_id,
+                     from_addr, subject, date, seen)
+                 VALUES (1, 1, ?, ?, ?, ?, ?, 'anna@example.com', ?, ?, ?)",
+            )
+            .bind(archive.id)
+            .bind(100 + n)
+            .bind(thread)
+            .bind(sender)
+            .bind(format!("old-{n}@example.com"))
+            .bind(format!("Old {n}"))
+            .bind(1000 + n)
+            .bind(n >= 2)
+            .execute(db)
+            .await
+            .unwrap();
+        }
+        let list = async |query: &str| -> Vec<String> {
+            let path = format!("/api/threads?box=archive{query}");
+            let (_, _, rows) = call(&app, "GET", &path, Some(&cookie), None).await;
+            rows.as_array()
+                .unwrap()
+                .iter()
+                .map(|row| row["subject"].as_str().unwrap().to_string())
+                .collect()
+        };
+
+        let (_, _, counts) = call(&app, "GET", "/api/counts", Some(&cookie), None).await;
+        assert_eq!(counts["unread_archive"], 2);
+        // The first page holds the newest 300: the two unseen ones are not on it.
+        let first = list("").await;
+        assert_eq!(
+            (first.len(), first[0].as_str(), first[299].as_str()),
+            (300, "Old 309", "Old 10")
+        );
+        // The next page has the rest, and narrowing to unseen mail finds the two wherever they are.
+        assert_eq!(list("&offset=300").await.len(), 10);
+        assert_eq!(list("&unseen=1").await, ["Old 1", "Old 0"]);
+        assert_eq!(
+            list("&limit=5&offset=2").await,
+            ["Old 307", "Old 306", "Old 305", "Old 304", "Old 303"]
+        );
+    }
+
+    #[tokio::test]
     async fn archiving_moves_a_conversation_to_the_archive_list() {
         let (app, state) = test_app().await;
         let admin = json!({ "email": "admin@example.org", "password": "password1" });

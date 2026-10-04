@@ -240,6 +240,13 @@ pub async fn avatar(
 pub struct BoxQuery {
     #[serde(rename = "box")]
     mailbox: String,
+    /// `1`: only conversations with unseen mail.
+    unseen: Option<String>,
+    /// How many conversations at most (300 unless said), and how many to skip: the list is
+    /// read in pages, newest first.
+    limit: Option<i64>,
+    #[serde(default)]
+    offset: i64,
 }
 
 #[derive(Serialize, sqlx::FromRow)]
@@ -321,6 +328,12 @@ pub async fn threads(
     } else {
         "MAX(lm.date, COALESCE(t.returned_at, 0)) DESC, lm.id DESC"
     };
+    // The same test the `unread` column of a row makes.
+    let unseen = if matches!(q.unseen.as_deref(), Some("1" | "true")) {
+        " AND EXISTS (SELECT 1 FROM messages um WHERE um.thread_id = t.id AND um.seen = 0 AND um.is_outgoing = 0)"
+    } else {
+        ""
+    };
     let sql = format!(
         "SELECT t.id, t.subject,
                 (SELECT COUNT(DISTINCT m.message_id) FROM messages m WHERE m.thread_id = t.id) AS count,
@@ -332,12 +345,14 @@ pub async fn threads(
          JOIN messages lm ON lm.id = (
              SELECT id FROM messages WHERE thread_id = t.id ORDER BY date DESC, id DESC LIMIT 1)
          LEFT JOIN senders s ON s.id = t.sender_id
-         WHERE t.user_id = ? AND {condition}
-         ORDER BY {order} LIMIT 300"
+         WHERE t.user_id = ? AND {condition}{unseen}
+         ORDER BY {order} LIMIT ? OFFSET ?"
     );
     Ok(Json(
         sqlx::query_as(sqlx::AssertSqlSafe(sql))
             .bind(user.id)
+            .bind(q.limit.unwrap_or(300).clamp(1, 1000))
+            .bind(q.offset.max(0))
             .fetch_all(&state.db)
             .await?,
     ))

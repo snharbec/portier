@@ -262,6 +262,9 @@ pub struct App {
     /// Lists narrowed to unseen mail.
     narrowed: HashSet<&'static str>,
     pub reading: Option<Reading>,
+    /// How many pages of the current list are loaded, and whether it has older mail still.
+    pages: usize,
+    more: bool,
     /// Conversations of the current list that are in Important.
     flagged: HashSet<i64>,
     /// Mails read beside the list keep their place in Home's Unseen area while the mail
@@ -271,6 +274,9 @@ pub struct App {
     pub page: usize,
     pub lines: usize,
 }
+
+/// Conversations a list asks the server for at a time.
+const PAGE: usize = 300;
 
 /// "1 conversation", "3 conversations".
 fn conversations(count: usize) -> String {
@@ -306,6 +312,8 @@ impl App {
             saved: Vec::new(),
             narrowed: HashSet::new(),
             reading: None,
+            pages: 1,
+            more: false,
             flagged: HashSet::new(),
             held: Vec::new(),
             page: 20,
@@ -432,17 +440,34 @@ impl App {
             }
             place => {
                 let mailbox = place.mailbox().expect("mail list");
-                let mut list = self.threads(mailbox).await?;
+                // A long list is read in pages; narrowing to unseen mail is asked of the server,
+                // which finds such mail on whatever page it is.
+                let narrowed = self.narrowed.contains(place.name());
+                let limit = PAGE * self.pages;
+                let unseen = if narrowed { "&unseen=1" } else { "" };
+                let mut list: Vec<ThreadSummary> = self
+                    .client
+                    .get(&format!("/threads?box={mailbox}&limit={limit}{unseen}"))
+                    .await?;
+                self.more = list.len() >= limit;
                 if place == Place::Important {
                     self.flagged = list.iter().map(|t| t.id).collect();
                 }
-                let all = list.len();
-                if self.narrowed.contains(place.name()) {
-                    // The opened mail stays listed although reading it made it seen.
-                    let open = self.open.as_ref().map(|open| open.thread.id);
-                    list.retain(|t| t.unread > 0 || Some(t.id) == open);
+                // The opened mail stays listed although reading it made it seen.
+                if narrowed
+                    && let Some(open) = self.open.as_ref().map(|open| open.thread.id)
+                    && !list.iter().any(|t| t.id == open)
+                    && let Some(at) = self
+                        .rows
+                        .iter()
+                        .position(|row| matches!(row, Row::Mail(t) if t.id == open))
+                    && let Row::Mail(kept) = &self.rows[at]
+                {
+                    let mut kept = kept.clone();
+                    kept.unread = 0;
+                    list.insert(at.min(list.len()), kept);
                 }
-                let narrowed_away = all > 0 && list.is_empty();
+                let narrowed_away = narrowed && list.is_empty();
                 rows.extend(list.into_iter().map(Row::Mail));
                 if narrowed_away {
                     rows.push(Row::Empty("No unseen mail here. U shows all mail again.".into()));
@@ -528,6 +553,8 @@ impl App {
     async fn search(&mut self, query: String) -> Result<()> {
         let before = (self.place, std::mem::replace(&mut self.query, query));
         self.place = Place::Search;
+        self.pages = 1;
+        self.more = false;
         self.open = None;
         self.reading = None;
         self.held.clear();
@@ -605,6 +632,8 @@ impl App {
 
     async fn go(&mut self, place: Place) -> Result<()> {
         self.place = place;
+        self.pages = 1;
+        self.more = false;
         self.reading = None;
         self.open = None;
         self.held.clear();
@@ -927,6 +956,7 @@ impl App {
                 if !self.narrowed.remove(name) {
                     self.narrowed.insert(name);
                 }
+                self.pages = 1;
                 self.status = if self.is_narrowed() {
                     "Unseen mail only".into()
                 } else {
@@ -1405,7 +1435,14 @@ impl App {
         // With the split view on, the first arrow opens the mail the cursor is on.
         let opens = self.open.is_some() || self.split != Split::Off;
         let first = self.split != Split::Off && self.open.is_none();
-        if (first || self.step(by)) && opens {
+        let mut moved = first || self.step(by);
+        if !moved && by > 0 && self.more {
+            // At the end of what is loaded: the next page of older mail.
+            self.pages += 1;
+            self.load_rows().await?;
+            moved = self.step(by);
+        }
+        if moved && opens {
             self.open_current().await?;
         }
         Ok(())
