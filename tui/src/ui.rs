@@ -734,6 +734,10 @@ const KEYS: &[(&str, &[(&str, &str)])] = &[
             ("2", "Screener"),
             ("Tab", "Side bar and back; ↑ ↓ choose a list there"),
             ("s", "Split view: beside, below, off"),
+            (
+                "Ctrl Z",
+                "Undo the last action, for 4 seconds after it (also a sent mail)",
+            ),
             ("Ctrl L", "Load again (also F5)"),
             ("q", "Quit"),
         ],

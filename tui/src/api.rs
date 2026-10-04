@@ -401,8 +401,8 @@ impl Client {
     }
 
     /// Listens to the server's change events for as long as `changed` has a receiver, and
-    /// sends a unit for each. Reconnects after a pause when the connection drops.
-    pub async fn watch(self, changed: tokio::sync::mpsc::UnboundedSender<()>) {
+    /// sends a notice for each (true: a mail could not be sent). Reconnects after a pause when the connection drops.
+    pub async fn watch(self, changed: tokio::sync::mpsc::UnboundedSender<bool>) {
         loop {
             let request = self
                 .http
@@ -414,8 +414,10 @@ impl Client {
                 && response.status().is_success()
             {
                 while let Ok(Some(chunk)) = response.chunk().await {
-                    // Every event is a reason to look again; what it says does not matter.
-                    if chunk.windows(5).any(|w| w == b"data:") && changed.send(()).is_err() {
+                    // Every event is a reason to look again. One of them also has to be told:
+                    // a mail that could not be sent.
+                    let failed = chunk.windows(11).any(|w| w == b"send_failed");
+                    if chunk.windows(5).any(|w| w == b"data:") && changed.send(failed).is_err() {
                         return;
                     }
                 }

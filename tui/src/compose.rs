@@ -669,10 +669,12 @@ impl App {
             return Ok(());
         };
         self.save_draft().await?;
-        let _: Value = self.client.post(&format!("/drafts/{id}/send"), json!({})).await?;
+        let answer: Value = self.client.post(&format!("/drafts/{id}/send"), json!({})).await?;
         self.compose = None;
         self.refresh().await?;
-        self.status = "Sent".into();
+        // It goes out when it can no longer be undone.
+        self.status = "Sending the mail".into();
+        self.undoable(&answer);
         Ok(())
     }
 

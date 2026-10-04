@@ -41,6 +41,7 @@
 				<a href="/compose/{draft.id}" onclick={() => rememberDraftReturn(draft.id)}>
 					<strong>{draft.subject || '(no subject)'}</strong>
 					<span class="muted">{draft.to_addrs ? `to ${draft.to_addrs}` : 'no recipient yet'}</span>
+					{#if draft.last_error}<span class="error">Could not be sent</span>{/if}
 				</a>
 				<time class="muted">{shortDate(draft.updated_at)}</time>
 				<button class="btn small danger" onclick={() => discard(draft.id)}>Discard</button>

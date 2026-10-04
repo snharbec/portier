@@ -35,6 +35,7 @@ pub fn router() -> Router<AppState> {
         .route("/accounts/{id}", put(accounts::update).delete(accounts::delete))
         .route("/accounts/{id}/folders", get(accounts::folders))
         .route("/mail/actions", post(bulk::apply))
+        .route("/undo/{token}", post(mail::undo))
         .route("/screener", get(mail::screener))
         .route("/senders", get(mail::senders))
         .route("/senders/{id}/category", post(mail::set_category))
@@ -1072,6 +1073,186 @@ mod tests {
             served().await.0.as_deref(),
             Some("application/json"),
             "removed: not found again"
+        );
+    }
+
+    #[tokio::test]
+    async fn actions_can_be_undone_for_a_short_time() {
+        let (app, state) = test_app().await;
+        let admin = json!({ "email": "admin@example.org", "password": "password1" });
+        let (_, cookie, _) = call(&app, "POST", "/api/register", None, Some(admin)).await;
+        let cookie = cookie.unwrap();
+        let (thread, message, sender) = seed_mail(&state, 1).await;
+        let db = &state.db;
+        // A mail server that accepts the connection and then says nothing: what an action does
+        // there stays pending, so only what Portier itself shows is looked at.
+        let silent = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        sqlx::query(
+            "UPDATE accounts SET archive_folder = 'Archive', trash_folder = 'Trash', imap_host = '127.0.0.1',
+                 imap_port = ?, password_enc = ?",
+        )
+        .bind(silent.local_addr().unwrap().port())
+        .bind(crypto::encrypt(&state.config.master_key, "secret").unwrap())
+        .execute(db)
+        .await
+        .unwrap();
+        sqlx::query("UPDATE senders SET category = 'important' WHERE id = ?")
+            .bind(sender)
+            .execute(db)
+            .await
+            .unwrap();
+        sqlx::query("UPDATE messages SET seen = 0").execute(db).await.unwrap();
+
+        // What the lists say about the one conversation: where it is, and whether it is unseen.
+        let place = async || -> String {
+            for mailbox in ["important", "flagged", "delayed", "archive", "trash"] {
+                let path = format!("/api/threads?box={mailbox}");
+                let (_, _, list) = call(&app, "GET", &path, Some(&cookie), None).await;
+                if let Some(row) = list.as_array().unwrap().first() {
+                    return format!("{mailbox} unread={} note={}", row["unread"], row["note"]);
+                }
+            }
+            "nowhere".to_string()
+        };
+        let act = async |body: Value| -> String {
+            let (status, _, answer) = call(&app, "POST", "/api/mail/actions", Some(&cookie), Some(body)).await;
+            assert_eq!(status, StatusCode::OK);
+            answer["undo"].as_str().expect("an undo token").to_string()
+        };
+        let undo = async |token: &str| {
+            call(&app, "POST", &format!("/api/undo/{token}"), Some(&cookie), None)
+                .await
+                .0
+        };
+        let start = "important unread=1 note=\"\"";
+        assert_eq!(place().await, start);
+
+        // Every action changes the lists at once and is taken back completely.
+        for (action, after) in [
+            (
+                json!({ "action": "archive", "thread_ids": [thread] }),
+                "archive unread=1 note=\"\"",
+            ),
+            (
+                json!({ "action": "trash", "thread_ids": [thread] }),
+                "trash unread=1 note=\"\"",
+            ),
+            (
+                json!({ "action": "read", "thread_ids": [thread] }),
+                "important unread=0 note=\"\"",
+            ),
+            (
+                json!({ "action": "important", "thread_ids": [thread] }),
+                "flagged unread=1 note=\"\"",
+            ),
+            (
+                json!({ "action": "delay", "days": 2, "thread_ids": [thread] }),
+                "delayed unread=1 note=\"\"",
+            ),
+            (
+                json!({ "action": "move", "account_id": 1, "folder": "Projects", "thread_ids": [thread] }),
+                "nowhere",
+            ),
+        ] {
+            let token = act(action.clone()).await;
+            assert_eq!(place().await, after, "{action}");
+            assert_eq!(undo(&token).await, StatusCode::OK, "{action}");
+            assert_eq!(place().await, start, "after undoing {action}");
+            assert_eq!(undo(&token).await, StatusCode::GONE, "a token undoes once");
+        }
+        // The mail kept its place on the mail server through all of that.
+        let uid: Option<i64> = sqlx::query_scalar("SELECT uid FROM messages WHERE id = ?")
+            .bind(message)
+            .fetch_one(db)
+            .await
+            .unwrap();
+        assert_eq!(uid, Some(1));
+
+        // A note, too.
+        let path = format!("/api/threads/{thread}/note");
+        let (_, _, saved) = call(&app, "PUT", &path, Some(&cookie), Some(json!({ "note": "keep" }))).await;
+        assert_eq!(place().await, "important unread=1 note=\"keep\"");
+        assert_eq!(undo(saved["undo"].as_str().unwrap()).await, StatusCode::OK);
+        assert_eq!(place().await, start);
+
+        // Somebody else's token is of no use, and after the time is up it is too late.
+        let other = json!({ "email": "other@example.org", "password": "password2" });
+        call(&app, "POST", "/api/users", Some(&cookie), Some(other.clone())).await;
+        let (_, other_cookie, _) = call(&app, "POST", "/api/login", None, Some(other)).await;
+        let token = act(json!({ "action": "read", "thread_ids": [thread] })).await;
+        let (status, _, _) = call(
+            &app,
+            "POST",
+            &format!("/api/undo/{token}"),
+            other_cookie.as_deref(),
+            None,
+        )
+        .await;
+        assert_eq!(status, StatusCode::GONE);
+        tokio::time::sleep(std::time::Duration::from_millis(600)).await;
+        assert_eq!(undo(&token).await, StatusCode::GONE);
+        assert_eq!(place().await, "important unread=0 note=\"\"", "it stands");
+    }
+
+    #[tokio::test]
+    async fn a_mail_goes_out_only_when_sending_can_no_longer_be_undone() {
+        let (app, state) = test_app().await;
+        let admin = json!({ "email": "admin@example.org", "password": "password1" });
+        let (_, cookie, _) = call(&app, "POST", "/api/register", None, Some(admin)).await;
+        let cookie = cookie.unwrap();
+        seed_mail(&state, 1).await;
+        // Nothing listens there: an attempt to send fails at once.
+        sqlx::query("UPDATE accounts SET smtp_host = '127.0.0.1', smtp_port = 1, password_enc = ?")
+            .bind(crypto::encrypt(&state.config.master_key, "secret").unwrap())
+            .execute(&state.db)
+            .await
+            .unwrap();
+        let (_, _, created) = call(
+            &app,
+            "POST",
+            "/api/drafts",
+            Some(&cookie),
+            Some(json!({ "kind": "new" })),
+        )
+        .await;
+        let id = created["id"].as_i64().unwrap();
+        let path = format!("/api/drafts/{id}");
+        let draft = json!({ "account_id": 1, "to_addrs": "anna@example.com", "cc_addrs": "", "bcc_addrs": "",
+            "subject": "Hello", "body_html": "<p>Hi</p>", "forward_attachments": false, "include_quote": false });
+        call(&app, "PUT", &path, Some(&cookie), Some(draft.clone())).await;
+        let drafts = async || -> usize {
+            call(&app, "GET", "/api/drafts", Some(&cookie), None)
+                .await
+                .2
+                .as_array()
+                .unwrap()
+                .len()
+        };
+        assert_eq!(drafts().await, 1);
+
+        // Sent: no draft any more, but nothing has gone out yet. Undo makes it a draft again.
+        let (status, _, sending) = call(&app, "POST", &format!("{path}/send"), Some(&cookie), None).await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(drafts().await, 0);
+        let (status, _, _) = call(&app, "PUT", &path, Some(&cookie), Some(draft)).await;
+        assert_eq!(status, StatusCode::NOT_FOUND, "a mail on its way out is not edited");
+        let token = sending["undo"].as_str().unwrap();
+        let (status, _, undone) = call(&app, "POST", &format!("/api/undo/{token}"), Some(&cookie), None).await;
+        assert_eq!((status, undone["draft"].as_i64()), (StatusCode::OK, Some(id)));
+        assert_eq!(drafts().await, 1);
+        tokio::time::sleep(std::time::Duration::from_millis(600)).await;
+        let (_, _, detail) = call(&app, "GET", &path, Some(&cookie), None).await;
+        assert_eq!(detail["draft"]["last_error"], Value::Null, "undone means never tried");
+
+        // Not undone: it is tried, fails here, and comes back as a draft that says why.
+        call(&app, "POST", &format!("{path}/send"), Some(&cookie), None).await;
+        tokio::time::sleep(std::time::Duration::from_millis(1500)).await;
+        assert_eq!(drafts().await, 1);
+        let (_, _, detail) = call(&app, "GET", &path, Some(&cookie), None).await;
+        assert!(
+            detail["draft"]["last_error"]
+                .as_str()
+                .is_some_and(|reason| !reason.is_empty())
         );
     }
 

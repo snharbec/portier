@@ -1,3 +1,4 @@
+import { goto } from '$app/navigation';
 import type { SwipeAction } from './swipe.ts';
 import { api, setUnauthorizedHandler, type Account, type Category, type Counts, type SavedSearch, type User } from './api.ts';
 
@@ -34,6 +35,8 @@ export const app = $state({
 	splitActive: false,
 	/** Short message about the last action, shown for a few seconds. */
 	notice: '',
+	/** Token that takes back the action the notice is about, while that is possible. */
+	undo: '',
 	tick: 0
 });
 
@@ -83,10 +86,41 @@ export async function refreshSettings() {
 
 let noticeTimer: ReturnType<typeof setTimeout> | undefined;
 
-export function notify(text: string) {
+/** How long an action can be undone; the server keeps it a little longer. */
+const UNDO_MS = 4000;
+
+/**
+ * Says what happened, at the bottom of the window. With `undo`, the token an action came back
+ * with, the notice offers to take the action back for as long as that is possible.
+ */
+export function notify(text: string, undo = '') {
 	app.notice = text;
+	app.undo = undo;
 	clearTimeout(noticeTimer);
-	noticeTimer = setTimeout(() => (app.notice = ''), 5000);
+	noticeTimer = setTimeout(
+		() => {
+			app.notice = '';
+			app.undo = '';
+		},
+		undo ? UNDO_MS : 5000
+	);
+}
+
+/** Takes back the action the notice is about. */
+export async function undoLast() {
+	const token = app.undo;
+	if (!token) return;
+	app.undo = '';
+	try {
+		const undone = await api.post<{ draft: number | null }>(`/undo/${token}`);
+		notify('Undone');
+		app.tick += 1;
+		refreshCounts().catch(() => {});
+		// A mail that was about to be sent is a draft again: back to writing it.
+		if (undone.draft !== null) goto(`/compose/${undone.draft}`);
+	} catch (e) {
+		notify((e as Error).message);
+	}
 }
 
 export async function refreshAccounts() {
@@ -96,7 +130,10 @@ export async function refreshAccounts() {
 function connectEvents() {
 	events?.close();
 	events = new EventSource('/api/events');
-	events.onmessage = () => {
+	events.onmessage = (event) => {
+		if (event.data === 'send_failed') {
+			notify('A mail could not be sent. It is back in Drafts, with the reason.');
+		}
 		// A sync batch sends many events; fold them into one reload.
 		clearTimeout(refreshTimer);
 		refreshTimer = setTimeout(() => {

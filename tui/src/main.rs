@@ -185,9 +185,14 @@ async fn interactive(app: &mut App, client: Client) -> Result<()> {
                         }
                     }
                 }
-                Some(()) = changed.recv() => {
+                Some(mut failed) = changed.recv() => {
                     // Several changes in a row are one reason to look again.
-                    while changed.try_recv().is_ok() {}
+                    while let Ok(more) = changed.try_recv() {
+                        failed |= more;
+                    }
+                    if failed {
+                        app.status = "A mail could not be sent. It is back in Drafts.".into();
+                    }
                     if let Err(error) = app.refresh().await {
                         if error.is::<api::SignedOut>() {
                             return Err(error);

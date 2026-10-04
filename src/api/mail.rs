@@ -278,12 +278,12 @@ struct ThreadHead {
 /// SQL conditions on a thread `t`, shared by the lists, the counts and the one-page views.
 /// Received mail of it that is neither archived nor in the Trash:
 const RECEIVED: &str = "EXISTS (SELECT 1 FROM messages rm JOIN folders rf ON rf.id = rm.folder_id
-    WHERE rm.thread_id = t.id AND rm.is_outgoing = 0 AND rf.role NOT IN ('archive', 'trash'))";
+    WHERE rm.thread_id = t.id AND rm.is_outgoing = 0 AND rf.role NOT IN ('archive', 'trash', 'limbo'))";
 /// A flagged mail of it sits in the inbox (or the "Nice to know" folder): the conversation is in Important.
 const FLAGGED: &str = "EXISTS (SELECT 1 FROM messages fm JOIN folders ff ON ff.id = fm.folder_id
     WHERE fm.thread_id = t.id AND fm.flagged = 1 AND ff.role IN ('inbox', 'feed', 'delayed'))";
 /// A message `m` in folder `f` that is neither archived nor in the Trash.
-const HERE: &str = "f.role NOT IN ('archive', 'trash')";
+const HERE: &str = "f.role NOT IN ('archive', 'trash', 'limbo')";
 /// It is delayed and has not come back yet.
 const DELAYED: &str = "(t.snoozed_until IS NOT NULL AND t.snoozed_until > unixepoch())";
 
@@ -311,7 +311,7 @@ pub async fn threads(
                             WHERE m.thread_id = t.id AND f.role = 'trash')"
             .to_string(),
         "sent" => "EXISTS (SELECT 1 FROM messages m JOIN folders f ON f.id = m.folder_id
-                           WHERE m.thread_id = t.id AND m.is_outgoing = 1 AND f.role != 'trash')"
+                           WHERE m.thread_id = t.id AND m.is_outgoing = 1 AND f.role NOT IN ('trash', 'limbo'))"
             .to_string(),
         _ => return Err(ApiError::bad_request("unknown box")),
     };
@@ -362,7 +362,7 @@ pub(crate) async fn seen_inbox_older_than(
            AND {RECEIVED} AND NOT {FLAGGED} AND NOT {DELAYED}
            AND NOT EXISTS (SELECT 1 FROM messages um JOIN folders uf ON uf.id = um.folder_id
                            WHERE um.thread_id = t.id AND um.seen = 0 AND um.is_outgoing = 0
-                             AND uf.role NOT IN ('archive', 'trash'))
+                             AND uf.role NOT IN ('archive', 'trash', 'limbo'))
            AND EXISTS (SELECT 1 FROM messages am JOIN folders af ON af.id = am.folder_id
                        WHERE am.thread_id = t.id AND af.role IN ('inbox', 'junk', 'feed', 'delayed') AND am.uid IS NOT NULL)
            AND MAX(lm.date, COALESCE(t.returned_at, 0)) < ?2
@@ -388,7 +388,7 @@ pub async fn counts(State(state): State<AppState>, user: CurrentUser) -> ApiResu
     let unread_threads = "SELECT COUNT(DISTINCT t.id) FROM threads t
          LEFT JOIN senders s ON s.id = t.sender_id
          JOIN messages m ON m.thread_id = t.id AND m.seen = 0 AND m.is_outgoing = 0
-         JOIN folders f ON f.id = m.folder_id AND f.role NOT IN ('archive', 'trash')
+         JOIN folders f ON f.id = m.folder_id AND f.role NOT IN ('archive', 'trash', 'limbo')
          WHERE t.user_id = ?";
     let unread: i64 = sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
         "{unread_threads} AND (t.sender_id IS NULL OR s.category = 'important') AND NOT {FLAGGED} AND NOT {DELAYED}"
@@ -434,7 +434,7 @@ pub async fn counts(State(state): State<AppState>, user: CurrentUser) -> ApiResu
     .bind(user.id)
     .fetch_one(&state.db)
     .await?;
-    let drafts: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM drafts WHERE user_id = ?")
+    let drafts: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM drafts WHERE user_id = ? AND sending_at IS NULL")
         .bind(user.id)
         .fetch_one(&state.db)
         .await?;
@@ -682,7 +682,7 @@ pub async fn feed(
         "junk" => format!("m.is_outgoing = 0 AND {HERE} AND ts.category = 'junk'"),
         "flagged" => format!("m.is_outgoing = 0 AND {HERE} AND {FLAGGED} AND NOT {DELAYED}"),
         "delayed" => format!("m.is_outgoing = 0 AND {HERE} AND {DELAYED}"),
-        "sent" => "m.is_outgoing = 1 AND f.role != 'trash'".to_string(),
+        "sent" => "m.is_outgoing = 1 AND f.role NOT IN ('trash', 'limbo')".to_string(),
         "archive" => "f.role = 'archive'".to_string(),
         "trash" => "f.role = 'trash'".to_string(),
         _ => return Err(ApiError::bad_request("unknown box")),
@@ -725,17 +725,25 @@ pub async fn set_note(
             "A note can have up to {MAX_NOTE} characters."
         )));
     }
-    let changed = sqlx::query("UPDATE threads SET note = ? WHERE id = ? AND user_id = ?")
-        .bind(note)
+    let before: String = sqlx::query_scalar("SELECT note FROM threads WHERE id = ? AND user_id = ?")
         .bind(id)
         .bind(user.id)
+        .fetch_optional(&state.db)
+        .await?
+        .ok_or_else(ApiError::not_found)?;
+    sqlx::query("UPDATE threads SET note = ? WHERE id = ?")
+        .bind(note)
+        .bind(id)
         .execute(&state.db)
         .await?;
-    if changed.rows_affected() == 0 {
-        return Err(ApiError::not_found());
-    }
     state.notify(user.id, "mail");
-    Ok(Json(json!({ "note": note })))
+    // A note lives in Portier only: there is nothing left to do once it cannot be undone.
+    let step = crate::undo::Step::Note {
+        thread: id,
+        text: before,
+    };
+    let token = crate::undo::hold(&state, user.id, vec![step], async {});
+    Ok(Json(json!({ "note": note, "undo": token })))
 }
 
 /// Marks every message of a thread as read, locally and on the server.
@@ -965,7 +973,7 @@ pub(crate) fn search_sql(
         sql.push(" AND t.note != ''");
     }
     // What is in the Trash is not searched.
-    sql.push(" AND m.folder_id NOT IN (SELECT id FROM folders WHERE role = 'trash')");
+    sql.push(" AND m.folder_id NOT IN (SELECT id FROM folders WHERE role IN ('trash', 'limbo'))");
     if matches!(output, SearchOutput::UnreadCount) {
         sql.push(" AND m.seen = 0 AND m.is_outgoing = 0");
     }
@@ -1050,4 +1058,14 @@ pub async fn events(
         async move { item }
     });
     Sse::new(stream).keep_alive(KeepAlive::default())
+}
+
+/// Takes back the action a token was given for, while its time to undo lasts.
+pub async fn undo(
+    State(state): State<AppState>,
+    user: CurrentUser,
+    Path(token): Path<String>,
+) -> ApiResult<Json<Value>> {
+    let draft = crate::undo::undo(&state, user.id, &token).await?;
+    Ok(Json(json!({ "ok": true, "draft": draft })))
 }

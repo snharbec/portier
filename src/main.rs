@@ -9,6 +9,7 @@ mod mail;
 mod models;
 mod search;
 mod state;
+mod undo;
 
 use std::str::FromStr;
 
@@ -84,6 +85,13 @@ async fn main() -> Result<()> {
     let db = open_database(&format!("sqlite://{}", db_path.display())).await?;
     sqlx::query("DELETE FROM sessions WHERE expires_at < ?")
         .bind(state::now())
+        .execute(&db)
+        .await?;
+    // What was waiting for its time to undo when the server last stopped never happened:
+    // a draft about to be sent is a draft again, and mail on its way out of Portier is
+    // forgotten here, so the next sync shows it where it still is on the mail server.
+    sqlx::query("UPDATE drafts SET sending_at = NULL").execute(&db).await?;
+    sqlx::query("DELETE FROM messages WHERE folder_id IN (SELECT id FROM folders WHERE role = 'limbo')")
         .execute(&db)
         .await?;
 

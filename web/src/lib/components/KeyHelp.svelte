@@ -12,6 +12,7 @@
 			title: 'Everywhere',
 			keys: [
 				[['?'], 'Show this list'],
+				[['Ctrl', 'Z'], 'Undo the last action, for 4 seconds'],
 				[['c'], 'Write a mail'],
 				[['/'], 'Search'],
 				[['m'], 'Open the menu'],

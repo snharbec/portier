@@ -112,18 +112,20 @@ async fn session_loop(state: &AppState, account_id: i64, wake: &Notify) -> Resul
     }
 
     // Forget folders that are no longer configured.
-    sqlx::query("DELETE FROM folders WHERE account_id = ? AND name NOT IN (?, ?, ?, ?, ?, ?, ?, ?)")
-        .bind(account.id)
-        .bind(&account.inbox_folder)
-        .bind(&account.junk_folder)
-        .bind(&account.sent_folder)
-        .bind(&account.archive_folder)
-        .bind(&account.trash_folder)
-        .bind(&account.feed_folder)
-        .bind(&account.delayed_folder)
-        .bind(LOCAL_SENT)
-        .execute(&state.db)
-        .await?;
+    sqlx::query(
+        "DELETE FROM folders WHERE account_id = ? AND role != 'limbo' AND name NOT IN (?, ?, ?, ?, ?, ?, ?, ?)",
+    )
+    .bind(account.id)
+    .bind(&account.inbox_folder)
+    .bind(&account.junk_folder)
+    .bind(&account.sent_folder)
+    .bind(&account.archive_folder)
+    .bind(&account.trash_folder)
+    .bind(&account.feed_folder)
+    .bind(&account.delayed_folder)
+    .bind(LOCAL_SENT)
+    .execute(&state.db)
+    .await?;
 
     let inbox = store::ensure_folder(&state.db, account.id, &account.inbox_folder, "inbox").await?;
     let mut folders = vec![inbox.clone()];

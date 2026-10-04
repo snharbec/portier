@@ -1,7 +1,7 @@
 //! Actions on several selected mails at once: mark read or unread, archive, move to Trash and back,
 //! move to a folder.
 
-use std::collections::HashMap;
+use std::{collections::HashMap, future::Future, pin::Pin};
 
 use axum::{Json, extract::State};
 use serde::Deserialize;
@@ -13,7 +13,41 @@ use crate::{
     mail::{delay, imap, store, sync},
     models::{Account, Folder},
     state::AppState,
+    undo::{self, Step},
 };
+
+/// The part of an action that waits until it can no longer be undone.
+type Commit = Pin<Box<dyn Future<Output = ()> + Send>>;
+
+/// What an action did: how many mails it touched, how to take it back, and what is still
+/// to be done for good.
+#[derive(Default)]
+struct Outcome {
+    affected: usize,
+    steps: Vec<Step>,
+    commits: Vec<Commit>,
+}
+
+impl Outcome {
+    /// This action followed by `next`; the count is that of `next`, the one the user asked for.
+    fn then(mut self, next: Outcome) -> Outcome {
+        self.affected = next.affected;
+        self.steps.extend(next.steps);
+        self.commits.extend(next.commits);
+        self
+    }
+
+    /// Two halves of one action.
+    fn and(mut self, other: Outcome) -> Outcome {
+        self.affected += other.affected;
+        self.steps.extend(other.steps);
+        self.commits.extend(other.commits);
+        self
+    }
+}
+
+/// The folder mail waits in, unseen by every list, while a move out of Portier can be undone.
+const LIMBO: &str = "(leaving)";
 
 const MAX_SELECTION: usize = 1000;
 
@@ -73,8 +107,18 @@ async fn targets_for(
 /// Archives whole conversations, as the Archive action does. Used by the automatic archive.
 pub(crate) async fn archive_conversations(state: &AppState, user_id: i64, thread_ids: &[i64]) -> ApiResult<usize> {
     let targets = targets_for(state, user_id, thread_ids, &[]).await?;
-    set_delay(state, user_id, &targets, None).await?;
-    file_away(state, user_id, targets, Shelf::Archive).await
+    let outcome = set_delay(state, user_id, &targets, None)
+        .await?
+        .then(file_away(state, user_id, targets, Shelf::Archive).await?);
+    // Nobody is there to undo it: done for good at once, without making the caller wait for
+    // the mail server.
+    let commits = outcome.commits;
+    tokio::spawn(async move {
+        for commit in commits {
+            commit.await;
+        }
+    });
+    Ok(outcome.affected)
 }
 
 pub async fn apply(
@@ -90,7 +134,7 @@ pub async fn apply(
         return Ok(Json(json!({ "affected": 0 })));
     }
 
-    let affected = match input.action.as_str() {
+    let outcome = match input.action.as_str() {
         "read" => set_seen(&state, &targets, true).await?,
         "unread" => set_seen(&state, &targets, false).await?,
         "important" => set_flagged(&state, &targets, true).await?,
@@ -103,19 +147,20 @@ pub async fn apply(
         "undelay" => set_delay(&state, user.id, &targets, None).await?,
         "archive" => {
             // Filed away for good: a delay must not bring it back.
-            set_delay(&state, user.id, &targets, None).await?;
-            file_away(&state, user.id, targets, Shelf::Archive).await?
+            set_delay(&state, user.id, &targets, None)
+                .await?
+                .then(file_away(&state, user.id, targets, Shelf::Archive).await?)
         }
-        "trash" => {
-            set_delay(&state, user.id, &targets, None).await?;
-            file_away(&state, user.id, targets, Shelf::Trash).await?
-        }
+        "trash" => set_delay(&state, user.id, &targets, None)
+            .await?
+            .then(file_away(&state, user.id, targets, Shelf::Trash).await?),
         "untrash" => {
             // Back to where it came from: received mail to the inbox, your own to Sent.
             let (sent, received): (Vec<Target>, Vec<Target>) = targets.into_iter().partition(|t| t.is_outgoing);
-            let moved = file_away(&state, user.id, received, Shelf::Inbox).await?
-                + file_away(&state, user.id, sent, Shelf::Sent).await?;
-            if moved == 0 {
+            let moved = file_away(&state, user.id, received, Shelf::Inbox)
+                .await?
+                .and(file_away(&state, user.id, sent, Shelf::Sent).await?);
+            if moved.affected == 0 {
                 // Just moved to the Trash and not yet seen there by the sync, or not in the Trash at all.
                 return Err(ApiError::bad_request(
                     "Nothing to take out of the Trash yet. Mail that was just moved there needs a moment; try again.",
@@ -136,24 +181,40 @@ pub async fn apply(
                     "the selected mails belong to different accounts; move them one account at a time",
                 ));
             }
-            relocate(&state, user.id, targets, Some(folder.to_string())).await?
+            relocate(&state, user.id, targets, folder.to_string()).await?
         }
         _ => return Err(ApiError::bad_request("unknown action")),
     };
     state.notify(user.id, "mail");
-    Ok(Json(json!({ "affected": affected })))
+    if outcome.affected == 0 {
+        // Nothing changed, so there is nothing to undo.
+        return Ok(Json(json!({ "affected": 0 })));
+    }
+    let commits = outcome.commits;
+    let token = undo::hold(&state, user.id, outcome.steps, async move {
+        for commit in commits {
+            commit.await;
+        }
+    });
+    Ok(Json(json!({ "affected": outcome.affected, "undo": token })))
 }
 
 /// Important is the server's flag on mail in the inbox; other mail programs show it as flag or star.
-async fn set_flagged(state: &AppState, targets: &[Target], flagged: bool) -> ApiResult<usize> {
+async fn set_flagged(state: &AppState, targets: &[Target], flagged: bool) -> ApiResult<Outcome> {
     let in_inbox: Vec<&Target> = targets
         .iter()
         .filter(|t| matches!(t.folder_role.as_str(), "inbox" | "feed" | "delayed"))
         .collect();
     let ids: Vec<i64> = in_inbox.iter().map(|t| t.id).collect();
+    let id_list = serde_json::to_string(&ids).map_err(anyhow::Error::from)?;
+    let before: Vec<(i64, bool)> =
+        sqlx::query_as("SELECT id, flagged FROM messages WHERE id IN (SELECT value FROM json_each(?))")
+            .bind(&id_list)
+            .fetch_all(&state.db)
+            .await?;
     sqlx::query("UPDATE messages SET flagged = ? WHERE id IN (SELECT value FROM json_each(?))")
         .bind(flagged)
-        .bind(serde_json::to_string(&ids).map_err(anyhow::Error::from)?)
+        .bind(&id_list)
         .execute(&state.db)
         .await?;
 
@@ -166,49 +227,78 @@ async fn set_flagged(state: &AppState, targets: &[Target], flagged: bool) -> Api
                 .push(uid);
         }
     }
-    for ((account_id, folder), uids) in by_folder {
-        sync::spawn_action(state, account_id, "changing the flag", move |mut session| async move {
-            session.select(&folder).await?;
-            imap::set_flagged(&mut session, &uids, flagged).await?;
-            let _ = session.logout().await;
-            Ok(())
-        });
-    }
-    Ok(ids.len())
+    let task = state.clone();
+    let on_server: Commit = Box::pin(async move {
+        for ((account_id, folder), uids) in by_folder {
+            sync::spawn_action(&task, account_id, "changing the flag", move |mut session| async move {
+                session.select(&folder).await?;
+                imap::set_flagged(&mut session, &uids, flagged).await?;
+                let _ = session.logout().await;
+                Ok(())
+            });
+        }
+    });
+    Ok(Outcome {
+        affected: ids.len(),
+        steps: vec![Step::Flagged(before)],
+        commits: vec![on_server],
+    })
 }
 
 /// Delays the conversations of the selection until `until`, or ends their delay with `None`.
 /// Kept in Portier only: on the mail server nothing changes until the mail returns.
-async fn set_delay(state: &AppState, user_id: i64, targets: &[Target], until: Option<i64>) -> ApiResult<usize> {
+async fn set_delay(state: &AppState, user_id: i64, targets: &[Target], until: Option<i64>) -> ApiResult<Outcome> {
     let mut threads: Vec<i64> = targets.iter().map(|t| t.thread_id).collect();
     threads.sort_unstable();
     threads.dedup();
+    let thread_list = serde_json::to_string(&threads).map_err(anyhow::Error::from)?;
+    let before: Vec<(i64, Option<i64>, Option<i64>)> = sqlx::query_as(
+        "SELECT id, snoozed_until, returned_at FROM threads
+         WHERE user_id = ? AND id IN (SELECT value FROM json_each(?))",
+    )
+    .bind(user_id)
+    .bind(&thread_list)
+    .fetch_all(&state.db)
+    .await?;
     let result = sqlx::query(
         "UPDATE threads SET snoozed_until = ?1, returned_at = CASE WHEN ?1 IS NULL THEN returned_at END
          WHERE user_id = ?2 AND id IN (SELECT value FROM json_each(?3))",
     )
     .bind(until)
     .bind(user_id)
-    .bind(serde_json::to_string(&threads).map_err(anyhow::Error::from)?)
+    .bind(&thread_list)
     .execute(&state.db)
     .await?;
     // Where delayed mail has a folder of its own on the server, the sync moves it there or back.
     let mut accounts: Vec<i64> = targets.iter().map(|t| t.account_id).collect();
     accounts.sort_unstable();
     accounts.dedup();
-    for account_id in accounts {
-        state.wake_sync(account_id).await;
-    }
-    Ok(result.rows_affected() as usize)
+    let task = state.clone();
+    let on_server: Commit = Box::pin(async move {
+        for account_id in accounts {
+            task.wake_sync(account_id).await;
+        }
+    });
+    Ok(Outcome {
+        affected: result.rows_affected() as usize,
+        steps: vec![Step::Delay(before)],
+        commits: vec![on_server],
+    })
 }
 
 /// Received mail only: your own sent messages have no unread state.
-async fn set_seen(state: &AppState, targets: &[Target], seen: bool) -> ApiResult<usize> {
+async fn set_seen(state: &AppState, targets: &[Target], seen: bool) -> ApiResult<Outcome> {
     let inbound: Vec<&Target> = targets.iter().filter(|t| !t.is_outgoing).collect();
     let ids: Vec<i64> = inbound.iter().map(|t| t.id).collect();
+    let id_list = serde_json::to_string(&ids).map_err(anyhow::Error::from)?;
+    let before: Vec<(i64, bool)> =
+        sqlx::query_as("SELECT id, seen FROM messages WHERE id IN (SELECT value FROM json_each(?))")
+            .bind(&id_list)
+            .fetch_all(&state.db)
+            .await?;
     sqlx::query("UPDATE messages SET seen = ? WHERE id IN (SELECT value FROM json_each(?))")
         .bind(seen)
-        .bind(serde_json::to_string(&ids).map_err(anyhow::Error::from)?)
+        .bind(&id_list)
         .execute(&state.db)
         .await?;
 
@@ -221,20 +311,27 @@ async fn set_seen(state: &AppState, targets: &[Target], seen: bool) -> ApiResult
                 .push(uid);
         }
     }
-    for ((account_id, folder), uids) in by_folder {
-        sync::spawn_action(
-            state,
-            account_id,
-            "changing read state",
-            move |mut session| async move {
-                session.select(&folder).await?;
-                imap::set_seen(&mut session, &uids, seen).await?;
-                let _ = session.logout().await;
-                Ok(())
-            },
-        );
-    }
-    Ok(ids.len())
+    let task = state.clone();
+    let on_server: Commit = Box::pin(async move {
+        for ((account_id, folder), uids) in by_folder {
+            sync::spawn_action(
+                &task,
+                account_id,
+                "changing read state",
+                move |mut session| async move {
+                    session.select(&folder).await?;
+                    imap::set_seen(&mut session, &uids, seen).await?;
+                    let _ = session.logout().await;
+                    Ok(())
+                },
+            );
+        }
+    });
+    Ok(Outcome {
+        affected: ids.len(),
+        steps: vec![Step::Seen(before)],
+        commits: vec![on_server],
+    })
 }
 
 async fn account_for_task(state: &AppState, account_id: i64) -> anyhow::Result<Account> {
@@ -267,7 +364,7 @@ enum Shelf {
 /// Moves mail to the account's Archive or Trash folder, or out of the Trash back to the inbox or
 /// Sent. Unlike other moves the mail stays in Portier: these folders are mirrored and shown
 /// as their own lists.
-async fn file_away(state: &AppState, user_id: i64, targets: Vec<Target>, shelf: Shelf) -> ApiResult<usize> {
+async fn file_away(state: &AppState, user_id: i64, targets: Vec<Target>, shelf: Shelf) -> ApiResult<Outcome> {
     let (role, what) = match shelf {
         Shelf::Archive => ("archive", "Archive"),
         Shelf::Trash => ("trash", "Trash"),
@@ -310,7 +407,7 @@ async fn file_away(state: &AppState, user_id: i64, targets: Vec<Target>, shelf: 
         plans.push((account, destination, targets));
     }
 
-    let mut affected = 0;
+    let mut outcome = Outcome::default();
     for (account, destination, targets) in plans {
         let mut by_folder: HashMap<i64, (String, Vec<u32>)> = HashMap::new();
         let mut by_folder_ids: Vec<(i64, Option<u32>)> = Vec::new();
@@ -321,17 +418,24 @@ async fn file_away(state: &AppState, user_id: i64, targets: Vec<Target>, shelf: 
             entry.1.extend(target.uid);
             by_folder_ids.push((target.id, target.uid));
         }
-        // Mail that exists only here (sent without a Sent folder on the server) has nothing to move.
+        // Mail that exists only here (sent without a Sent folder on the server) has nothing to
+        // move: in the Trash it is simply gone, once that can no longer be undone.
         let local_only: Vec<i64> = targets_without_uid(&by_folder_ids);
         if matches!(shelf, Shelf::Trash) && !local_only.is_empty() {
-            affected += local_only.len();
-            store::delete_messages(state, &account, &local_only).await?;
+            outcome.affected += local_only.len();
+            let (task, account) = (state.clone(), account.clone());
+            outcome.commits.push(Box::pin(async move {
+                if let Err(e) = store::delete_messages(&task, &account, &local_only).await {
+                    tracing::warn!(account_id = account.id, "mail could not be deleted: {e:#}");
+                }
+                task.notify(user_id, "mail");
+            }));
         }
         for (folder_id, (name, uids)) in by_folder {
             if uids.is_empty() {
                 continue;
             }
-            affected += uids.len();
+            outcome.affected += uids.len();
             let source = Folder {
                 id: folder_id,
                 name,
@@ -339,8 +443,12 @@ async fn file_away(state: &AppState, user_id: i64, targets: Vec<Target>, shelf: 
             };
             // Locally at once, so the lists are right when this request returns.
             let moved = sync::move_local(state, &source, &uids, &destination).await?;
+            outcome.steps.push(Step::Moved {
+                source: source.clone(),
+                rows: moved.clone(),
+            });
             let (task, destination, account_id) = (state.clone(), destination.clone(), account.id);
-            tokio::spawn(async move {
+            outcome.commits.push(Box::pin(async move {
                 let on_server: anyhow::Result<()> = async {
                     let params = imap::ImapParams::for_account(
                         &account_for_task(&task, account_id).await?,
@@ -362,66 +470,75 @@ async fn file_away(state: &AppState, user_id: i64, targets: Vec<Target>, shelf: 
                     task.notify(user_id, "mail");
                 }
                 task.wake_sync(account_id).await;
-            });
+            }));
         }
     }
-    Ok(affected)
+    Ok(outcome)
 }
 
-/// Moves mail on the server to `folder`, or to each account's Trash when `folder` is `None`.
-/// The target is not a folder Portier mirrors, so locally the mail is simply removed; if the
-/// server refuses the move, the next sync brings it back.
-async fn relocate(state: &AppState, user_id: i64, targets: Vec<Target>, folder: Option<String>) -> ApiResult<usize> {
+/// Moves mail on the server to a folder Portier does not mirror, so here it disappears.
+/// While that can be undone the mail waits in a folder of its own that no list shows; then it
+/// is moved on the server and removed here. If the server refuses, the next sync brings it back.
+async fn relocate(state: &AppState, user_id: i64, targets: Vec<Target>, folder: String) -> ApiResult<Outcome> {
     let mut by_account: HashMap<i64, Vec<Target>> = HashMap::new();
     for target in targets {
         by_account.entry(target.account_id).or_default().push(target);
     }
 
-    // Resolve every destination first, so nothing happens if one account has none.
-    let mut plans: Vec<(Account, String, Vec<Target>)> = Vec::new();
+    let mut outcome = Outcome::default();
     for (account_id, targets) in by_account {
         let account: Account = sqlx::query_as("SELECT * FROM accounts WHERE id = ? AND user_id = ?")
             .bind(account_id)
             .bind(user_id)
             .fetch_one(&state.db)
             .await?;
-        let destination = match &folder {
-            Some(folder) => folder.clone(),
-            None if account.trash_folder.is_empty() => {
-                return Err(ApiError::bad_request(format!(
-                    "No Trash folder is known for the account {}. Set it in Settings.",
-                    account.address
-                )));
-            }
-            None => account.trash_folder.clone(),
-        };
-        plans.push((account, destination, targets));
-    }
+        let limbo = store::ensure_folder(&state.db, account.id, LIMBO, "limbo").await?;
 
-    let mut affected = 0;
-    for (account, destination, targets) in plans {
         let mut ids = Vec::new();
-        let mut by_folder: HashMap<String, Vec<u32>> = HashMap::new();
+        let mut by_folder: HashMap<i64, (String, Vec<u32>)> = HashMap::new();
         for target in targets {
-            if target.folder_name == destination {
+            if target.folder_name == folder {
                 continue; // already there
             }
             ids.push(target.id);
             if let Some(uid) = target.uid {
-                by_folder.entry(target.folder_name).or_default().push(uid);
+                by_folder
+                    .entry(target.folder_id)
+                    .or_insert_with(|| (target.folder_name.clone(), Vec::new()))
+                    .1
+                    .push(uid);
             }
         }
-        affected += ids.len();
-        store::delete_messages(state, &account, &ids).await?;
-        for (source, uids) in by_folder {
-            let destination = destination.clone();
-            sync::spawn_action(state, account.id, "moving mail", move |mut session| async move {
-                session.select(&source).await?;
-                imap::move_uids(&mut session, &uids, &destination).await?;
-                let _ = session.logout().await;
-                Ok(())
-            });
+        outcome.affected += ids.len();
+
+        let mut moves: Vec<(String, Vec<u32>)> = Vec::new();
+        for (folder_id, (name, uids)) in by_folder {
+            let source = Folder {
+                id: folder_id,
+                name: name.clone(),
+                role: String::new(),
+            };
+            let moved = sync::move_local(state, &source, &uids, &limbo).await?;
+            outcome.steps.push(Step::Moved { source, rows: moved });
+            moves.push((name, uids));
         }
+
+        let (task, destination) = (state.clone(), folder.clone());
+        outcome.commits.push(Box::pin(async move {
+            if let Err(e) = store::delete_messages(&task, &account, &ids).await {
+                tracing::warn!(account_id = account.id, "moved mail could not be removed here: {e:#}");
+            }
+            for (source, uids) in moves {
+                let destination = destination.clone();
+                sync::spawn_action(&task, account.id, "moving mail", move |mut session| async move {
+                    session.select(&source).await?;
+                    imap::move_uids(&mut session, &uids, &destination).await?;
+                    let _ = session.logout().await;
+                    Ok(())
+                });
+            }
+            task.notify(user_id, "mail");
+        }));
     }
-    Ok(affected)
+    Ok(outcome)
 }

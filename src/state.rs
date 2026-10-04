@@ -29,6 +29,8 @@ pub struct Inner {
     pub convert: Semaphore,
     /// Limits how many sender pictures are looked up on the internet at once.
     pub avatar_slots: Semaphore,
+    /// Actions that can still be undone, by their token.
+    pub undo: std::sync::Mutex<HashMap<String, crate::undo::Pending>>,
 }
 
 #[derive(Clone)]
@@ -51,6 +53,7 @@ impl AppState {
             sync: Mutex::new(HashMap::new()),
             convert: Semaphore::new(1),
             avatar_slots: Semaphore::new(6),
+            undo: std::sync::Mutex::new(HashMap::new()),
         }))
     }
 

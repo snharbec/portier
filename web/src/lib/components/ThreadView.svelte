@@ -107,9 +107,12 @@
 	async function saveNote() {
 		if (!thread || noteDraft === null) return;
 		try {
-			const saved = await api.put<{ note: string }>(`/threads/${thread.id}/note`, { note: noteDraft });
+			const saved = await api.put<{ note: string; undo?: string }>(`/threads/${thread.id}/note`, {
+				note: noteDraft
+			});
 			thread.note = saved.note;
 			noteDraft = null;
+			notify(saved.note ? 'Note saved' : 'Note removed', saved.undo);
 			app.tick += 1;
 		} catch (e) {
 			notify((e as Error).message);

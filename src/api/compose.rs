@@ -33,6 +33,8 @@ pub struct Draft {
     forward_attachments: bool,
     include_quote: bool,
     updated_at: i64,
+    /// Why the last attempt to send it failed, if one did.
+    last_error: Option<String>,
 }
 
 #[derive(Serialize, sqlx::FromRow)]
@@ -230,7 +232,8 @@ pub async fn create(
 
 pub async fn list(State(state): State<AppState>, user: CurrentUser) -> ApiResult<Json<Vec<Draft>>> {
     Ok(Json(
-        sqlx::query_as("SELECT * FROM drafts WHERE user_id = ? ORDER BY updated_at DESC")
+        // A mail on its way out (sending can still be undone) is no draft to list.
+        sqlx::query_as("SELECT * FROM drafts WHERE user_id = ? AND sending_at IS NULL ORDER BY updated_at DESC")
             .bind(user.id)
             .fetch_all(&state.db)
             .await?,
@@ -304,8 +307,8 @@ pub async fn update(
     }
     let result = sqlx::query(
         "UPDATE drafts SET account_id = ?, to_addrs = ?, cc_addrs = ?, bcc_addrs = ?, subject = ?,
-             body_html = ?, forward_attachments = ?, include_quote = ?, updated_at = ?
-         WHERE id = ? AND user_id = ?",
+             body_html = ?, forward_attachments = ?, include_quote = ?, updated_at = ?, last_error = NULL
+         WHERE id = ? AND user_id = ? AND sending_at IS NULL",
     )
     .bind(input.account_id)
     .bind(&input.to_addrs)
@@ -475,13 +478,45 @@ pub async fn send(State(state): State<AppState>, user: CurrentUser, Path(id): Pa
     })
     .map_err(|e| ApiError::bad_request(format!("cannot build message: {e}")))?;
     let raw = message.formatted();
+    let smtp = SmtpParams::for_account(&account, &state.config.master_key)?;
 
-    SmtpParams::for_account(&account, &state.config.master_key)?
-        .send(message)
-        .await
-        .map_err(|e| ApiError(axum::http::StatusCode::BAD_GATEWAY, format!("{e:#}")))?;
+    // Everything is checked and the mail is built. It goes out once sending can no longer be
+    // undone; until then it is neither sent nor a draft to edit.
+    let claimed =
+        sqlx::query("UPDATE drafts SET sending_at = ?, last_error = NULL WHERE id = ? AND sending_at IS NULL")
+            .bind(now())
+            .bind(id)
+            .execute(&state.db)
+            .await?;
+    if claimed.rows_affected() == 0 {
+        return Err(ApiError::bad_request("this mail is being sent already"));
+    }
+    state.notify(user.id, "mail");
+    let task = state.clone();
+    let user_id = user.id;
+    let token = crate::undo::hold(&state, user_id, vec![crate::undo::Step::Draft(id)], async move {
+        if let Err(e) = smtp.send(message).await {
+            // Not sent: it is a draft again, with the reason, and the user is told.
+            tracing::warn!("sending draft {id} failed: {e:#}");
+            let kept = sqlx::query("UPDATE drafts SET sending_at = NULL, last_error = ? WHERE id = ?")
+                .bind(format!("{e:#}"))
+                .bind(id)
+                .execute(&task.db)
+                .await;
+            if let Err(e) = kept {
+                tracing::error!("draft {id} could not be put back: {e:#}");
+            }
+            task.notify(user_id, "send_failed");
+            return;
+        }
+        sent(&task, &account, id, raw).await;
+        task.notify(user_id, "mail");
+    });
+    Ok(Json(json!({ "ok": true, "undo": token })))
+}
 
-    // Sent. Everything below is bookkeeping and must not turn the request into an error.
+/// Bookkeeping after a mail went out: none of it may undo the fact that it was sent.
+async fn sent(state: &AppState, account: &Account, draft: i64, raw: Vec<u8>) {
     let sent_name = if account.sent_folder.is_empty() {
         LOCAL_SENT
     } else {
@@ -489,7 +524,7 @@ pub async fn send(State(state): State<AppState>, user: CurrentUser, Path(id): Pa
     };
     match store::ensure_folder(&state.db, account.id, sent_name, "sent").await {
         Ok(folder) => {
-            if let Err(e) = store::store_message(&state, &account, &folder, None, true, false, &raw).await {
+            if let Err(e) = store::store_message(state, account, &folder, None, true, false, &raw).await {
                 tracing::warn!("sent message not stored locally: {e:#}");
             }
         }
@@ -497,17 +532,15 @@ pub async fn send(State(state): State<AppState>, user: CurrentUser, Path(id): Pa
     }
     if account.append_sent && !account.sent_folder.is_empty() {
         let folder = account.sent_folder.clone();
-        sync::spawn_action(&state, account.id, "saving to Sent", move |mut session| async move {
+        sync::spawn_action(state, account.id, "saving to Sent", move |mut session| async move {
             session.append(&folder, Some("(\\Seen)"), None, &raw).await?;
             let _ = session.logout().await;
             Ok(())
         });
     }
-    if let Err(e) = remove_draft(&state, id).await {
-        tracing::warn!("draft {id} not removed: {e:?}");
+    if let Err(e) = remove_draft(state, draft).await {
+        tracing::warn!("draft {draft} not removed: {e:?}");
     }
-    state.notify(user.id, "mail");
-    Ok(Json(json!({ "ok": true })))
 }
 
 #[cfg(test)]

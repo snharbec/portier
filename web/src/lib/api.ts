@@ -140,6 +140,8 @@ export interface Draft {
 	forward_attachments: boolean;
 	include_quote: boolean;
 	updated_at: number;
+	/** Why the last attempt to send it failed, if one did. */
+	last_error: string | null;
 }
 
 export interface DraftAttachment {

@@ -251,6 +251,8 @@ pub struct App {
     pub selected: HashSet<i64>,
     /// One line for the bottom of the screen: what just happened, or what went wrong.
     pub status: String,
+    /// The token that takes back the last action, and when it was given.
+    undo: Option<(String, std::time::Instant)>,
     pub quit: bool,
     /// What the search results answer.
     pub query: String,
@@ -297,6 +299,7 @@ impl App {
             selecting: false,
             selected: HashSet::new(),
             status: String::new(),
+            undo: None,
             quit: false,
             query: String::new(),
             hits: Vec::new(),
@@ -710,8 +713,9 @@ impl App {
             .copied();
         let was_open = self.open.is_some();
 
-        let _: Value = self.client.post("/mail/actions", body).await?;
+        let answer: Value = self.client.post("/mail/actions", body).await?;
         self.status = format!("{done} {}", conversations(ids.len()));
+        self.undoable(&answer);
         self.selected.clear();
         self.selecting = false;
         if leaves {
@@ -730,6 +734,34 @@ impl App {
                 self.held.clear();
             }
         }
+        Ok(())
+    }
+
+    /// How long an action can be undone; the server keeps it a little longer.
+    const UNDO: std::time::Duration = std::time::Duration::from_secs(4);
+
+    /// Remembers the token an action came back with, and says how to use it.
+    pub(crate) fn undoable(&mut self, answer: &Value) {
+        if let Some(token) = answer["undo"].as_str() {
+            self.undo = Some((token.to_string(), std::time::Instant::now()));
+            self.status.push_str("   (Ctrl+Z undoes)");
+        }
+    }
+
+    /// Ctrl+Z: takes back the last action while that is possible.
+    async fn undo_last(&mut self) -> Result<()> {
+        let Some((token, _)) = self.undo.take().filter(|(_, at)| at.elapsed() <= Self::UNDO) else {
+            self.status = "Nothing to undo: an action can be undone for 4 seconds".into();
+            return Ok(());
+        };
+        let undone: Value = self.client.post(&format!("/undo/{token}"), json!({})).await?;
+        self.open = None;
+        self.refresh().await?;
+        // A mail that was about to be sent is a draft again: back to writing it.
+        if let Some(draft) = undone["draft"].as_i64() {
+            self.open_draft(draft).await?;
+        }
+        self.status = "Undone".into();
         Ok(())
     }
 
@@ -835,6 +867,7 @@ impl App {
         let screener = self.place == Place::Screener;
         match key.code {
             KeyCode::Char('c') if ctrl => self.quit = true,
+            KeyCode::Char('z') if ctrl => self.undo_last().await?,
             KeyCode::Char('q') => self.quit = true,
             KeyCode::Char('?') => self.help = true,
             KeyCode::Char('l') if ctrl => self.refresh().await?,
@@ -1133,6 +1166,7 @@ impl App {
                 } else {
                     "Note saved".into()
                 };
+                self.undoable(&saved);
             }
             KeyCode::Backspace => {
                 text.pop();

@@ -2,7 +2,7 @@
 	import '../app.css';
 	import { goto } from '$app/navigation';
 	import { page } from '$app/state';
-	import { app, loadSession, logout, startDraft } from '#lib/app.svelte.ts';
+	import { app, loadSession, logout, startDraft, undoLast } from '#lib/app.svelte.ts';
 	import type { SavedSearch } from '#lib/api.ts';
 	import KeyHelp from '#lib/components/KeyHelp.svelte';
 	import Login from '#lib/components/Login.svelte';
@@ -297,6 +297,12 @@
 			pageMail(arrow);
 			return;
 		}
+		// Ctrl+Z (Cmd+Z) takes back the action the notice at the bottom is about.
+		if (event.key === 'z' && (event.ctrlKey || event.metaKey) && !event.altKey && !event.shiftKey && app.undo) {
+			event.preventDefault();
+			undoLast();
+			return;
+		}
 		if (event.metaKey || event.ctrlKey || event.altKey) return;
 		const place = places.find((p) => p.key === event.key);
 		if (place) goto(place.href);
@@ -500,7 +506,12 @@
 	</main>
 	<KeyHelp bind:this={keyHelp} />
 	{#if app.notice}
-		<div class="toast" role="status">{app.notice}</div>
+		<div class="toast" role="status">
+			{app.notice}
+			{#if app.undo}
+				<button class="undo" onclick={undoLast}>Undo <span class="key">(Ctrl Z)</span></button>
+			{/if}
+		</div>
 	{/if}
 {/if}
 
@@ -902,5 +913,27 @@
 		color: var(--paper);
 		font-weight: 600;
 		box-shadow: 0 18px 40px -18px color-mix(in srgb, var(--ink) 70%, transparent);
+		display: flex;
+		align-items: center;
+		gap: 0.9rem;
+	}
+	.undo {
+		border: 0;
+		border-radius: 999px;
+		padding: 0.15rem 0.8rem;
+		background: var(--signal);
+		color: var(--signal-ink);
+		font-weight: 700;
+		cursor: pointer;
+		white-space: nowrap;
+	}
+	.undo .key {
+		font-weight: 400;
+		opacity: 0.75;
+	}
+	@media (hover: none) {
+		.undo .key {
+			display: none;
+		}
 	}
 </style>

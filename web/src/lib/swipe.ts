@@ -16,20 +16,20 @@ export interface Target {
 	messageIds?: number[];
 }
 
-/** Runs one of the server's mail actions, says what happened and reloads the lists. */
+/** Runs one of the server's mail actions, says what happened (with Undo) and reloads the lists. */
 export async function mailAction(
 	action: 'read' | 'unread' | 'important' | 'unimportant' | 'delay' | 'undelay' | 'archive' | 'trash' | 'untrash' | 'move',
 	target: Target,
 	done: string,
 	extra: Record<string, unknown> = {}
 ) {
-	await api.post('/mail/actions', {
+	const answer = await api.post<{ undo?: string }>('/mail/actions', {
 		action,
 		thread_ids: target.threadIds ?? [],
 		message_ids: target.messageIds ?? [],
 		...extra
 	});
-	notify(done);
+	notify(done, answer.undo);
 	app.tick += 1;
 	refreshCounts().catch(() => {});
 }

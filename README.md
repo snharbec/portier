@@ -29,6 +29,13 @@ handle onto Important in the side bar, use the button in the selection bar, or p
 reading; the same ways lead back to Home. It is stored as the mail server's "flagged" mark,
 so other mail programs show it as flag or star, and mail flagged there appears in Important.
 
+**Undo**: every action on mail can be taken back for 4 seconds: archive, Trash and back, seen and
+unseen, Important, Delay, moving to a folder, notes, and sending. The notice that confirms the
+action has an Undo button (`Ctrl+Z`; in the terminal client `Ctrl+Z` too). Portier shows the
+change at once, but only carries it out on the mail server when it can no longer be undone, so
+an undone action never happened there. For the same reason a mail you send leaves about five
+seconds after you sent it; if sending then fails, the mail is back in Drafts with the reason.
+
 **Notes**: in an opened mail, "Add note" (key `t`) attaches a text of your own to the conversation,
 e.g. "tax 2026" or "warranty until May". It shows on the mail, in the lists and in search results,
 is kept in Portier only (not on the mail server), and the search finds its words: typed

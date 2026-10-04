@@ -2,7 +2,7 @@
 	import { goto } from '$app/navigation';
 	import { page } from '$app/state';
 	import { api, type Addr, type DraftAttachment, type DraftDetail, type Message } from '#lib/api.ts';
-	import { app, draftReturnPath, refreshCounts } from '#lib/app.svelte.ts';
+	import { app, draftReturnPath, notify, refreshCounts } from '#lib/app.svelte.ts';
 	import Editor from '#lib/components/Editor.svelte';
 	import MessageCard from '#lib/components/MessageCard.svelte';
 	import { displayName, fileSize } from '#lib/format.ts';
@@ -132,8 +132,10 @@
 		try {
 			clearTimeout(saveTimer);
 			await save();
-			await api.post(`/drafts/${id}/send`);
+			const sent = await api.post<{ undo?: string }>(`/drafts/${id}/send`);
 			dirty = false;
+			// It goes out when it can no longer be undone.
+			notify('Sending the mail', sent.undo);
 			await refreshCounts();
 			leave();
 		} catch (e) {
@@ -285,6 +287,9 @@
 		{/if}
 
 		{#if error}<p class="error" role="alert">{error}</p>{/if}
+		{#if detail.draft.last_error && !error}
+			<p class="error" role="alert">This mail could not be sent: {detail.draft.last_error}</p>
+		{/if}
 
 		<div class="actions">
 			<button class="btn primary" onclick={send} disabled={sending || app.accounts.length === 0} title="Send (Ctrl+Return)">
