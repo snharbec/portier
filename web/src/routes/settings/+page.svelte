@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { tick } from 'svelte';
-	import { api, type Account, type Addr, type Category, type RecipientGroup, type Sender, type User } from '#lib/api.ts';
+	import { api, withToken, type Account, type Addr, type Category, type RecipientGroup, type Sender, type User } from '#lib/api.ts';
 	import { app, categoryNames, classify, refreshAccounts, refreshCounts, refreshSettings } from '#lib/app.svelte.ts';
 	import { clearOffline, offline, setOffline } from '#lib/offline.svelte.ts';
 	import { swipeActions, type SwipeAction } from '#lib/swipe.ts';
@@ -975,7 +975,7 @@
 		<select bind:value={exportBox} aria-label="Which mail">
 			{#each exportBoxes as [id, name]}<option value={id}>{name}</option>{/each}
 		</select>
-		<a class="btn" href="/api/export/mail?box={exportBox}" download>Export as mbox file</a>
+		<a class="btn" href={withToken(`/api/export/mail?box=${exportBox}`)} download>Export as mbox file</a>
 	</div>
 
 	{#if app.user?.is_admin}
@@ -986,7 +986,7 @@
 			<code>portier restore FILE</code>; <code>portier backup</code> writes one from the command line.
 		</p>
 		<div class="actions">
-			<a class="btn" href="/api/backup/download" download>Download a backup now</a>
+			<a class="btn" href={withToken('/api/backup/download')} download>Download a backup now</a>
 		</div>
 		<form class="daily" onsubmit={saveBackupFolder}>
 			<label class="field">

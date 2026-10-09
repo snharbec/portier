@@ -129,7 +129,7 @@ pub async fn undo(state: &AppState, user_id: i64, token: &str) -> ApiResult<Opti
                     .await?;
             }
             Step::Draft(id) => {
-                sqlx::query("UPDATE drafts SET sending_at = NULL WHERE id = ?")
+                sqlx::query("UPDATE drafts SET sending_at = NULL, sent_at = NULL WHERE id = ?")
                     .bind(id)
                     .execute(&state.db)
                     .await?;

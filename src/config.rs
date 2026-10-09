@@ -18,6 +18,9 @@ pub struct Config {
     /// Certificate chain and private key (PEM files) to serve HTTPS with; without them
     /// the server speaks plain HTTP.
     pub tls: Option<(PathBuf, PathBuf)>,
+    /// Whether the session cookie is marked `Secure`. On by itself behind in-process TLS, and
+    /// settable for the deployment the README recommends: HTTPS added by a reverse proxy in front.
+    pub cookie_secure: bool,
 }
 
 /// A setting from the environment: `PORTIER_<name>`, or `EMSCREEN_<name>` as installations
@@ -55,6 +58,9 @@ impl Config {
             sync_max_per_folder,
             soffice: crate::mail::preview::find_soffice(),
             avatars: setting("AVATARS").as_deref() != Some("off"),
+            // The session cookie is marked Secure by itself when this process speaks HTTPS; behind
+            // a proxy that adds HTTPS it has to be asked for, since nothing here can see it.
+            cookie_secure: setting("COOKIE_SECURE").is_none_or(|v| !matches!(v.as_str(), "0" | "off" | "false")),
         })
     }
 }

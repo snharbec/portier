@@ -15,6 +15,8 @@ use crate::{
 };
 
 pub const COOKIE_NAME: &str = "emscreen_session";
+/// The header a changing or expensive request carries the session's request token in.
+pub const TOKEN_HEADER: &str = "x-portier-token";
 const SESSION_SECONDS: i64 = 30 * 24 * 3600;
 
 pub fn hash_password(password: &str) -> ApiResult<String> {
@@ -90,10 +92,79 @@ pub async fn create_session(state: &AppState, user_id: i64) -> ApiResult<String>
         .bind(now() + SESSION_SECONDS)
         .execute(&state.db)
         .await?;
-    Ok(format!(
+    Ok(session_cookie(state, &token))
+}
+
+pub fn session_cookie(state: &AppState, token: &str) -> String {
+    format!(
         "{COOKIE_NAME}={token}; Path=/; HttpOnly; SameSite=Lax; Max-Age={SESSION_SECONDS}{}",
         secure(state)
-    ))
+    )
+}
+
+/// The request token of a session, made when it is first asked for.
+pub async fn request_token(state: &AppState, session: &str) -> String {
+    let mut tokens = state.tokens.lock().await;
+    tokens
+        .entry(session.to_string())
+        .or_insert_with(crypto::random_token)
+        .clone()
+}
+
+/// Ends every session of a user and forgets their request tokens.
+/// Returns how many sessions were ended.
+pub async fn end_sessions(state: &AppState, user_id: i64) -> ApiResult<u64> {
+    let sessions: Vec<String> = sqlx::query_scalar("SELECT token FROM sessions WHERE user_id = ?")
+        .bind(user_id)
+        .fetch_all(&state.db)
+        .await?;
+    let ended = sqlx::query("DELETE FROM sessions WHERE user_id = ?")
+        .bind(user_id)
+        .execute(&state.db)
+        .await?
+        .rows_affected();
+    let mut tokens = state.tokens.lock().await;
+    tokens.retain(|session, _| !sessions.iter().any(|gone| gone == session));
+    Ok(ended)
+}
+
+/// Ends one session and forgets its request token.
+pub async fn end_session(state: &AppState, session: &str) -> ApiResult<()> {
+    sqlx::query("DELETE FROM sessions WHERE token = ?")
+        .bind(session)
+        .execute(&state.db)
+        .await?;
+    state.tokens.lock().await.remove(session);
+    Ok(())
+}
+
+/// Whether a changing or expensive request carries the token of its session. A request without it
+/// came from somewhere that does not know the page's token: a mail talking the browser into a
+/// request, or another site. Downloads carry it in the address, since a link the browser follows
+/// cannot set a header.
+pub async fn request_allowed(state: &AppState, parts: &Parts) -> bool {
+    let Some(session) = session_token(parts) else {
+        return false;
+    };
+    let sent = parts
+        .headers
+        .get(TOKEN_HEADER)
+        .and_then(|value| value.to_str().ok())
+        .map(str::to_string)
+        .or_else(|| query_token(parts.uri.query()));
+    let Some(sent) = sent else {
+        return false;
+    };
+    request_token(state, &session).await == sent
+}
+
+/// The token from `?token=…`, for the downloads a page reaches through a plain link.
+fn query_token(query: Option<&str>) -> Option<String> {
+    query?
+        .split('&')
+        .filter_map(|pair| pair.split_once('='))
+        .find(|(name, _)| *name == "token")
+        .map(|(_, value)| value.to_string())
 }
 
 pub fn clear_cookie(state: &AppState) -> String {
@@ -103,9 +174,14 @@ pub fn clear_cookie(state: &AppState) -> String {
     )
 }
 
-/// Served over HTTPS, the session cookie is never sent over a plain connection.
+/// Served over HTTPS, the session cookie is never sent over a plain connection. Where HTTPS is
+/// added by a reverse proxy, nothing here can tell; `PORTIER_COOKIE_SECURE` says so.
 fn secure(state: &AppState) -> &'static str {
-    if state.config.tls.is_some() { "; Secure" } else { "" }
+    if state.config.tls.is_some() || state.config.cookie_secure {
+        "; Secure"
+    } else {
+        ""
+    }
 }
 
 #[cfg(test)]

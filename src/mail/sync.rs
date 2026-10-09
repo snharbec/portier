@@ -19,6 +19,8 @@ const FETCH_BATCH: usize = 25;
 const FLAG_WINDOW: usize = 1000;
 const IDLE_SECONDS: u64 = 5 * 60;
 const TRASH_LIMIT: usize = 500;
+/// How long it is remembered that a mail could not be read, before it is fetched and tried again.
+const FORGET_UNREADABLE_AFTER: i64 = 60 * 24 * 3600;
 
 pub async fn load_account(state: &AppState, account_id: i64) -> Result<Option<Account>> {
     Ok(sqlx::query_as::<_, Account>("SELECT * FROM accounts WHERE id = ?")
@@ -268,51 +270,90 @@ async fn sync_folder(
         state.notify(account.user_id, "mail");
     }
 
-    // Read state or the flag changed elsewhere.
+    // Read state or the flag changed elsewhere. One message whose flags cannot be read is passed
+    // over; the rest of the folder is still reconciled.
     let oldest = wanted.get(FLAG_WINDOW.min(wanted.len()).saturating_sub(1)).copied();
     if let Some(oldest) = oldest
         && !local_by_uid.is_empty()
     {
-        for (uid, seen, flagged) in imap::fetch_flags(session, oldest).await? {
-            if let Some((id, local_seen, local_flagged)) = local_by_uid.get(&uid)
-                && (*local_seen != seen || *local_flagged != flagged)
-            {
-                sqlx::query("UPDATE messages SET seen = ?, flagged = ? WHERE id = ?")
-                    .bind(seen)
-                    .bind(flagged)
-                    .bind(id)
-                    .execute(db)
-                    .await?;
+        match imap::fetch_flags(session, oldest).await {
+            Ok(flags) => {
+                for (uid, seen, flagged) in flags {
+                    if let Some((id, local_seen, local_flagged)) = local_by_uid.get(&uid)
+                        && (*local_seen != seen || *local_flagged != flagged)
+                    {
+                        sqlx::query("UPDATE messages SET seen = ?, flagged = ? WHERE id = ?")
+                            .bind(seen)
+                            .bind(flagged)
+                            .bind(id)
+                            .execute(db)
+                            .await?;
+                    }
+                }
             }
+            Err(e) => tracing::warn!(account = account.id, folder = %folder.name, "flags not read: {e:#}"),
         }
     }
 
-    // New on the server, newest first so the UI fills from the top.
+    // Mail this program could not read is remembered, so it is not fetched again on every pass.
+    // A reminder older than two months is forgotten: an upgrade may read it after all. (A folder
+    // that goes away takes its reminders with it; see the foreign key.)
+    let failed: Vec<i64> = sqlx::query_scalar("SELECT uid FROM sync_errors WHERE folder_id = ? AND at > ?")
+        .bind(folder.id)
+        .bind(now() - FORGET_UNREADABLE_AFTER)
+        .fetch_all(db)
+        .await?;
+
+    // New on the server, newest first so the UI fills from the top. What is remembered as
+    // unreadable is left out; so are rows that left (they are gone or moved above).
     let missing: Vec<u32> = wanted
         .into_iter()
-        .filter(|uid| !local_by_uid.contains_key(uid))
+        .filter(|uid| !local_by_uid.contains_key(uid) && !failed.contains(&i64::from(*uid)))
         .collect();
     let mut to_junk: Vec<u32> = Vec::new();
+    let mut unreadable: Vec<i64> = Vec::new();
     for batch in missing.chunks(FETCH_BATCH) {
-        for fetched in imap::fetch_full(session, batch).await? {
+        // One batch that cannot be fetched (the connection broke, the server refused) ends this
+        // pass's fetching; what was stored so far is kept and the next pass carries on.
+        let fetched = match imap::fetch_full(session, batch).await {
+            Ok(fetched) => fetched,
+            Err(e) => {
+                tracing::warn!(account = account.id, folder = %folder.name, "mail not fetched: {e:#}");
+                break;
+            }
+        };
+        for message in fetched {
             match store::store_message(
                 state,
                 account,
                 folder,
-                Some(fetched.uid),
-                fetched.seen,
-                fetched.flagged,
-                &fetched.body,
+                Some(message.uid),
+                message.seen,
+                message.flagged,
+                &message.body,
             )
             .await
             {
-                Ok(Some(stored)) if stored.junk_sender && folder.role == "inbox" => to_junk.push(fetched.uid),
-                Ok(_) => {}
-                Err(e) => tracing::warn!(account = account.id, uid = fetched.uid, "cannot store message: {e:#}"),
+                // Not a message this program can read: remembered, so it is not fetched every pass.
+                Ok(None) => {
+                    tracing::info!(account = account.id, uid = message.uid, "mail this program cannot read");
+                    unreadable.push(i64::from(message.uid));
+                }
+                Ok(Some(stored)) => {
+                    if stored.junk_sender && folder.role == "inbox" {
+                        to_junk.push(message.uid);
+                    }
+                }
+                Err(e) => {
+                    // Storing failed. Another pass may do better (a locked database, a full disk
+                    // that is freed), so this one is fetched again rather than given up on.
+                    tracing::warn!(account = account.id, uid = message.uid, "cannot store message: {e:#}");
+                }
             }
         }
         state.notify(account.user_id, "mail");
     }
+    remember_unreadable(state, folder, &unreadable).await?;
 
     // Mail from senders already screened out goes straight to Junk.
     if let (Some(junk), false) = (junk, to_junk.is_empty()) {
@@ -321,6 +362,32 @@ async fn sync_folder(
     // What the folder looked like when this pass started; moves made above change it, which
     // makes the caller run one more pass.
     Ok((mailbox.exists, mailbox.uid_next))
+}
+
+/// Remembers that these UIDs cannot be read, so that they are not fetched again on every pass.
+#[cfg(test)]
+pub(crate) async fn remember_unreadable_test(state: &AppState, folder_id: i64, uids: &[i64]) -> Result<()> {
+    let folder = Folder {
+        id: folder_id,
+        name: String::new(),
+        role: String::new(),
+    };
+    remember_unreadable(state, &folder, uids).await
+}
+
+async fn remember_unreadable(state: &AppState, folder: &Folder, uids: &[i64]) -> Result<()> {
+    if uids.is_empty() {
+        return Ok(());
+    }
+    for uid in uids {
+        sqlx::query("INSERT OR REPLACE INTO sync_errors (folder_id, uid, at) VALUES (?, ?, ?)")
+            .bind(folder.id)
+            .bind(uid)
+            .bind(now())
+            .execute(&state.db)
+            .await?;
+    }
+    Ok(())
 }
 
 /// Keeps "Nice to know" mail in its own folder: out of the inbox what such senders sent, and
@@ -421,15 +488,27 @@ pub async fn move_local(state: &AppState, from: &Folder, uids: &[u32], to: &Fold
     Ok(rows)
 }
 
-/// Undoes `move_local` after the server refused the move.
+/// Undoes `move_local` after the server refused the move. The UID is only written back when the
+/// folder has no other row carrying it: a sync pass inside the undo window may have stored the
+/// same mail there in the meantime, and two rows with one UID in one folder is not a state the
+/// database allows. A row that cannot take its UID back keeps the folder it was moved to; the
+/// next sync finds the mail where the server still has it and shows it there.
 pub async fn restore_local(state: &AppState, from: &Folder, rows: Moved) -> Result<()> {
     for (id, uid) in rows {
-        sqlx::query("UPDATE messages SET folder_id = ?, uid = ? WHERE id = ?")
-            .bind(from.id)
-            .bind(uid)
-            .bind(id)
-            .execute(&state.db)
-            .await?;
+        sqlx::query(
+            "UPDATE messages SET folder_id = ?, uid = ?
+             WHERE id = ?
+               AND NOT EXISTS (SELECT 1 FROM messages other
+                               WHERE other.folder_id = ? AND other.uid = ? AND other.id != ?)",
+        )
+        .bind(from.id)
+        .bind(uid)
+        .bind(id)
+        .bind(from.id)
+        .bind(uid)
+        .bind(id)
+        .execute(&state.db)
+        .await?;
     }
     Ok(())
 }

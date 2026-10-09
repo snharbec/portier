@@ -13,7 +13,7 @@ mod saved;
 
 use axum::{
     Router,
-    extract::DefaultBodyLimit,
+    extract::{DefaultBodyLimit, Request, State},
     routing::{delete, get, post, put},
 };
 
@@ -101,6 +101,47 @@ pub fn router() -> Router<AppState> {
         .route("/drafts/{id}/send", post(compose::send))
 }
 
+/// What a request needs the session's request token for: everything that is not a plain read of a
+/// cheap view, and the reads that cost the server real work:
+///
+///   - every changing request (`POST`, `PUT`, `DELETE`);
+///   - the downloads that build a file or run a converter: a whole mailbox as mbox, the whole
+///     installation as a backup, and an Office document as PDF.
+///
+/// The page holds the token in its own code, so a request that a mail talks the browser into
+/// making, or one from another site, does not carry it. Everything else is left open to the
+/// session alone: the page fetches those while the reader works, and they change nothing.
+fn needs_token(method: &axum::http::Method, path: &str) -> bool {
+    // Signing in, signing up and signing out happen before or without a page that holds a token.
+    if matches!(path, "/login" | "/register" | "/logout") {
+        return false;
+    }
+    if !matches!(*method, axum::http::Method::GET | axum::http::Method::HEAD) {
+        return true;
+    }
+    path == "/export/mail" || path == "/backup/download" || path.ends_with("/pdf")
+}
+
+/// Refuses a request that does not carry the request token of its session; see [`needs_token`].
+pub async fn require_token(
+    State(state): State<AppState>,
+    request: axum::extract::Request,
+    next: axum::middleware::Next,
+) -> axum::response::Response {
+    use axum::response::IntoResponse;
+    if !needs_token(request.method(), request.uri().path()) {
+        return next.run(request).await;
+    }
+    let mut parts = Request::new(()).into_parts().0;
+    parts.headers = request.headers().clone();
+    parts.uri = request.uri().clone();
+    if crate::auth::request_allowed(&state, &parts).await {
+        next.run(request).await
+    } else {
+        crate::error::ApiError::forbidden().into_response()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use axum::{
@@ -114,13 +155,13 @@ mod tests {
 
     use crate::{config::Config, crypto, state::AppState};
 
-    async fn test_app() -> (Router, AppState) {
+    async fn test_app() -> (TestApp, AppState) {
         test_app_with(false).await
     }
 
     /// `avatars`: whether sender pictures may be looked up (tests never reach the internet:
     /// they only use what is already in the cache).
-    async fn test_app_with(avatars: bool) -> (Router, AppState) {
+    async fn test_app_with(avatars: bool) -> (TestApp, AppState) {
         let data_dir = std::env::temp_dir().join(format!("portier-test-{}", crypto::random_token()));
         std::fs::create_dir_all(&data_dir).unwrap();
         let db = crate::open_database(&format!("sqlite://{}", data_dir.join("test.db").display()))
@@ -135,19 +176,98 @@ mod tests {
             soffice: None,
             avatars,
             tls: None,
+            cookie_secure: false,
         };
+        // Tests run against a mail server on this machine that the test itself names; the check
+        // that keeps an account setting off the local network is off for them.
+        // SAFETY: set once per test process, read by the sync task; nothing else changes it.
+        unsafe { std::env::set_var("PORTIER_MAIL_TEST_SERVER", "1") };
         let state = AppState::new(db, config);
-        (crate::app(state.clone()), state)
+        (TestApp::new(crate::app(state.clone())), state)
     }
 
     /// Sends a request and returns status, session cookie (if one was set) and JSON body.
+    ///
+    /// A changing request is the page's own, so it carries the session's request token, which
+    /// `TestApp` has asked `/me` for: the rule that a request from a mail frame has no token is
+    /// what `requests_from_a_mail_cannot_change_anything` is for.
     async fn call(
-        app: &Router,
+        app: &TestApp,
         method: &str,
         path: &str,
         cookie: Option<&str>,
         body: Option<Value>,
     ) -> (StatusCode, Option<String>, Value) {
+        let mut request = Request::builder().method(method).uri(path);
+        if let Some(cookie) = cookie {
+            request = request.header(header::COOKIE, cookie);
+            // The page sends its request token with every call, reads included.
+            if let Some(token) = app.token_of(cookie).await {
+                request = request.header("x-portier-token", token);
+            }
+        }
+        let request = match body {
+            Some(json) => request
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(Body::from(json.to_string()))
+                .unwrap(),
+            None => request.body(Body::empty()).unwrap(),
+        };
+        let response = app.router.clone().oneshot(request).await.unwrap();
+        let status = response.status();
+        let cookie = response
+            .headers()
+            .get(header::SET_COOKIE)
+            .and_then(|v| v.to_str().ok())
+            .and_then(|v| v.split(';').next())
+            .map(str::to_string);
+        let bytes = response.into_body().collect().await.unwrap().to_bytes();
+        (status, cookie, serde_json::from_slice(&bytes).unwrap_or(Value::Null))
+    }
+
+    /// The router under a test, with the request tokens of the sessions it has seen. Asking for a
+    /// token is what the page does once it is signed in.
+    #[derive(Clone)]
+    struct TestApp {
+        router: Router,
+        tokens: std::sync::Arc<tokio::sync::Mutex<std::collections::HashMap<String, String>>>,
+    }
+
+    impl TestApp {
+        fn new(router: Router) -> Self {
+            Self {
+                router,
+                tokens: std::sync::Arc::new(tokio::sync::Mutex::new(std::collections::HashMap::new())),
+            }
+        }
+
+        /// The request token of the session a `Set-Cookie` value carries, asked for once and kept.
+        async fn token_of(&self, cookie: &str) -> Option<String> {
+            let session = cookie
+                .split(';')
+                .next()
+                .and_then(|pair| pair.trim().split_once('='))
+                .map(|(_, value)| value.to_string())?;
+            if let Some(token) = self.tokens.lock().await.get(&session) {
+                return Some(token.clone());
+            }
+            let cookie = format!("{}={session}", crate::auth::COOKIE_NAME);
+            let me = call_raw(&self.router, "GET", "/api/me", Some(&cookie), None).await.1;
+            let token = me["token"].as_str()?.to_string();
+            self.tokens.lock().await.insert(session, token.clone());
+            Some(token)
+        }
+    }
+
+    /// Sends one request without a token; used by `TestApp::token_of` and by the test that the
+    /// token is required at all.
+    async fn call_raw(
+        app: &Router,
+        method: &str,
+        path: &str,
+        cookie: Option<&str>,
+        body: Option<Value>,
+    ) -> (StatusCode, Value) {
         let mut request = Request::builder().method(method).uri(path);
         if let Some(cookie) = cookie {
             request = request.header(header::COOKIE, cookie);
@@ -161,14 +281,8 @@ mod tests {
         };
         let response = app.clone().oneshot(request).await.unwrap();
         let status = response.status();
-        let cookie = response
-            .headers()
-            .get(header::SET_COOKIE)
-            .and_then(|v| v.to_str().ok())
-            .and_then(|v| v.split(';').next())
-            .map(str::to_string);
         let bytes = response.into_body().collect().await.unwrap().to_bytes();
-        (status, cookie, serde_json::from_slice(&bytes).unwrap_or(Value::Null))
+        (status, serde_json::from_slice(&bytes).unwrap_or(Value::Null))
     }
 
     /// Gives `user_id` an account with one inbound message; returns (thread, message, sender).
@@ -998,6 +1112,7 @@ mod tests {
         let avatar = "/api/avatar?address=anna@example.com";
 
         let upload = async |cookie: &str, file: Vec<u8>| -> StatusCode {
+            let token = app.token_of(cookie).await.unwrap_or_default();
             let boundary = "----portier-test";
             let mut body = format!(
                 "--{boundary}\r\nContent-Disposition: form-data; name=\"file\"; filename=\"a.png\"\r\n\
@@ -1010,13 +1125,14 @@ mod tests {
                 .method("POST")
                 .uri(&picture)
                 .header(header::COOKIE, cookie)
+                .header("x-portier-token", token.clone())
                 .header(
                     header::CONTENT_TYPE,
                     format!("multipart/form-data; boundary={boundary}"),
                 )
                 .body(Body::from(body))
                 .unwrap();
-            app.clone().oneshot(request).await.unwrap().status()
+            app.router.clone().oneshot(request).await.unwrap().status()
         };
         let served = async || {
             let request = Request::builder()
@@ -1024,7 +1140,7 @@ mod tests {
                 .header(header::COOKIE, &cookie)
                 .body(Body::empty())
                 .unwrap();
-            let response = app.clone().oneshot(request).await.unwrap();
+            let response = app.router.clone().oneshot(request).await.unwrap();
             let kind = response
                 .headers()
                 .get(header::CONTENT_TYPE)
@@ -1563,6 +1679,351 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn requests_from_a_mail_cannot_change_anything() {
+        let (app, state) = test_app().await;
+        let admin = json!({ "email": "admin@example.org", "password": "password1" });
+        let (_, cookie, _) = call(&app, "POST", "/api/register", None, Some(admin)).await;
+        let cookie = cookie.unwrap();
+        let (thread, message, _) = seed_mail(&state, 1).await;
+
+        // A request the page itself makes carries the token and works: marking seen, a draft, and
+        // the whole installation as a download.
+        let (status, _, body) = call(
+            &app,
+            "POST",
+            "/api/mail/actions",
+            Some(&cookie),
+            Some(json!({ "action": "read", "thread_ids": [thread] })),
+        )
+        .await;
+        assert_eq!((status, body["affected"].as_i64()), (StatusCode::OK, Some(1)));
+        sqlx::query("UPDATE senders SET category = 'important'")
+            .execute(&state.db)
+            .await
+            .unwrap();
+        let raw = b"From: Jane <jane@example.org>\r\nSubject: Secret\r\n\r\nFrom the start\r\n";
+        let path = state.raw_path(1, message);
+        tokio::fs::create_dir_all(path.parent().unwrap()).await.unwrap();
+        tokio::fs::write(&path, raw).await.unwrap();
+        let (status, _, _) = call(&app, "GET", "/api/export/mail?box=important", Some(&cookie), None).await;
+        assert_eq!(
+            status,
+            StatusCode::OK,
+            "exporting a list is what the settings page offers"
+        );
+
+        // The same requests without the token, as a mail frame or another site would make them.
+        let (status, _) = call_raw(
+            &app.router,
+            "POST",
+            "/api/mail/actions",
+            Some(&cookie),
+            Some(json!({ "action": "trash", "thread_ids": [thread] })),
+        )
+        .await;
+        assert_eq!(status, StatusCode::FORBIDDEN, "changing mail needs the token");
+        let (status, _) = call_raw(
+            &app.router,
+            "GET",
+            "/api/export/mail?box=important",
+            Some(&cookie),
+            None,
+        )
+        .await;
+        assert_eq!(status, StatusCode::FORBIDDEN, "exporting everything needs the token");
+        let (status, _) = call_raw(
+            &app.router,
+            "GET",
+            &format!("/api/messages/{message}/attachments/0/pdf"),
+            Some(&cookie),
+            None,
+        )
+        .await;
+        assert_eq!(status, StatusCode::FORBIDDEN, "converting a document needs the token");
+
+        // A wrong token is no better than none, and another session's token does not do either.
+        let trashing = || {
+            Request::builder()
+                .method("POST")
+                .uri("/api/mail/actions")
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(Body::from(
+                    json!({ "action": "trash", "thread_ids": [thread] }).to_string(),
+                ))
+                .unwrap()
+        };
+        let mut wrong = trashing();
+        wrong.headers_mut().insert(header::COOKIE, cookie.parse().unwrap());
+        wrong
+            .headers_mut()
+            .insert("x-portier-token", "not the token".parse().unwrap());
+        assert_eq!(
+            app.router.clone().oneshot(wrong).await.unwrap().status(),
+            StatusCode::FORBIDDEN
+        );
+        let bob = json!({ "email": "bob@example.org", "password": "password2" });
+        call(&app, "POST", "/api/users", Some(&cookie), Some(bob.clone())).await;
+        let (_, bob_cookie, _) = call(&app, "POST", "/api/login", None, Some(bob)).await;
+        let bob_cookie = bob_cookie.unwrap();
+        let other = app.token_of(&bob_cookie).await.unwrap();
+        let mut theirs = trashing();
+        theirs.headers_mut().insert(header::COOKIE, cookie.parse().unwrap());
+        theirs.headers_mut().insert("x-portier-token", other.parse().unwrap());
+        assert_eq!(
+            app.router.clone().oneshot(theirs).await.unwrap().status(),
+            StatusCode::FORBIDDEN,
+            "another session's token is not this session's"
+        );
+
+        // Reads that change nothing and cost nothing stay as they were.
+        let (status, _, _) = call(&app, "GET", "/api/threads?box=important", Some(&cookie), None).await;
+        assert_eq!(status, StatusCode::OK);
+        let (status, _, _) = call(&app, "GET", "/api/messages/1", Some(&cookie), None).await;
+        assert_eq!(status, StatusCode::OK, "reading a mail stays open to the session");
+    }
+
+    #[tokio::test]
+    async fn a_mail_that_cannot_be_read_does_not_hold_up_the_others() {
+        // What the sync does with a message it cannot parse: the row is not written, and the same
+        // bytes are not fetched again on every pass. The rest of the pass is untouched.
+        let (app, state) = test_app().await;
+        let admin = json!({ "email": "admin@example.org", "password": "password1" });
+        call(&app, "POST", "/api/register", None, Some(admin)).await;
+        let (_, _, sender) = seed_mail(&state, 1).await;
+        let folder: i64 = sqlx::query_scalar("SELECT id FROM folders WHERE role = 'inbox'")
+            .fetch_one(&state.db)
+            .await
+            .unwrap();
+
+        // A body the parser refuses: no headers at all, no message in it.
+        let account = crate::mail::sync::load_account(&state, 1).await.unwrap().unwrap();
+        let folder_row = crate::models::Folder {
+            id: folder,
+            name: "INBOX".into(),
+            role: "inbox".into(),
+        };
+        let stored = crate::mail::store::store_message(&state, &account, &folder_row, Some(50), false, false, &[])
+            .await
+            .unwrap();
+        assert!(stored.is_none(), "an unreadable message stores nothing");
+
+        // What the folder keeps about it is a note of its UID, so the next pass skips it.
+        crate::mail::sync::remember_unreadable_test(&state, folder, &[50])
+            .await
+            .unwrap();
+        let remembered: Vec<i64> = sqlx::query_scalar("SELECT uid FROM sync_errors WHERE folder_id = ?")
+            .bind(folder)
+            .fetch_all(&state.db)
+            .await
+            .unwrap();
+        assert_eq!(remembered, [50]);
+
+        // The mail it could read is still there, and readable.
+        let (_, _, message) = call(&app, "GET", "/api/messages/1", Some(&cookie_of(&state).await), None).await;
+        assert_eq!(message["subject"], "Secret");
+        let _ = sender;
+    }
+
+    #[tokio::test]
+    async fn an_interrupted_send_is_not_sent_a_second_time() {
+        let (app, state) = test_app().await;
+        let admin = json!({ "email": "admin@example.org", "password": "password1" });
+        let (_, cookie, _) = call(&app, "POST", "/api/register", None, Some(admin)).await;
+        let cookie = cookie.unwrap();
+        seed_mail(&state, 1).await;
+        // Nothing listens there, so the attempt fails at once rather than sending anything.
+        sqlx::query("UPDATE accounts SET smtp_host = '127.0.0.1', smtp_port = 1, password_enc = ?")
+            .bind(crypto::encrypt(&state.config.master_key, "secret").unwrap())
+            .execute(&state.db)
+            .await
+            .unwrap();
+        let (_, _, created) = call(
+            &app,
+            "POST",
+            "/api/drafts",
+            Some(&cookie),
+            Some(json!({ "kind": "new" })),
+        )
+        .await;
+        let id = created["id"].as_i64().unwrap();
+        let path = format!("/api/drafts/{id}");
+        let draft = json!({ "account_id": 1, "to_addrs": "anna@example.com", "cc_addrs": "", "bcc_addrs": "",
+            "subject": "Hello", "body_html": "<p>Hi</p>", "forward_attachments": false, "include_quote": false });
+        call(&app, "PUT", &path, Some(&cookie), Some(draft)).await;
+
+        // A draft left mid-send, as a crash between handing the mail over and the bookkeeping
+        // would leave it: the mark that it may be out is there, the claim is not.
+        sqlx::query("UPDATE drafts SET sending_at = NULL, sent_at = ? WHERE id = ?")
+            .bind(crate::state::now())
+            .bind(id)
+            .execute(&state.db)
+            .await
+            .unwrap();
+        crate::startup_bookkeeping(&state.db).await.unwrap();
+
+        // It is a draft again, so it can be looked at — and it says what is uncertain about it.
+        let (status, _, detail) = call(&app, "GET", &path, Some(&cookie), None).await;
+        assert_eq!(status, StatusCode::OK, "the draft is not hidden");
+        let reason = detail["draft"]["last_error"].as_str().unwrap_or_default();
+        assert!(
+            reason.contains("may already have gone out"),
+            "the reason says the mail may be out: {reason}"
+        );
+        assert!(detail["draft"]["sent_at"].as_i64().is_some(), "the mark is kept");
+
+        // What was interrupted is not tried again; a draft written and sent from here goes out.
+        sqlx::query("UPDATE drafts SET sent_at = NULL, sending_at = NULL WHERE id = ?")
+            .bind(id)
+            .execute(&state.db)
+            .await
+            .unwrap();
+        let (status, _, _) = call(&app, "POST", &format!("{path}/send"), Some(&cookie), None).await;
+        assert_eq!(status, StatusCode::OK);
+        let marked: Option<i64> = sqlx::query_scalar("SELECT sent_at FROM drafts WHERE id = ?")
+            .bind(id)
+            .fetch_one(&state.db)
+            .await
+            .unwrap();
+        assert!(marked.is_some(), "the claim marks the mail as possibly out");
+    }
+
+    #[tokio::test]
+    async fn a_backup_folder_that_is_the_stored_mail_is_refused() {
+        let (app, state) = test_app().await;
+        let admin = json!({ "email": "admin@example.org", "password": "password1" });
+        let (_, cookie, _) = call(&app, "POST", "/api/register", None, Some(admin)).await;
+        let cookie = cookie.unwrap();
+        let data = &state.config.data_dir;
+        let mail = data.join("mail");
+        let elsewhere = std::env::temp_dir().join(format!("portier-backup-{}", crypto::random_token()));
+
+        for folder in [&mail, &data.join(".").join("mail"), &data.join("drafts"), &elsewhere] {
+            let (status, _, _) = call(
+                &app,
+                "PUT",
+                "/api/backup",
+                Some(&cookie),
+                Some(json!({ "dir": folder.to_string_lossy() })),
+            )
+            .await;
+            let expected = if folder == &elsewhere {
+                StatusCode::OK
+            } else {
+                StatusCode::BAD_REQUEST
+            };
+            assert_eq!(status, expected, "{}", folder.display());
+        }
+        // The folder that was accepted got a backup named like the server's own.
+        let written: Vec<String> = std::fs::read_dir(&elsewhere)
+            .unwrap()
+            .flatten()
+            .map(|entry| entry.file_name().to_string_lossy().into_owned())
+            .collect();
+        assert!(
+            written
+                .iter()
+                .any(|name| name.starts_with("portier-") && name.ends_with(".tar.gz")),
+            "a backup was written: {written:?}"
+        );
+        let _ = std::fs::remove_dir_all(&elsewhere);
+    }
+
+    #[tokio::test]
+    async fn a_changed_password_ends_the_other_sessions() {
+        let (app, state) = test_app().await;
+        let admin = json!({ "email": "admin@example.org", "password": "password1" });
+        let (_, cookie, _) = call(&app, "POST", "/api/register", None, Some(admin)).await;
+        let cookie = cookie.unwrap();
+        // The same user signed in a second time, as on another machine.
+        let (_, second, _) = call(
+            &app,
+            "POST",
+            "/api/login",
+            None,
+            Some(json!({ "email": "admin@example.org", "password": "password1" })),
+        )
+        .await;
+        let second = second.unwrap();
+        assert_eq!(
+            call(&app, "GET", "/api/me", Some(&second), None).await.2["user"]["email"],
+            "admin@example.org"
+        );
+
+        let (status, renewed, answer) = call(
+            &app,
+            "POST",
+            "/api/password",
+            Some(&cookie),
+            Some(json!({ "current": "password1", "new": "password2" })),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        // The session that changed the password goes on under a new cookie, with a fresh token for
+        // the page to use; every other session is over.
+        let renewed = renewed.expect("a new session cookie");
+        assert_ne!(renewed, cookie, "the session is renewed, not reused");
+        assert!(answer["token"].as_str().is_some_and(|token| !token.is_empty()));
+        assert!(call(&app, "GET", "/api/me", Some(&renewed), None).await.2["user"].is_object());
+        assert_eq!(
+            call_raw(&app.router, "GET", "/api/me", Some(&second), None).await.1["user"],
+            Value::Null,
+            "the other session is over"
+        );
+        assert_eq!(
+            call_raw(&app.router, "GET", "/api/me", Some(&cookie), None).await.1["user"],
+            Value::Null,
+            "the session it was changed from is over too"
+        );
+        let _ = &state;
+    }
+
+    #[tokio::test]
+    async fn guessing_a_password_is_slowed_down() {
+        let (app, _state) = test_app().await;
+        let admin = json!({ "email": "admin@example.org", "password": "password1" });
+        call(&app, "POST", "/api/register", None, Some(admin)).await;
+        let wrong = json!({ "email": "admin@example.org", "password": "not the password" });
+        let mut refused = 0;
+        for _ in 0..20 {
+            if call(&app, "POST", "/api/login", None, Some(wrong.clone())).await.0 == StatusCode::TOO_MANY_REQUESTS {
+                refused += 1;
+            }
+        }
+        assert!(refused > 0, "after enough failures the address is made to wait");
+        // The right password does not help while the address is held back, and nothing leaks about
+        // whether the address exists: both failures look the same.
+        let (status, _, body) = call(
+            &app,
+            "POST",
+            "/api/login",
+            None,
+            Some(json!({ "email": "admin@example.org", "password": "password1" })),
+        )
+        .await;
+        assert_eq!(status, StatusCode::TOO_MANY_REQUESTS);
+        assert!(body["error"].as_str().unwrap().contains("Too many attempts"));
+        let (status, _, body) = call(
+            &app,
+            "POST",
+            "/api/login",
+            None,
+            Some(json!({ "email": "nobody@example.org", "password": "whatever1" })),
+        )
+        .await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+        assert_eq!(body["error"], "wrong email or password", "no word about the address");
+    }
+
+    /// The cookie of the first user of a test installation.
+    async fn cookie_of(state: &AppState) -> String {
+        let token: String = sqlx::query_scalar("SELECT token FROM sessions ORDER BY rowid LIMIT 1")
+            .fetch_one(&state.db)
+            .await
+            .unwrap();
+        format!("{}={token}", crate::auth::COOKIE_NAME)
+    }
+
+    #[tokio::test]
     async fn settings_travel_in_a_file_and_mail_leaves_as_files() {
         let (app, state) = test_app().await;
         let admin = json!({ "email": "admin@example.org", "password": "password1" });
@@ -1652,8 +2113,16 @@ mod tests {
             let mut request = Request::builder().method("GET").uri(path);
             if let Some(cookie) = cookie {
                 request = request.header("cookie", cookie);
+                if let Some(token) = app.token_of(cookie).await {
+                    request = request.header("x-portier-token", token);
+                }
             }
-            let response = app.clone().oneshot(request.body(Body::empty()).unwrap()).await.unwrap();
+            let response = app
+                .router
+                .clone()
+                .oneshot(request.body(Body::empty()).unwrap())
+                .await
+                .unwrap();
             let status = response.status();
             let name = response
                 .headers()
@@ -1996,7 +2465,12 @@ mod tests {
             if let Some(cookie) = who {
                 request = request.header(header::COOKIE, cookie);
             }
-            let response = app.clone().oneshot(request.body(Body::empty()).unwrap()).await.unwrap();
+            let response = app
+                .router
+                .clone()
+                .oneshot(request.body(Body::empty()).unwrap())
+                .await
+                .unwrap();
             let status = response.status();
             let header_text = |name: header::HeaderName| {
                 response
@@ -2059,7 +2533,10 @@ mod tests {
             .header(header::COOKIE, cookie_off.unwrap())
             .body(Body::empty())
             .unwrap();
-        assert_eq!(app_off.oneshot(request).await.unwrap().status(), StatusCode::NOT_FOUND);
+        assert_eq!(
+            app_off.router.oneshot(request).await.unwrap().status(),
+            StatusCode::NOT_FOUND
+        );
     }
 
     #[tokio::test]

@@ -127,6 +127,14 @@ impl AccountInput {
         Ok(())
     }
 
+    /// The ports a mail server is reached on, which the host check uses to resolve its name.
+    fn ports(&self) -> [(&str, &str, u16); 2] {
+        [
+            ("IMAP", &self.imap_host, self.imap_port),
+            ("SMTP", &self.smtp_host, self.smtp_port),
+        ]
+    }
+
     /// Password from the request, or the stored one of the user's existing account.
     async fn resolve_password(&self, state: &AppState, user_id: i64, existing: Option<i64>) -> ApiResult<String> {
         if !self.password.is_empty() {
@@ -165,6 +173,17 @@ impl AccountInput {
     }
 }
 
+/// Refuses a mail server on this machine or on a private network, and says so in the same words
+/// whatever the reason was, so the answer cannot be used to find out what answers where.
+async fn check_hosts_on_the_internet(input: &AccountInput) -> ApiResult<()> {
+    for (what, host, port) in input.ports() {
+        crate::avatar::resolve_public_host(host, port)
+            .await
+            .map_err(|_| ApiError::bad_request(format!("{what} server {host} could not be reached")))?;
+    }
+    Ok(())
+}
+
 pub async fn list(State(state): State<AppState>, user: CurrentUser) -> ApiResult<Json<Vec<AccountView>>> {
     Ok(Json(
         sqlx::query_as(sqlx::AssertSqlSafe(format!(
@@ -183,6 +202,7 @@ pub async fn test(
     Json(mut input): Json<AccountInput>,
 ) -> ApiResult<Json<Value>> {
     input.validate()?;
+    check_hosts_on_the_internet(&input).await?;
     let password = input.resolve_password(&state, user.id, input.id).await?;
 
     let mut folders = imap::SpecialFolders::default();
@@ -195,12 +215,26 @@ pub async fn test(
                     folders = found;
                     None
                 }
-                Err(e) => Some(format!("{e:#}")),
+                // The server's own words are not repeated: the name and the setting to check are
+                // what helps, and the difference between them tells nothing about other hosts.
+                Err(e) => {
+                    tracing::debug!("IMAP folder discovery failed: {e:#}");
+                    Some("The server answered, but its folders could not be read.".to_string())
+                }
             }
         }
-        Err(e) => Some(format!("{e:#}")),
+        Err(e) => {
+            tracing::debug!("IMAP connection failed: {e:#}");
+            Some("The mail server could not be reached with these settings.".to_string())
+        }
     };
-    let smtp_error = input.smtp(&password).test().await.err().map(|e| format!("{e:#}"));
+    let smtp_error = input
+        .smtp(&password)
+        .test()
+        .await
+        .err()
+        .inspect(|e| tracing::debug!("SMTP connection failed: {e:#}"))
+        .map(|_| "The mail server did not accept these settings; check the port and the security setting.".to_string());
 
     Ok(Json(json!({
         "ok": imap_error.is_none() && smtp_error.is_none(),
@@ -215,15 +249,16 @@ pub async fn test(
 }
 
 async fn check_login(input: &AccountInput, password: &str) -> ApiResult<()> {
-    let mut session = imap::connect(&input.imap(password))
-        .await
-        .map_err(|e| ApiError::bad_request(format!("IMAP: {e:#}")))?;
+    check_hosts_on_the_internet(input).await?;
+    let mut session = imap::connect(&input.imap(password)).await.map_err(|e| {
+        tracing::debug!("IMAP connection failed: {e:#}");
+        ApiError::bad_request("IMAP: the mail server could not be reached with these settings")
+    })?;
     let _ = session.logout().await;
-    input
-        .smtp(password)
-        .test()
-        .await
-        .map_err(|e| ApiError::bad_request(format!("SMTP: {e:#}")))
+    input.smtp(password).test().await.map_err(|e| {
+        tracing::debug!("SMTP connection failed: {e:#}");
+        ApiError::bad_request("SMTP: the mail server could not be reached with these settings")
+    })
 }
 
 pub async fn create(
@@ -329,13 +364,23 @@ pub async fn folders(State(state): State<AppState>, user: CurrentUser, Path(id):
         .await?
         .ok_or_else(ApiError::not_found)?;
     let params = ImapParams::for_account(&account, &state.config.master_key)?;
-    let mut session = imap::connect(&params)
-        .await
-        .map_err(|e| ApiError(axum::http::StatusCode::BAD_GATEWAY, format!("{e:#}")))?;
+    let mut session = imap::connect(&params).await.map_err(|e| {
+        tracing::debug!("IMAP connection failed: {e:#}");
+        ApiError(
+            axum::http::StatusCode::BAD_GATEWAY,
+            "the mail server could not be reached".into(),
+        )
+    })?;
     let found = imap::discover_folders(&mut session).await;
     let _ = session.logout().await;
     let mut folders = found
-        .map_err(|e| ApiError(axum::http::StatusCode::BAD_GATEWAY, format!("{e:#}")))?
+        .map_err(|e| {
+            tracing::debug!("IMAP folder discovery failed: {e:#}");
+            ApiError(
+                axum::http::StatusCode::BAD_GATEWAY,
+                "the folders could not be read from the mail server".into(),
+            )
+        })?
         .all;
     folders.sort_by_key(|name| name.to_lowercase());
     Ok(Json(json!({ "folders": folders })))

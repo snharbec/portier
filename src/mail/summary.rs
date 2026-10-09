@@ -187,7 +187,16 @@ async fn attachment_text(state: &AppState, filename: &str, mime: &str, bytes: Ve
     tokio::fs::create_dir_all(&dir).await?;
     let file = dir.join("attachment.pdf");
     tokio::fs::write(&file, &bytes).await?;
-    let run = tokio::process::Command::new(tool)
+    // The PDF came from a stranger; the reader runs with an empty environment, so that nothing
+    // this server holds is there to be read if the document finds a way out of it.
+    let mut command = tokio::process::Command::new(tool);
+    command.env_clear();
+    for name in ["PATH", "HOME", "TMPDIR", "LANG", "LC_ALL"] {
+        if let Some(value) = std::env::var_os(name) {
+            command.env(name, value);
+        }
+    }
+    let run = command
         .args(["-l", "15", "-nopgbrk", "-q"])
         .arg(&file)
         .arg("-")

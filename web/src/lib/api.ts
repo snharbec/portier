@@ -235,6 +235,25 @@ export function setUnauthorizedHandler(handler: () => void) {
 	onUnauthorized = handler;
 }
 
+/** The session's request token, which the server hands out to a signed-in page with `/api/me`.
+ *  Everything that changes something, or asks the server for real work, carries it; a request a
+ *  mail talks the browser into making, or one from another site, cannot. */
+let requestToken = '';
+export function setRequestToken(token: string) {
+	requestToken = token;
+}
+export function tokenHeaders(extra?: Record<string, string>): Record<string, string> {
+	return requestToken ? { ...extra, 'X-Portier-Token': requestToken } : (extra ?? {});
+}
+
+/** Downloads carry the token in the address, since a link made by the browser cannot set a
+ *  header; the server reads it from the query as well as from the header. */
+export function withToken(url: string): string {
+	if (!requestToken) return url;
+	const separator = url.includes('?') ? '&' : '?';
+	return `${url}${separator}token=${encodeURIComponent(requestToken)}`;
+}
+
 /** Told when an answer came from the mail kept on this device (with the time it was kept), or from the server (`null`). */
 let onStored: (since: number | null) => void = () => {};
 export function setStoredHandler(handler: (since: number | null) => void) {
@@ -242,11 +261,11 @@ export function setStoredHandler(handler: (since: number | null) => void) {
 }
 
 async function request<T>(method: string, path: string, body?: unknown): Promise<T> {
-	const init: RequestInit = { method, credentials: 'same-origin' };
+	const init: RequestInit = { method, credentials: 'same-origin', headers: tokenHeaders() };
 	if (body instanceof FormData) {
 		init.body = body;
 	} else if (body !== undefined) {
-		init.headers = { 'Content-Type': 'application/json' };
+		init.headers = tokenHeaders({ 'Content-Type': 'application/json' });
 		init.body = JSON.stringify(body);
 	}
 	let response: Response;

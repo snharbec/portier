@@ -30,7 +30,9 @@ reading; the same ways lead back to Home. It is stored as the mail server's "fla
 so other mail programs show it as flag or star, and mail flagged there appears in Important.
 
 **Undo**: every action on mail can be taken back for 4 seconds: archive, Trash and back, seen and
-unseen, Important, Delay, moving to a folder, notes, and sending. The notice that confirms the
+unseen, Important, Delay, moving to a folder, notes, and sending. Should the server stop in the
+middle of a send, the mail is a draft again and says so: it may already have gone out, so Portier
+never sends it a second time by itself. The notice that confirms the
 action has an Undo button (`Ctrl+Z`; in the terminal client `Ctrl+Z` too). Portier shows the
 change at once, but only carries it out on the mail server when it can no longer be undone, so
 an undone action never happened there. For the same reason a mail you send leaves about five
@@ -185,6 +187,7 @@ unchanged.
 | `PORTIER_SOFFICE` | found automatically | Path to LibreOffice's `soffice`, or `off` |
 | `PORTIER_AVATARS` | on | `off` stops looking up sender pictures |
 | `PORTIER_TLS_CERT`, `PORTIER_TLS_KEY` | none | Certificate chain and private key (PEM files): the server then speaks HTTPS |
+| `PORTIER_COOKIE_SECURE` | on | Marks the session cookie `Secure`, and sends `Strict-Transport-Security`. On by itself; set it to `0` only when the server really is reached over plain HTTP (e.g. on this machine while developing) |
 
 A user who is locked out gets a new password on the server itself:
 
@@ -210,6 +213,9 @@ needs HTTPS: your login and all your mail pass over the connection.
   certificate authority of your own.
 - The files are read again twice a day, so a renewed certificate is picked up without a restart.
 - With HTTPS on, the session cookie is marked Secure. Sign in again after switching.
+- A reverse proxy that adds HTTPS keeps the plain-HTTP backend: nothing there can see that the
+  browser reached it over HTTPS, so `PORTIER_COOKIE_SECURE` is on by default and says it does.
+  Set it to `0` only for a deployment that really is plain HTTP, such as this machine alone.
 - The terminal client connects with `--url https://name:8443` and trusts the certificate
   authorities your system trusts.
 
@@ -266,6 +272,16 @@ counted) when that mail is not there yet.
 Thunderbird, Apple Mail and others open and import. "Save as file" on a mail gives that mail as
 `.eml` (a conversation as mbox), and in the selection bar the selected conversations. There is
 no import of mail: mail comes in through the mail account.
+
+Two things a stranger's mail cannot do. A mail is shown in a frame of its own that may load
+pictures but cannot script, and it cannot follow a link that changes anything: every request that
+changes mail, or that costs the server real work (an export, a backup, an Office preview), has to
+carry a token that only the sign-in page holds, which a mail does not.
+
+Accounts are set up with the address of a mail server, and Portier refuses one on this machine or
+on a private network: the server is not to be talked into connecting to the machines around it.
+A mail server behind a VPN is therefore reachable only if it also has a name that resolves to a
+public address.
 
 **The whole installation** (administrator). A backup is one `.tar.gz` file with the database,
 the stored mail, files of drafts, and the key that protects the mail passwords, for all users.

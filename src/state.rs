@@ -33,6 +33,10 @@ pub struct Inner {
     pub summarize: Notify,
     /// Actions that can still be undone, by their token.
     pub undo: std::sync::Mutex<HashMap<String, crate::undo::Pending>>,
+    /// A request token per signed-in session. Changing and expensive requests have to carry it:
+    /// it lives in the page's own code, so a request that a mail talks the browser into making
+    /// cannot carry it, while the app's own buttons and pages can.
+    pub tokens: tokio::sync::Mutex<HashMap<String, String>>,
 }
 
 #[derive(Clone)]
@@ -57,6 +61,7 @@ impl AppState {
             avatar_slots: Semaphore::new(6),
             summarize: Notify::new(),
             undo: std::sync::Mutex::new(HashMap::new()),
+            tokens: tokio::sync::Mutex::new(HashMap::new()),
         }))
     }
 

@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { withToken } from '#lib/api.ts';
 	import { mailAction } from '#lib/swipe.ts';
 	import DelayMenu from './DelayMenu.svelte';
 	import FolderPicker from './FolderPicker.svelte';
@@ -148,11 +149,11 @@
 		{/if}
 		<button class="btn small" disabled={busy} onclick={move}>Move to folder</button>
 		{#if threadIds.length}
-			<a class="btn small" href="/api/export/mail?threads={threadIds.join(',')}" download title="Download as an mbox file">
+			<a class="btn small" href={withToken(`/api/export/mail?threads=${threadIds.join(',')}`)} download title="Download as an mbox file">
 				Save as file
 			</a>
 		{:else if messageIds.length === 1}
-			<a class="btn small" href="/api/export/mail?message={messageIds[0]}" download title="Download as an .eml file">
+			<a class="btn small" href={withToken(`/api/export/mail?message=${messageIds[0]}`)} download title="Download as an .eml file">
 				Save as file
 			</a>
 		{/if}

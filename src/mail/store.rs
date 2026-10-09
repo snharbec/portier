@@ -194,12 +194,24 @@ pub async fn store_message(
     };
 
     let visible_attachments = p.attachments.iter().any(|a| !a.inline || a.content_id.is_none());
-    let id: i64 = sqlx::query_scalar(
-        "INSERT INTO messages (user_id, account_id, folder_id, uid, thread_id, sender_id, message_id,
+    // The raw message is written first, under a row id that does not exist yet: it is named after
+    // the row that will point at it. A row whose file is missing would leave a message that can
+    // never be read and never fetched again, so the file has to be there before the row is.
+    // `next_message_id` hands out the id the insert below will use.
+    let id = next_message_id(db).await?;
+    let path = state.raw_path(account.id, id);
+    if let Some(dir) = path.parent() {
+        tokio::fs::create_dir_all(dir).await?;
+    }
+    tokio::fs::write(&path, raw).await?;
+
+    let inserted: Result<i64, sqlx::Error> = sqlx::query_scalar(
+        "INSERT INTO messages (id, user_id, account_id, folder_id, uid, thread_id, sender_id, message_id,
              in_reply_to, refs, from_name, from_addr, to_addrs, cc_addrs, subject, date, snippet, seen,
              is_outgoing, has_attachments, body_text, body_html, flagged)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id",
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id",
     )
+    .bind(id)
     .bind(account.user_id)
     .bind(account.id)
     .bind(folder.id)
@@ -223,7 +235,15 @@ pub async fn store_message(
     .bind(&p.body_html)
     .bind(flagged)
     .fetch_one(db)
-    .await?;
+    .await;
+    let id = match inserted {
+        Ok(id) => id,
+        Err(e) => {
+            // Nothing points at the file that was just written; take it away again.
+            let _ = tokio::fs::remove_file(&path).await;
+            return Err(e.into());
+        }
+    };
 
     for (idx, att) in p.attachments.iter().enumerate() {
         sqlx::query(
@@ -241,11 +261,6 @@ pub async fn store_message(
         .await?;
     }
 
-    let path = state.raw_path(account.id, id);
-    if let Some(dir) = path.parent() {
-        tokio::fs::create_dir_all(dir).await?;
-    }
-    tokio::fs::write(&path, raw).await?;
     if !seen && !is_outgoing {
         // New mail to read: worth a summary, if summaries are on.
         state.summarize.notify_one();
@@ -254,6 +269,13 @@ pub async fn store_message(
     Ok(Some(Stored {
         junk_sender: !is_outgoing && category.as_deref() == Some("junk"),
     }))
+}
+
+/// The id the next message row will have. The raw file is named after it before the row exists,
+/// so that a message row can never come to be without its file beside it.
+async fn next_message_id(db: &SqlitePool) -> Result<i64> {
+    let highest: Option<i64> = sqlx::query_scalar("SELECT MAX(id) FROM messages").fetch_one(db).await?;
+    Ok(highest.unwrap_or(0) + 1)
 }
 
 /// Deletes message rows and their raw files, then any thread left empty.

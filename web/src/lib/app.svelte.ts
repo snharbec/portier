@@ -1,7 +1,7 @@
 import { goto } from '$app/navigation';
 import { fetchAhead, offlineUser } from './offline.svelte.ts';
 import type { SwipeAction } from './swipe.ts';
-import { api, setStoredHandler, setUnauthorizedHandler, type Account, type Category, type Counts, type SavedSearch, type User } from './api.ts';
+import { api, setRequestToken, setStoredHandler, setUnauthorizedHandler, type Account, type Category, type Counts, type SavedSearch, type User } from './api.ts';
 
 /** Session-wide state. `tick` changes whenever the server reports new or changed mail. */
 export const app = $state({
@@ -52,6 +52,7 @@ setStoredHandler((since) => {
 });
 
 setUnauthorizedHandler(() => {
+	setRequestToken('');
 	offlineUser(null);
 	app.user = null;
 	events?.close();
@@ -64,7 +65,10 @@ export async function loadSession() {
 		setup_needed: boolean;
 		open_registration: boolean;
 		office_previews: boolean;
+		token: string | null;
 	}>('/me');
+	// The token every changing request and every download carries from now on.
+	setRequestToken(me.token ?? '');
 	app.user = me.user;
 	app.setupNeeded = me.setup_needed;
 	app.openRegistration = me.open_registration;
@@ -94,6 +98,16 @@ export async function refreshSettings() {
 	}>('/settings');
 	app.swipe = { left: settings.swipe_left, right: settings.swipe_right };
 	app.autoArchiveWeeks = settings.auto_archive_weeks;
+}
+
+/**
+ * Asks the server for everything: the counts, the accounts, the settings, and — because `tick`
+ * changes — whatever list or mail is open. The lists and mails themselves are asked for by the
+ * page that shows them, which watches `tick`.
+ */
+export async function refreshAll() {
+	await Promise.all([refreshCounts(), refreshAccounts(), refreshSettings()]);
+	app.tick += 1;
 }
 
 let noticeTimer: ReturnType<typeof setTimeout> | undefined;

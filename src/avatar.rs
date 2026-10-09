@@ -7,7 +7,7 @@
 
 use std::{
     net::{IpAddr, SocketAddr},
-    sync::OnceLock,
+    sync::LazyLock,
     time::Duration,
 };
 
@@ -33,22 +33,37 @@ pub struct Avatar {
 
 /// rustls needs one process-wide crypto provider; reqwest is built without its own.
 pub fn install_crypto() {
-    static ONCE: OnceLock<()> = OnceLock::new();
-    ONCE.get_or_init(|| {
+    static ONCE: LazyLock<()> = LazyLock::new(|| {
         let _ = tokio_rustls::rustls::crypto::ring::default_provider().install_default();
     });
+    LazyLock::force(&ONCE);
+}
+
+/// The addresses a mail server's host name resolves to, refusing one that resolves to this
+/// machine or to a private, link-local or reserved network: a user may point an account at any
+/// name, and the server must not be made to knock on its own network because of it.
+pub async fn resolve_public_host(host: &str, port: u16) -> anyhow::Result<Vec<SocketAddr>> {
+    let addresses: Vec<SocketAddr> = tokio::time::timeout(TIMEOUT, tokio::net::lookup_host((host, port)))
+        .await
+        .context("looking up the host took too long")?
+        .with_context(|| format!("cannot look up {host}"))?
+        .collect();
+    if addresses.is_empty() {
+        bail!("{host} does not resolve to an address");
+    }
+    if !addresses.iter().all(|address| is_public(address.ip())) {
+        bail!("{host} resolves to an address on this network; mail servers must be on the internet");
+    }
+    Ok(addresses)
 }
 
 fn resolver() -> Result<&'static TokioResolver> {
-    static RESOLVER: OnceLock<Option<TokioResolver>> = OnceLock::new();
-    RESOLVER
-        .get_or_init(|| {
-            TokioResolver::builder_tokio()
-                .ok()
-                .and_then(|builder| builder.build().ok())
-        })
-        .as_ref()
-        .ok_or_else(|| anyhow!("no DNS resolver available"))
+    static RESOLVER: LazyLock<Option<TokioResolver>> = LazyLock::new(|| {
+        TokioResolver::builder_tokio()
+            .ok()
+            .and_then(|builder| builder.build().ok())
+    });
+    RESOLVER.as_ref().ok_or_else(|| anyhow!("no DNS resolver available"))
 }
 
 /// Picture for a sender address: Gravatar first (it belongs to the person), then the BIMI logo
@@ -222,33 +237,96 @@ async fn bimi(domain: &str) -> Result<Option<Avatar>> {
     }))
 }
 
-/// Whether an address is out on the internet: not this machine, not a private or link-local network.
+/// Whether an address is out on the internet: not this machine, not a private or link-local
+/// network, and not a reserved range. Anything that is not plainly a globally reachable address
+/// counts as not public; the IPv6 forms that name an IPv4 address (`::a.b.c.d`, NAT64 `64:ff9b::`,
+/// 6to4, Teredo) are judged by that address, so they cannot reach one on the local network either.
 pub fn is_public(ip: IpAddr) -> bool {
     match ip {
-        IpAddr::V4(v4) => {
-            let [a, b, ..] = v4.octets();
-            !(v4.is_private()
-                || v4.is_loopback()
-                || v4.is_link_local()
-                || v4.is_broadcast()
-                || v4.is_documentation()
-                || v4.is_unspecified()
-                || v4.is_multicast()
-                || (a == 100 && (64..128).contains(&b)) // carrier-grade NAT
-                || a == 0)
-        }
-        IpAddr::V6(v6) => match v6.to_ipv4_mapped() {
-            Some(v4) => is_public(IpAddr::V4(v4)),
-            None => {
-                let first = v6.segments()[0];
-                !(v6.is_loopback()
-                    || v6.is_unspecified()
-                    || v6.is_multicast()
-                    || (first & 0xfe00) == 0xfc00 // unique local
-                    || (first & 0xffc0) == 0xfe80) // link-local
-            }
+        IpAddr::V4(v4) => public_v4(v4),
+        IpAddr::V6(v6) => match embedded_ipv4(v6) {
+            Some(v4) => public_v4(v4),
+            None => public_v6(v6),
         },
     }
+}
+
+fn public_v4(v4: std::net::Ipv4Addr) -> bool {
+    let [a, b, c, _] = v4.octets();
+    !(v4.is_private()
+        || v4.is_loopback()
+        || v4.is_link_local()
+        || v4.is_broadcast()
+        || v4.is_documentation()
+        || v4.is_unspecified()
+        || v4.is_multicast()
+        || (a == 100 && (64..128).contains(&b)) // carrier-grade NAT
+        || (a == 192 && b == 0 && c == 0) // 192.0.0.0/24
+        || (a == 192 && b == 88 && c == 99) // 192.88.99.0/24 (6to4 relay anycast)
+        || (a == 198 && (b == 18 || b == 19)) // 198.18.0.0/15 benchmarking
+        || a == 0
+        || a >= 240) // 240.0.0.0/4 reserved, 255.255.255.255
+}
+
+fn public_v6(v6: std::net::Ipv6Addr) -> bool {
+    let [first, second, ..] = v6.segments();
+    // 2000::/3 is the global unicast range. The forms that name an IPv4 address were unwrapped
+    // before this, so what is left here is only checked for the documentation ranges.
+    (0x2000..=0x3fff).contains(&first)
+        && !(first == 0x2001 && second == 0x0db8) // 2001:db8::/32 documentation
+        && !(first == 0x2001 && second == 0x0002) // 2001:2::/48 benchmarking
+        && !(first == 0x3fff && second < 0x1000) // 3fff::/20 documentation
+}
+
+/// The IPv4 address an IPv6 address names, for the forms that carry one: IPv4-mapped
+/// (`::ffff:a.b.c.d`), IPv4-compatible (`::a.b.c.d`), NAT64 (`64:ff9b::/96` and the local-use
+/// `64:ff9b:1::/48`), 6to4 (`2002::/16`) and Teredo (`2001::/32`).
+fn embedded_ipv4(v6: std::net::Ipv6Addr) -> Option<std::net::Ipv4Addr> {
+    use std::net::Ipv4Addr;
+    if let Some(mapped) = v6.to_ipv4_mapped() {
+        return Some(mapped);
+    }
+    let segments = v6.segments();
+    // ::a.b.c.d — the first six groups are zero.
+    if segments[..6].iter().all(|group| *group == 0) && (segments[6] != 0 || segments[7] != 0) {
+        return Some(Ipv4Addr::new(
+            (segments[6] >> 8) as u8,
+            segments[6] as u8,
+            (segments[7] >> 8) as u8,
+            segments[7] as u8,
+        ));
+    }
+    let tail = || {
+        Ipv4Addr::new(
+            (segments[6] >> 8) as u8,
+            segments[6] as u8,
+            (segments[7] >> 8) as u8,
+            segments[7] as u8,
+        )
+    };
+    // 64:ff9b::/96 — NAT64 well-known prefix.
+    if segments[0] == 0x0064 && segments[1] == 0xff9b && segments[2..6].iter().all(|g| *g == 0) {
+        return Some(tail());
+    }
+    // 64:ff9b:1::/48 — NAT64 local-use prefix.
+    if segments[0] == 0x0064 && segments[1] == 0xff9b && segments[2] == 0x0001 {
+        return Some(tail());
+    }
+    // 2002::/16 — 6to4, the embedded address is the next two groups.
+    if segments[0] == 0x2002 {
+        return Some(Ipv4Addr::new(
+            (segments[1] >> 8) as u8,
+            segments[1] as u8,
+            (segments[2] >> 8) as u8,
+            segments[2] as u8,
+        ));
+    }
+    // 2001::/32 — Teredo; the last two groups hold the client's IPv4 address, each bit inverted.
+    if segments[0] == 0x2001 && segments[1] == 0x0000 {
+        let client = !(u32::from(segments[6]) << 16 | u32::from(segments[7]));
+        return Some(Ipv4Addr::from(client));
+    }
+    None
 }
 
 /// Fetches an https address that a stranger's DNS record named. The host must resolve only to
@@ -417,10 +495,32 @@ mod tests {
             "fe80::1",
             "fd00::1",
             "::ffff:10.0.0.1",
+            // IPv6 forms that name a private IPv4 address.
+            "::10.0.0.1",
+            "::127.0.0.1",
+            "64:ff9b::a00:1",
+            "64:ff9b:1::a00:1",
+            "2002:a00:1::",
+            "2001:0:4136:e378:8000:63bf:3fff:fdd2", // Teredo carrying 10.0.0.1
+            // Reserved IPv4 ranges.
+            "198.18.0.1",
+            "192.0.0.1",
+            "192.88.99.1",
+            "240.0.0.1",
+            "255.255.255.255",
         ] {
             assert!(!is_public(private.parse().unwrap()), "{private}");
         }
-        for public in ["93.184.216.34", "1.1.1.1", "2606:4700:4700::1111"] {
+        for public in [
+            "93.184.216.34",
+            "1.1.1.1",
+            "8.8.8.8",
+            "2606:4700:4700::1111",
+            // A public address in each of the forms that carry an IPv4 address.
+            "::8.8.8.8",
+            "64:ff9b::808:808",
+            "2002:0808:0808::",
+        ] {
             assert!(is_public(public.parse().unwrap()), "{public}");
         }
     }

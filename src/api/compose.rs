@@ -35,6 +35,9 @@ pub struct Draft {
     updated_at: i64,
     /// Why the last attempt to send it failed, if one did.
     last_error: Option<String>,
+    /// When sending was interrupted after the mail may already have been handed to the mail
+    /// server. Such a draft is not offered for sending again by itself.
+    sent_at: Option<i64>,
 }
 
 #[derive(Serialize, sqlx::FromRow)]
@@ -481,13 +484,18 @@ pub async fn send(State(state): State<AppState>, user: CurrentUser, Path(id): Pa
     let smtp = SmtpParams::for_account(&account, &state.config.master_key)?;
 
     // Everything is checked and the mail is built. It goes out once sending can no longer be
-    // undone; until then it is neither sent nor a draft to edit.
-    let claimed =
-        sqlx::query("UPDATE drafts SET sending_at = ?, last_error = NULL WHERE id = ? AND sending_at IS NULL")
-            .bind(now())
-            .bind(id)
-            .execute(&state.db)
-            .await?;
+    // undone; until then it is neither sent nor a draft to edit. `sent_at` is written with the
+    // claim, before anything is handed to the mail server: a process that dies while sending
+    // leaves the mark behind, so the mail is never quietly sent a second time.
+    let claimed = sqlx::query(
+        "UPDATE drafts SET sending_at = ?, sent_at = ?, last_error = NULL
+         WHERE id = ? AND sending_at IS NULL",
+    )
+    .bind(now())
+    .bind(now())
+    .bind(id)
+    .execute(&state.db)
+    .await?;
     if claimed.rows_affected() == 0 {
         return Err(ApiError::bad_request("this mail is being sent already"));
     }
@@ -496,9 +504,10 @@ pub async fn send(State(state): State<AppState>, user: CurrentUser, Path(id): Pa
     let user_id = user.id;
     let token = crate::undo::hold(&state, user_id, vec![crate::undo::Step::Draft(id)], async move {
         if let Err(e) = smtp.send(message).await {
-            // Not sent: it is a draft again, with the reason, and the user is told.
+            // The mail server refused it: it is a draft again, with the reason, and the mark
+            // that it may be out is taken back.
             tracing::warn!("sending draft {id} failed: {e:#}");
-            let kept = sqlx::query("UPDATE drafts SET sending_at = NULL, last_error = ? WHERE id = ?")
+            let kept = sqlx::query("UPDATE drafts SET sending_at = NULL, sent_at = NULL, last_error = ? WHERE id = ?")
                 .bind(format!("{e:#}"))
                 .bind(id)
                 .execute(&task.db)

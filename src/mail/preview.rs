@@ -144,6 +144,15 @@ async fn convert_in(soffice: &Path, dir: &Path, profile: &Path, bytes: &[u8], ex
     let input = dir.join(format!("input.{ext}"));
     tokio::fs::write(&input, bytes).await?;
     let mut command = tokio::process::Command::new(soffice);
+    // The document came from a stranger. The converter runs with an empty environment, so that
+    // nothing this server holds — the master key above all — is there to be read if the document
+    // finds a way out of it. Only what a converter needs to find its own files is put back.
+    command.env_clear();
+    for name in ["PATH", "HOME", "TMPDIR", "LANG", "LC_ALL"] {
+        if let Some(value) = std::env::var_os(name) {
+            command.env(name, value);
+        }
+    }
     command
         .arg(format!("-env:UserInstallation=file://{}", profile.display()))
         .args([

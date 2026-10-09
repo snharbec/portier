@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { goto } from '$app/navigation';
-	import type { FileEntry, Message } from '#lib/api.ts';
+	import { withToken, type FileEntry, type Message } from '#lib/api.ts';
 	import { app, startDraft } from '#lib/app.svelte.ts';
 	import { copyText } from '#lib/clipboard.ts';
 	import { displayName, fileSize, fullDate, shortDate } from '#lib/format.ts';
@@ -95,7 +95,7 @@
 				<ul class="files">
 					{#each message.attachments as file}
 						<li>
-							<a class="btn small" href="/api/messages/{message.id}/attachments/{file.idx}" download={file.filename}>
+							<a class="btn small" href={withToken(`/api/messages/${message.id}/attachments/${file.idx}`)} download={file.filename}>
 								{file.filename} <span class="muted">{fileSize(file.size)}</span>
 							</a>
 						</li>

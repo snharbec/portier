@@ -42,6 +42,14 @@ impl ImapParams {
             password: crypto::decrypt(master_key, &account.password_enc)?,
         })
     }
+
+    /// Whether this account's mail server is one the account was set up with, rather than a
+    /// connection of Portier's own choosing. Account settings can point at a name on this machine
+    /// or on a private network; nothing a user types may turn the server into a way to reach the
+    /// machines around it, so only a server the operator named is used outside the tests.
+    fn trusted(&self) -> bool {
+        crate::config::setting("MAIL_TEST_SERVER").is_some()
+    }
 }
 
 fn tls_connector() -> TlsConnector {
@@ -60,8 +68,26 @@ pub async fn connect(params: &ImapParams) -> Result<Session> {
 }
 
 async fn connect_inner(params: &ImapParams) -> Result<Session> {
-    let tcp = TcpStream::connect((params.host.as_str(), params.port))
+    let target = if params.trusted() {
+        // A mail server the operator named outright, as the tests do.
+        tokio::net::lookup_host((params.host.as_str(), params.port))
+            .await
+            .with_context(|| format!("cannot look up {}:{}", params.host, params.port))?
+            .next()
+            .ok_or_else(|| anyhow!("{} does not resolve to an address", params.host))?
+    } else {
+        // Resolved first, and the connection is made to the address that was checked, so a name
+        // that changes what it points to between the check and the connection cannot slip a
+        // private address in; see `avatar::resolve_public_host`.
+        crate::avatar::resolve_public_host(&params.host, params.port)
+            .await?
+            .first()
+            .copied()
+            .ok_or_else(|| anyhow!("{} does not resolve to an address", params.host))?
+    };
+    let tcp = tokio::time::timeout(CONNECT_TIMEOUT, TcpStream::connect(target))
         .await
+        .map_err(|_| anyhow!("timed out connecting to {}:{}", params.host, params.port))?
         .with_context(|| format!("cannot reach {}:{}", params.host, params.port))?;
     let server_name = ServerName::try_from(params.host.clone()).context("invalid IMAP host name")?;
 
@@ -213,8 +239,6 @@ pub async fn all_uids(session: &mut Session) -> Result<HashSet<u32>> {
     Ok(session.uid_search("ALL").await?)
 }
 
-/// Moves messages out of the currently selected folder. Uses MOVE, or COPY + delete when the
-/// server lacks it.
 /// Makes sure a folder exists, creating (and subscribing to) it when the server does not have it.
 pub async fn ensure_mailbox(session: &mut Session, name: &str) -> Result<()> {
     // Opening it is the one check every server answers the same way; listing by name trips over
@@ -228,23 +252,34 @@ pub async fn ensure_mailbox(session: &mut Session, name: &str) -> Result<()> {
     Ok(())
 }
 
+/// Moves messages out of the currently selected folder: MOVE where the server has it, otherwise
+/// COPY and delete the copies. The delete step is always scoped to these UIDs: a plain EXPUNGE
+/// would also destroy what another mail program marked `\Deleted` in the same folder. A server
+/// with neither MOVE nor UIDPLUS keeps its copies, the move is reported as failed and the caller
+/// puts the local rows back, so nothing is ever removed here that was not asked for.
 pub async fn move_uids(session: &mut Session, uids: &[u32], target: &str) -> Result<()> {
     if uids.is_empty() {
         return Ok(());
     }
     let set = uid_set(uids);
-    let has_move = session.capabilities().await?.has_str("MOVE");
-    if has_move {
+    let capabilities = session.capabilities().await?;
+    if capabilities.has_str("MOVE") {
         session.uid_mv(&set, target).await?;
-    } else {
-        session.uid_copy(&set, target).await?;
-        session
-            .uid_store(&set, "+FLAGS.SILENT (\\Deleted)")
-            .await?
-            .try_collect::<Vec<_>>()
-            .await?;
-        session.expunge().await?.try_collect::<Vec<_>>().await?;
+        return Ok(());
     }
+    session.uid_copy(&set, target).await?;
+    if !capabilities.has_str("UIDPLUS") {
+        bail!(
+            "the server has neither MOVE nor UIDPLUS, so mail cannot be moved there without \
+             deleting mail it did not ask about: the copies stay in {target}"
+        );
+    }
+    session
+        .uid_store(&set, "+FLAGS.SILENT (\\Deleted)")
+        .await?
+        .try_collect::<Vec<_>>()
+        .await?;
+    session.uid_expunge(&set).await?.try_collect::<Vec<_>>().await?;
     Ok(())
 }
 

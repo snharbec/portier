@@ -9,6 +9,8 @@ use serde_json::{Value, json};
 
 /// The session cookie still carries the app's earlier name.
 const COOKIE: &str = "emscreen_session";
+/// The header a changing request carries the session's request token in.
+const TOKEN_HEADER: &str = "x-portier-token";
 
 #[derive(Debug, Default, Clone, Deserialize)]
 #[serde(default)]
@@ -258,6 +260,9 @@ pub struct User {
 #[derive(Debug, Deserialize)]
 struct Me {
     user: Option<User>,
+    /// The session's request token, which changing requests carry.
+    #[serde(default)]
+    token: Option<String>,
 }
 
 /// The server said no to the session: log in again.
@@ -279,6 +284,8 @@ pub struct Client {
     pub base: String,
     /// Value of the session cookie.
     pub session: String,
+    /// The session's request token, handed out with `/me`. Changing requests carry it.
+    token: std::sync::Arc<std::sync::RwLock<String>>,
 }
 
 impl Client {
@@ -295,7 +302,13 @@ impl Client {
             http: Self::http()?,
             base: base.trim_end_matches('/').to_string(),
             session: session.to_string(),
+            token: std::sync::Arc::new(std::sync::RwLock::new(String::new())),
         })
+    }
+
+    /// The request token of this session, once `/me` has been asked.
+    fn token(&self) -> String {
+        self.token.read().map(|token| token.clone()).unwrap_or_default()
     }
 
     pub async fn login(base: &str, email: &str, password: &str) -> Result<Self> {
@@ -318,12 +331,24 @@ impl Client {
             .filter_map(|value| value.split(';').next())
             .find_map(|pair| pair.trim().strip_prefix(&format!("{COOKIE}=")).map(str::to_string))
             .ok_or_else(|| anyhow!("the server did not start a session"))?;
-        Ok(Self { http, base, session })
+        Ok(Self {
+            http,
+            base,
+            session,
+            token: std::sync::Arc::new(std::sync::RwLock::new(String::new())),
+        })
     }
 
-    /// Who is signed in, or `None` when the stored session is no longer valid.
+    /// Who is signed in, or `None` when the stored session is no longer valid. Asking also picks
+    /// up the session's request token, which the changing requests carry.
     pub async fn me(&self) -> Result<Option<User>> {
-        Ok(self.get::<Me>("/me").await?.user)
+        let me = self.get::<Me>("/me").await?;
+        if let Some(token) = &me.token
+            && let Ok(mut stored) = self.token.write()
+        {
+            *stored = token.clone();
+        }
+        Ok(me.user)
     }
 
     fn cookie(&self) -> String {
@@ -335,6 +360,7 @@ impl Client {
             .http
             .get(format!("{}/api{path}", self.base))
             .header(reqwest::header::COOKIE, self.cookie())
+            .header(TOKEN_HEADER, self.token())
             .timeout(Duration::from_secs(30))
             .send()
             .await
@@ -347,6 +373,7 @@ impl Client {
             .http
             .post(format!("{}/api{path}", self.base))
             .header(reqwest::header::COOKIE, self.cookie())
+            .header(TOKEN_HEADER, self.token())
             .timeout(Duration::from_secs(30))
             .json(&body)
             .send()
@@ -360,6 +387,7 @@ impl Client {
             .http
             .put(format!("{}/api{path}", self.base))
             .header(reqwest::header::COOKIE, self.cookie())
+            .header(TOKEN_HEADER, self.token())
             .timeout(Duration::from_secs(30))
             .json(&body)
             .send()
@@ -373,6 +401,7 @@ impl Client {
             .http
             .delete(format!("{}/api{path}", self.base))
             .header(reqwest::header::COOKIE, self.cookie())
+            .header(TOKEN_HEADER, self.token())
             .timeout(Duration::from_secs(30))
             .send()
             .await
@@ -386,6 +415,7 @@ impl Client {
             .http
             .get(format!("{}/api{path}", self.base))
             .header(reqwest::header::COOKIE, self.cookie())
+            .header(TOKEN_HEADER, self.token())
             .timeout(Duration::from_secs(120))
             .send()
             .await
@@ -416,6 +446,7 @@ impl Client {
             .http
             .post(format!("{}/api{path}", self.base))
             .header(reqwest::header::COOKIE, self.cookie())
+            .header(TOKEN_HEADER, self.token())
             .timeout(Duration::from_secs(120))
             .multipart(form)
             .send()

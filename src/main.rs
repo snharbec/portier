@@ -37,10 +37,69 @@ pub async fn open_database(url: &str) -> Result<sqlx::SqlitePool> {
 
 pub fn app(state: AppState) -> Router {
     Router::new()
-        .nest("/api", api::router())
+        .nest(
+            "/api",
+            api::router().layer(axum::middleware::from_fn_with_state(state.clone(), api::require_token)),
+        )
         .fallback(assets::serve)
+        .layer(axum::middleware::from_fn_with_state(state.clone(), security_headers))
         .layer(TraceLayer::new_for_http())
         .with_state(state)
+}
+
+/// Headers on every answer: the app is a signed-in place, so a browser is told not to sniff types,
+/// not to send the address on as a referrer, and to keep to HTTPS when this is served over it.
+/// A page's own frame policy is set where the mail frame is built.
+async fn security_headers(
+    axum::extract::State(state): axum::extract::State<AppState>,
+    request: axum::extract::Request,
+    next: axum::middleware::Next,
+) -> axum::response::Response {
+    let mut response = next.run(request).await;
+    let headers = response.headers_mut();
+    headers.insert(
+        axum::http::header::X_CONTENT_TYPE_OPTIONS,
+        axum::http::HeaderValue::from_static("nosniff"),
+    );
+    headers.insert(
+        axum::http::header::REFERRER_POLICY,
+        axum::http::HeaderValue::from_static("no-referrer"),
+    );
+    headers.insert(
+        axum::http::header::HeaderName::from_static("x-frame-options"),
+        axum::http::HeaderValue::from_static("DENY"),
+    );
+    // Only meaningful when the browser reached this over HTTPS, which it did when this process
+    // serves TLS or the deployment says a proxy does.
+    if state.config.tls.is_some() || state.config.cookie_secure {
+        headers.insert(
+            axum::http::header::STRICT_TRANSPORT_SECURITY,
+            axum::http::HeaderValue::from_static("max-age=31536000"),
+        );
+    }
+    response
+}
+
+/// What a starting server clears up before it does anything else.
+///
+/// What was waiting for its time to undo when the server last stopped never happened: a draft
+/// about to be sent is a draft again, and mail on its way out of Portier is forgotten here, so the
+/// next sync shows it where it still is on the mail server. A draft that carries `sent_at` was
+/// interrupted *after* its mail may have reached the mail server: it is a draft again, but it is
+/// told apart and never sent again by itself, so a crash cannot deliver the same mail twice.
+pub async fn startup_bookkeeping(db: &sqlx::SqlitePool) -> Result<()> {
+    sqlx::query(
+        "UPDATE drafts SET sending_at = NULL, last_error = CASE
+             WHEN sent_at IS NOT NULL THEN
+                 'Sending was interrupted. This mail may already have gone out: check Sent before sending it again.'
+             ELSE last_error END",
+    )
+    .execute(db)
+    .await?;
+    sqlx::query("DELETE FROM messages WHERE folder_id IN (SELECT id FROM folders WHERE role = 'limbo')")
+        .execute(db)
+        .await?;
+    Ok(())
 }
 
 /// Gives a user a new random password, prints it, and ends the user's sessions.
@@ -142,13 +201,7 @@ async fn main() -> Result<()> {
         .bind(state::now())
         .execute(&db)
         .await?;
-    // What was waiting for its time to undo when the server last stopped never happened:
-    // a draft about to be sent is a draft again, and mail on its way out of Portier is
-    // forgotten here, so the next sync shows it where it still is on the mail server.
-    sqlx::query("UPDATE drafts SET sending_at = NULL").execute(&db).await?;
-    sqlx::query("DELETE FROM messages WHERE folder_id IN (SELECT id FROM folders WHERE role = 'limbo')")
-        .execute(&db)
-        .await?;
+    startup_bookkeeping(&db).await?;
 
     let bind = config.bind;
     let state = AppState::new(db, config);

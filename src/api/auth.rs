@@ -9,10 +9,10 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
 use crate::{
-    auth::{self, AdminUser, CurrentUser},
+    auth::{self, AdminUser, CurrentUser, session_token},
     error::{ApiError, ApiResult},
     mail::sync,
-    state::AppState,
+    state::{AppState, now},
 };
 
 fn cookie_headers(cookie: String) -> HeaderMap {
@@ -27,12 +27,25 @@ async fn user_count(state: &AppState) -> ApiResult<i64> {
         .await?)
 }
 
-pub async fn me(State(state): State<AppState>, user: Result<CurrentUser, ApiError>) -> ApiResult<Json<Value>> {
+pub async fn me(
+    State(state): State<AppState>,
+    parts: Parts,
+    user: Result<CurrentUser, ApiError>,
+) -> ApiResult<Json<Value>> {
+    // The request token of this session, which the page sends with every request that changes
+    // something or costs the server work. It is made when it is first asked for, and it is handed
+    // out only here, to a caller that is signed in: a mail that talks the browser into a request
+    // has no way to read this answer.
+    let token = match (&user, session_token(&parts)) {
+        (Ok(_), Some(session)) => Some(auth::request_token(&state, &session).await),
+        _ => None,
+    };
     Ok(Json(json!({
         "user": user.ok(),
         "setup_needed": user_count(&state).await? == 0,
         "open_registration": state.config.open_registration,
         "office_previews": state.config.soffice.is_some(),
+        "token": token,
     })))
 }
 
@@ -84,32 +97,92 @@ pub async fn register(
     Ok((cookie_headers(cookie), Json(json!({ "ok": true }))))
 }
 
+/// How long an address must wait after a failed sign-in, and how often it may try.
+const LOGIN_ATTEMPTS: i64 = 8;
+const LOGIN_WINDOW: i64 = 15 * 60;
+/// The one answer that both a wrong password and an unknown address give.
+const WRONG: &str = "wrong email or password";
+
+/// A password hash of the same shape as a real one, made once. An address without a user is
+/// verified against it, so that a wrong password and an unknown address cost the same work and
+/// take the same time.
+static DUMMY_HASH: std::sync::LazyLock<String> = std::sync::LazyLock::new(|| {
+    auth::hash_password("a password that is nobody's").unwrap_or_else(|_| {
+        "$argon2id$v=19$m=19456,t=2,p=1$c29tZXNhbHQ$aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa".into()
+    })
+});
+
+/// Refuses, for a while, an address that has failed to sign in too often. The counters live in the
+/// database, so they outlast a restart and are shared by everything on this installation.
+async fn too_many_attempts(state: &AppState, address: &str) -> ApiResult<bool> {
+    let since = now() - LOGIN_WINDOW;
+    let failed: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM login_failures WHERE address = ? AND at > ?")
+        .bind(address)
+        .bind(since)
+        .fetch_one(&state.db)
+        .await?;
+    Ok(failed >= LOGIN_ATTEMPTS)
+}
+
+/// The failure path of a sign-in, for a wrong password and for an address that has no user alike.
+/// Both end in the same answer and the same work, so the answer tells neither which addresses
+/// exist nor which of them answer quickly.
+async fn refuse_login(state: &AppState, address: &str) -> ApiError {
+    sqlx::query("INSERT INTO login_failures (address, at) VALUES (?, ?)")
+        .bind(address)
+        .bind(now())
+        .execute(&state.db)
+        .await
+        .ok();
+    sqlx::query("DELETE FROM login_failures WHERE at < ?")
+        .bind(now() - LOGIN_WINDOW)
+        .execute(&state.db)
+        .await
+        .ok();
+    ApiError::bad_request(WRONG)
+}
+
 pub async fn login(
     State(state): State<AppState>,
     Json(input): Json<Credentials>,
 ) -> ApiResult<(HeaderMap, Json<Value>)> {
+    let address = input.email.trim().to_lowercase();
+    if too_many_attempts(&state, &address).await? {
+        return Err(ApiError(
+            axum::http::StatusCode::TOO_MANY_REQUESTS,
+            "Too many attempts. Please wait a few minutes and try again.".into(),
+        ));
+    }
     let row: Option<(i64, String)> = sqlx::query_as("SELECT id, password_hash FROM users WHERE email = ?")
-        .bind(input.email.trim().to_lowercase())
+        .bind(&address)
         .fetch_optional(&state.db)
         .await?;
+    // An address without a user is verified against a hash of the same shape, so that the two
+    // costs — and so the answers — cannot be told apart.
+    let hash = row
+        .as_ref()
+        .map(|(_, hash)| hash.clone())
+        .unwrap_or_else(|| DUMMY_HASH.clone());
+    let ok = auth::verify_password(&input.password, &hash);
     match row {
-        Some((id, hash)) if auth::verify_password(&input.password, &hash) => {
+        Some((id, _)) if ok => {
+            sqlx::query("DELETE FROM login_failures WHERE address = ?")
+                .bind(&address)
+                .execute(&state.db)
+                .await?;
             let cookie = auth::create_session(&state, id).await?;
             Ok((cookie_headers(cookie), Json(json!({ "ok": true }))))
         }
         _ => {
             tokio::time::sleep(Duration::from_millis(500)).await;
-            Err(ApiError::bad_request("wrong email or password"))
+            Err(refuse_login(&state, &address).await)
         }
     }
 }
 
 pub async fn logout(State(state): State<AppState>, parts: Parts) -> ApiResult<(HeaderMap, Json<Value>)> {
     if let Some(token) = auth::session_token(&parts) {
-        sqlx::query("DELETE FROM sessions WHERE token = ?")
-            .bind(token)
-            .execute(&state.db)
-            .await?;
+        auth::end_session(&state, &token).await?;
     }
     Ok((cookie_headers(auth::clear_cookie(&state)), Json(json!({ "ok": true }))))
 }
@@ -124,7 +197,7 @@ pub async fn change_password(
     State(state): State<AppState>,
     user: CurrentUser,
     Json(input): Json<PasswordChange>,
-) -> ApiResult<Json<Value>> {
+) -> ApiResult<(HeaderMap, Json<Value>)> {
     let hash: String = sqlx::query_scalar("SELECT password_hash FROM users WHERE id = ?")
         .bind(user.id)
         .fetch_one(&state.db)
@@ -140,7 +213,24 @@ pub async fn change_password(
         .bind(user.id)
         .execute(&state.db)
         .await?;
-    Ok(Json(json!({ "ok": true })))
+    // A password is changed because the old one may be known to somebody else. Every session the
+    // user had ends with it, and this one goes on with a fresh session of its own, so that
+    // whatever was signed in elsewhere is signed out. The new request token comes back with the
+    // answer, so the page goes on working without a reload.
+    auth::end_sessions(&state, user.id).await?;
+    let cookie = auth::create_session(&state, user.id).await?;
+    let token = auth::request_token(&state, &session_of(&cookie)).await;
+    Ok((cookie_headers(cookie), Json(json!({ "ok": true, "token": token }))))
+}
+
+/// The session a `Set-Cookie` value carries.
+fn session_of(cookie: &str) -> String {
+    cookie
+        .split(';')
+        .next()
+        .and_then(|pair| pair.trim().split_once('='))
+        .map(|(_, value)| value.to_string())
+        .unwrap_or_default()
 }
 
 #[derive(Serialize, sqlx::FromRow)]

@@ -2,7 +2,7 @@
 	import '../app.css';
 	import { goto } from '$app/navigation';
 	import { page } from '$app/state';
-	import { app, loadSession, logout, startDraft, undoLast } from '#lib/app.svelte.ts';
+	import { app, loadSession, logout, notify, refreshAll, startDraft, undoLast } from '#lib/app.svelte.ts';
 	import type { SavedSearch } from '#lib/api.ts';
 	import KeyHelp from '#lib/components/KeyHelp.svelte';
 	import Login from '#lib/components/Login.svelte';
@@ -90,6 +90,9 @@
 	}
 
 	const searchIcon = 'M10.5 4a6.5 6.5 0 1 0 0 13 6.5 6.5 0 0 0 0-13zM15.5 15.5 20 20';
+
+	/** Whether the refresh button is asking the server right now. */
+	let reloading = $state(false);
 
 	/** A saved search is the one being shown when its query is what the results answer. */
 	const showing = (saved: SavedSearch) => page.url.pathname === '/search' && search.answered.trim() === saved.query;
@@ -279,6 +282,19 @@
 		goto(await startDraft('new'));
 	}
 
+	/** Asks the server for everything again: counts, accounts, settings, and the open view. */
+	async function reload() {
+		if (reloading) return;
+		reloading = true;
+		try {
+			await refreshAll();
+		} catch (e) {
+			notify(`Could not reload from the server: ${(e as Error).message}`);
+		} finally {
+			reloading = false;
+		}
+	}
+
 	function onkeydown(event: KeyboardEvent) {
 		const target = event.target as HTMLElement;
 		const typing = target.closest('input, textarea, select, [contenteditable="true"]');
@@ -379,6 +395,17 @@
 				/>
 			</form>
 			<div class="view" role="group" aria-label="Split view">
+				<button
+					class="again"
+					onclick={reload}
+					disabled={reloading || offline}
+					title="Reload the list, the counts and the mail from the server"
+					aria-label="Reload from the server"
+				>
+					<svg viewBox="0 0 24 24" aria-hidden="true" class:spinning={reloading}
+						><path d="M23 4v6h-6M20.49 15a9 9 0 1 1-2.12-9.36L23 10" /></svg
+					>
+				</button>
 				<span>Split</span>
 				<button
 					aria-pressed={app.split === 'beside'}
@@ -915,6 +942,27 @@
 		background: var(--ink);
 		border-color: var(--ink);
 		color: var(--paper);
+	}
+	/* The refresh button stands a little apart from the Split choices. */
+	.view button.again {
+		margin-right: 0.5rem;
+	}
+	.view button.again:disabled {
+		cursor: progress;
+		color: var(--ink-soft);
+	}
+	.view button.again svg.spinning {
+		animation: turn 0.9s linear infinite;
+	}
+	@keyframes turn {
+		to {
+			transform: rotate(360deg);
+		}
+	}
+	@media (prefers-reduced-motion: reduce) {
+		.view button.again svg.spinning {
+			animation: none;
+		}
 	}
 	@media (pointer: coarse) {
 		.view button {
