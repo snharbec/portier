@@ -4,7 +4,7 @@
 //! background. What a mail says is data for the model, never an instruction to it; the model
 //! gets no tools, and its answer is shown as plain text.
 
-use std::{path::PathBuf, time::Duration};
+use std::{collections::HashMap, path::PathBuf, time::Duration};
 
 use anyhow::{Context, Result, anyhow, bail};
 use serde_json::{Value, json};
@@ -306,6 +306,81 @@ async fn summarize(state: &AppState, settings: &Settings, mail: &Due) -> Result<
     .execute(&state.db)
     .await?;
     Ok(())
+}
+
+/// The summaries of up to fifty conversations, one entry per conversation: the answer about its
+/// newest mail that has one. A conversation whose newest mail cannot be summarized has none,
+/// which is what the briefing does too. `None` when summaries are off, so a caller can tell
+/// "none written" from "none written for this conversation".
+pub async fn summaries_for_threads(state: &AppState, thread_ids: &[i64]) -> Result<Option<HashMap<i64, Value>>> {
+    if thread_ids.is_empty() {
+        return Ok(Some(HashMap::new()));
+    }
+    if !settings(state).await?.on() {
+        return Ok(None);
+    }
+    let list = serde_json::to_string(thread_ids)?;
+    let rows: Vec<(i64, i64, String, Option<String>)> = sqlx::query_as(
+        "SELECT t.id, x.message_id, x.text, x.attachments FROM threads t
+         JOIN messages m ON m.id = (
+             SELECT id FROM messages WHERE thread_id = t.id ORDER BY date DESC, id DESC LIMIT 1)
+         JOIN summaries x ON x.message_id = m.id
+         WHERE t.id IN (SELECT value FROM json_each(?)) AND x.error IS NULL",
+    )
+    .bind(&list)
+    .fetch_all(&state.db)
+    .await?;
+    Ok(Some(
+        rows.into_iter()
+            .map(|(thread, message, text, attachments)| {
+                (
+                    thread,
+                    json!({
+                        "message_id": message,
+                        "text": text,
+                        "attachments": attachments
+                            .and_then(|list| serde_json::from_str::<Value>(&list).ok())
+                            .unwrap_or_else(|| json!([])),
+                    }),
+                )
+            })
+            .collect(),
+    ))
+}
+
+#[derive(sqlx::FromRow)]
+struct ThreadSummaryRow {
+    thread_id: i64,
+    message_id: i64,
+    text: String,
+    attachments: Option<String>,
+}
+
+/// The summary of one mail, with its conversation and the mail it is about, for a reader who
+/// opened that mail.
+pub async fn summary_of_message(state: &AppState, message_id: i64) -> Result<Option<Value>> {
+    if !settings(state).await?.on() {
+        return Ok(None);
+    }
+    let row: Option<ThreadSummaryRow> = sqlx::query_as(
+        "SELECT m.thread_id, x.message_id, x.text, x.attachments
+         FROM messages m JOIN summaries x ON x.message_id = m.id
+         WHERE m.id = ? AND x.error IS NULL",
+    )
+    .bind(message_id)
+    .fetch_optional(&state.db)
+    .await?;
+    Ok(row.map(|row| {
+        json!({
+            "thread_id": row.thread_id,
+            "message_id": row.message_id,
+            "text": row.text,
+            "attachments": row
+                .attachments
+                .and_then(|list| serde_json::from_str::<Value>(&list).ok())
+                .unwrap_or_else(|| json!([])),
+        })
+    }))
 }
 
 /// Works through the mail that is due, one at a time, whenever new mail arrives or the settings

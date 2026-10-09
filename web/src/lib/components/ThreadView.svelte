@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { goto } from '$app/navigation';
 	import { page } from '$app/state';
-	import { api, type Category, type Thread } from '#lib/api.ts';
+	import { api, type Category, type ConversationSummary, type Thread } from '#lib/api.ts';
 	import { app, categoryNames, classify, notify, refreshCounts, startDraft } from '#lib/app.svelte.ts';
 	import ClassifyButtons from './ClassifyButtons.svelte';
 	import MessageCard from './MessageCard.svelte';
@@ -67,6 +67,52 @@
 		loadedId = id ?? '';
 		if (first) leaving = false;
 		if (!leaving) load(first);
+	});
+
+	// ---- What the local model said about this conversation ----
+	/** The summary shown above the mail, or null when there is none (yet). */
+	let summary = $state<ConversationSummary | null>(null);
+	let summaryFor = '';
+
+	/**
+	 * Asks for the summary of this conversation, which the server keeps apart from the mail so
+	 * that the model has time to write it. A summary not there yet is asked for again when the
+	 * server says a new summary was written.
+	 */
+	async function loadSummary() {
+		const requested = id;
+		try {
+			const loaded = await api.get<ConversationSummary>(`/threads/${requested}/summary`);
+			if (requested !== id) return;
+			summaryFor = requested;
+			summary = loaded.found && loaded.text ? loaded : null;
+		} catch {
+			// No summaries, or the server cannot say: the mail is shown without one.
+			if (requested === id) {
+				summaryFor = requested;
+				summary = null;
+			}
+		}
+	}
+
+	let summaryAsked = 0;
+	$effect(() => {
+		// The message that opens it also carries the summary; this asks for the ones the server
+		// did not have when the view was built, and again when a new one was written.
+		app.tick;
+		const loaded = thread?.messages.at(-1)?.summary as ConversationSummary | undefined;
+		if (loaded && loaded.text && summaryFor !== id) {
+			summaryFor = id;
+			summary = loaded;
+			return;
+		}
+		// A summary for another conversation, or none yet: ask for this one, once per server event.
+		if (summaryFor !== id || !summary) {
+			const now = Date.now();
+			if (now - summaryAsked < 400) return;
+			summaryAsked = now;
+			loadSummary();
+		}
 	});
 
 	async function pick(category: Category) {
@@ -370,6 +416,21 @@
 		</div>
 	</div>
 
+	{#if summary}
+		<aside class="briefing" aria-label="What this mail says">
+			<strong>Briefing</strong>
+			<p>{summary.text}</p>
+			{#if summary.attachments.length}
+				<ul>
+					{#each summary.attachments as file (file.filename)}
+						<li><b>{file.filename}</b>{file.text}</li>
+					{/each}
+				</ul>
+			{/if}
+			<p class="small">Written by the local model on this server. It can be wrong or incomplete.</p>
+		</aside>
+	{/if}
+
 	{#each thread.messages as message, index (message.id)}
 		<MessageCard
 			{message}
@@ -381,6 +442,41 @@
 {/if}
 
 <style>
+	/* What the model said about the conversation, above the mail it is about. */
+	.briefing {
+		margin: 0 0 0.9rem;
+		padding: 0.9rem 1.1rem;
+		background: var(--surface);
+		border: 1px solid var(--line);
+		border-left: 3px solid var(--important, var(--line));
+		border-radius: 12px;
+	}
+	.briefing strong {
+		display: block;
+		margin-bottom: 0.25rem;
+		font: 600 0.8rem var(--body);
+		letter-spacing: 0;
+		color: var(--ink-soft);
+	}
+	.briefing p {
+		margin: 0;
+	}
+	.briefing ul {
+		margin: 0.5rem 0 0;
+		padding-left: 1.1rem;
+	}
+	.briefing li {
+		margin-top: 0.2rem;
+	}
+	.briefing b {
+		font-weight: 600;
+		margin-right: 0.35rem;
+	}
+	.briefing .small {
+		margin-top: 0.5rem;
+		font-size: 0.8rem;
+		color: var(--ink-soft);
+	}
 	.results {
 		display: flex;
 		align-items: center;

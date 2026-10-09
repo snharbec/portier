@@ -545,6 +545,10 @@ pub struct MessageView {
     body_text: String,
     body_html: String,
     attachments: Vec<AttachmentView>,
+    /// What the local model said about this mail, when it has something to say about it. Absent
+    /// while summaries are off or the model has not got to this mail yet.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    summary: Option<Value>,
 }
 
 const MESSAGE_COLUMNS: &str = "m.id, m.thread_id, m.account_id, m.sender_id, s.category AS sender_category,
@@ -574,9 +578,16 @@ async fn to_views(state: &AppState, rows: Vec<MessageRow>) -> ApiResult<Vec<Mess
         });
     }
 
+    // What the model said about each conversation, by the newest mail of it that has an answer.
+    let threads: Vec<i64> = rows.iter().map(|r| r.thread_id).collect();
+    let summaries = crate::mail::summary::summaries_for_threads(state, &threads).await?;
+
     Ok(rows
         .into_iter()
         .map(|r| MessageView {
+            summary: summaries
+                .as_ref()
+                .and_then(|by_thread| by_thread.get(&r.thread_id).cloned()),
             attachments: by_message.remove(&r.id).unwrap_or_default(),
             body_html: r
                 .body_html
@@ -687,11 +698,15 @@ pub async fn message(
     .bind(user.id)
     .fetch_all(&state.db)
     .await?;
-    to_views(&state, rows)
-        .await?
-        .pop()
-        .map(Json)
-        .ok_or_else(ApiError::not_found)
+    let Some(mut view) = to_views(&state, rows).await?.pop() else {
+        return Err(ApiError::not_found());
+    };
+    // This view is of one mail on its own, so the summary under it is the one about that mail,
+    // which may not be the newest of its conversation.
+    if let Some(own) = crate::mail::summary::summary_of_message(&state, view.id).await? {
+        view.summary = Some(own);
+    }
+    Ok(Json(view))
 }
 
 #[derive(Deserialize)]

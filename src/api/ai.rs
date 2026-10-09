@@ -1,7 +1,10 @@
 //! Summaries of new mail: the settings of the local model, and the briefing shown above the
 //! unseen mail in Home.
 
-use axum::{Json, extract::State};
+use axum::{
+    Json,
+    extract::{Path, State},
+};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
@@ -123,6 +126,38 @@ struct Entry {
     attachments: Value,
     /// The summary is still being written.
     pending: bool,
+}
+
+/// The summary of a conversation, as a page of its own shows it: the answer about its newest mail
+/// that has one, or `{"on": false}` when summaries are off, or `{"found": false}` when the model
+/// never got to this conversation. Kept apart from the conversation itself so that the summary,
+/// which takes the model time to write, does not hold up the mail.
+pub async fn thread_summary(
+    State(state): State<AppState>,
+    user: CurrentUser,
+    Path(id): Path<i64>,
+) -> ApiResult<Json<Value>> {
+    // Only for a conversation of this user's.
+    let owned: Option<i64> = sqlx::query_scalar("SELECT id FROM threads WHERE id = ? AND user_id = ?")
+        .bind(id)
+        .bind(user.id)
+        .fetch_optional(&state.db)
+        .await?;
+    if owned.is_none() {
+        return Err(ApiError::not_found());
+    }
+    let Some(by_thread) = summary::summaries_for_threads(&state, &[id]).await? else {
+        return Ok(Json(json!({ "on": false, "found": false })));
+    };
+    Ok(match by_thread.get(&id) {
+        Some(entry) => {
+            let mut entry = entry.clone();
+            entry["found"] = json!(true);
+            entry["on"] = json!(true);
+            Json(entry)
+        }
+        None => Json(json!({ "on": true, "found": false })),
+    })
 }
 
 /// The unseen mail of Home, newest first, each with its summary: what the Unseen area lists,

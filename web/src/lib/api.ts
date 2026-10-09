@@ -116,6 +116,21 @@ export interface Message {
 	body_text: string;
 	body_html: string;
 	attachments: Attachment[];
+	/** What the local model said about this conversation, when it has something to say: the
+	 *  answer about its newest mail that has one. Absent while summaries are off. */
+	summary?: ConversationSummary;
+}
+
+/** What the local model said about a conversation. */
+export interface ConversationSummary {
+	/** The mail it is about; 0 when the viewer only needed the conversation. */
+	message_id: number;
+	text: string;
+	/** One line per attachment the model could read. */
+	attachments: { filename: string; text: string }[];
+	/** Only on the answer the conversation page asks for on its own. */
+	found?: boolean;
+	on?: boolean;
 }
 
 export interface Thread {

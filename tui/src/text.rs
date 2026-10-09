@@ -227,6 +227,25 @@ pub fn conversation(thread: &Thread, width: usize, all: bool, unseen_at_open: &H
             soft,
         ));
         lines.push(Line::raw(""));
+        // What the model said about this mail, above the mail itself, as the web client shows it.
+        if let Some(summary) = &message.summary
+            && !summary.text.is_empty()
+        {
+            for (index, line) in wrap(&summary.text, width.saturating_sub(3)).into_iter().enumerate() {
+                let mark = if index == 0 { "▌ " } else { "  " };
+                lines.push(Line::from(vec![
+                    Span::styled(mark, Style::default().fg(ACCENT)),
+                    Span::styled(line, soft),
+                ]));
+            }
+            for file in &summary.attachments {
+                let named = format!("{}: {}", file.filename, file.text);
+                for line in wrap(&named, width.saturating_sub(3)) {
+                    lines.push(Line::styled(format!("  {line}"), soft));
+                }
+            }
+            lines.push(Line::raw(""));
+        }
         for line in body_lines(message, width) {
             // Quoted text steps back, as it does in the web view.
             let quoted = line.trim_start().starts_with('>');
@@ -288,6 +307,25 @@ pub fn page(messages: &[Message], width: usize) -> Vec<Line<'static>> {
             Span::styled(date, soft),
         ]));
         lines.push(Line::raw(""));
+        // What the model said about this mail, above the mail itself, as the web client shows it.
+        if let Some(summary) = &message.summary
+            && !summary.text.is_empty()
+        {
+            for (index, line) in wrap(&summary.text, width.saturating_sub(3)).into_iter().enumerate() {
+                let mark = if index == 0 { "▌ " } else { "  " };
+                lines.push(Line::from(vec![
+                    Span::styled(mark, Style::default().fg(ACCENT)),
+                    Span::styled(line, soft),
+                ]));
+            }
+            for file in &summary.attachments {
+                let named = format!("{}: {}", file.filename, file.text);
+                for line in wrap(&named, width.saturating_sub(3)) {
+                    lines.push(Line::styled(format!("  {line}"), soft));
+                }
+            }
+            lines.push(Line::raw(""));
+        }
         for line in body_lines(message, width) {
             let quoted = line.trim_start().starts_with('>');
             lines.push(if quoted {

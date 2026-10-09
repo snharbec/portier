@@ -322,6 +322,9 @@ turns summaries off.
   poppler on the server).
 - Home shows the result as "Briefing" above the Unseen area, in the web UI and in the terminal
   client alike. Every entry opens its mail, and a mail leaves the briefing once it is seen.
+- The summary is kept with the mail, so opening that mail later — after it was read, however long
+  ago — shows it above the mail, in the web client and in the terminal client. A summary is written
+  once and never asked for again: reopening an old mail costs the model nothing.
 - What a mail says is handed to the model as text to summarize, not as instructions, and the
   model can do nothing but answer with text. A summary can still be wrong or incomplete: it is
   a pointer to the mail, not a replacement for it.

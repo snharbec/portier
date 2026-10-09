@@ -71,6 +71,7 @@ pub fn router() -> Router<AppState> {
         .route("/counts", get(mail::counts))
         .route("/threads", get(mail::threads))
         .route("/threads/{id}", get(mail::thread))
+        .route("/threads/{id}/summary", get(ai::thread_summary))
         .route("/threads/{id}/seen", post(mail::mark_seen))
         .route("/threads/{id}/note", put(mail::set_note))
         .route("/feed", get(mail::feed))
@@ -1572,6 +1573,104 @@ mod tests {
         let bad = json!({ "url": "file:///etc/passwd", "model": "x", "language": "English" });
         let (status, _, _) = call(&app, "PUT", "/api/settings/ai", Some(&cookie), Some(bad)).await;
         assert_eq!(status, StatusCode::BAD_REQUEST);
+
+        // An older mail, opened long after it arrived, shows the summary that was written for it.
+        sqlx::query("UPDATE messages SET seen = 1, date = unixepoch() - 60 * 24 * 3600")
+            .execute(db)
+            .await
+            .unwrap();
+        let (_, _, briefing) = call(&app, "GET", "/api/briefing", Some(&cookie), None).await;
+        assert!(
+            briefing["entries"].as_array().unwrap().is_empty(),
+            "old, read mail is not in the briefing"
+        );
+        let (_, _, opened) = call(&app, "GET", &format!("/api/threads/{thread}"), Some(&cookie), None).await;
+        assert_eq!(
+            opened["messages"][0]["summary"]["text"], "Anna shares confidential words.",
+            "the conversation carries the summary of its newest mail"
+        );
+        let (_, _, single) = call(&app, "GET", &format!("/api/messages/{message}"), Some(&cookie), None).await;
+        assert_eq!(single["summary"]["text"], "Anna shares confidential words.");
+        assert_eq!(single["summary"]["message_id"].as_i64(), Some(message));
+        let (_, _, own) = call(
+            &app,
+            "GET",
+            &format!("/api/threads/{thread}/summary"),
+            Some(&cookie),
+            None,
+        )
+        .await;
+        assert_eq!(
+            (own["on"].as_bool(), own["found"].as_bool(), own["text"].as_str()),
+            (Some(true), Some(true), Some("Anna shares confidential words."))
+        );
+
+        // A conversation the model never got to says so instead of pretending to have one, and
+        // another user's conversation is not theirs to ask about.
+        let quiet_thread: i64 = sqlx::query_scalar(
+            "INSERT INTO threads (user_id, subject, sender_id) VALUES (1, 'Never summarized', ?) RETURNING id",
+        )
+        .bind(sender)
+        .fetch_one(db)
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO messages (user_id, account_id, folder_id, uid, thread_id, sender_id, message_id,
+                 from_addr, subject, date, body_text)
+             VALUES (1, 1, 1, 9, ?, ?, 'm2@example.com', 'anna@example.com', 'Never summarized',
+                     unixepoch() - 60 * 24 * 3600, 'nothing to say')",
+        )
+        .bind(quiet_thread)
+        .bind(sender)
+        .execute(db)
+        .await
+        .unwrap();
+        let (_, _, none) = call(
+            &app,
+            "GET",
+            &format!("/api/threads/{quiet_thread}/summary"),
+            Some(&cookie),
+            None,
+        )
+        .await;
+        assert_eq!(
+            (none["on"].as_bool(), none["found"].as_bool()),
+            (Some(true), Some(false))
+        );
+        let (status, _, _) = call(
+            &app,
+            "GET",
+            &format!("/api/threads/{thread}/summary"),
+            other_cookie.as_deref(),
+            None,
+        )
+        .await;
+        assert_eq!(status, StatusCode::NOT_FOUND, "not this user's conversation");
+        let (_, _, theirs) = call(&app, "GET", &format!("/api/threads/{thread}"), Some(&cookie), None).await;
+        assert!(theirs["messages"][0].get("summary").is_some());
+
+        // With summaries off, no conversation carries one.
+        sqlx::query("UPDATE ai_settings SET url = '' WHERE id = 1")
+            .execute(db)
+            .await
+            .unwrap();
+        let (_, _, off) = call(&app, "GET", &format!("/api/threads/{thread}"), Some(&cookie), None).await;
+        assert!(
+            off["messages"][0].get("summary").is_none(),
+            "no summaries written: nothing to show"
+        );
+        let (_, _, off) = call(
+            &app,
+            "GET",
+            &format!("/api/threads/{thread}/summary"),
+            Some(&cookie),
+            None,
+        )
+        .await;
+        assert_eq!(
+            (off["on"].as_bool(), off["found"].as_bool()),
+            (Some(false), Some(false))
+        );
     }
 
     #[tokio::test]

@@ -163,6 +163,10 @@ pub struct Message {
     pub id: i64,
     #[serde(default)]
     pub subject: String,
+    /// What the local model said about this mail, when it has something to say about it. Absent
+    /// while summaries are off or the model never got to this mail.
+    #[serde(default)]
+    pub summary: Option<MessageSummary>,
     pub from: Addr,
     pub to: Vec<Addr>,
     pub cc: Vec<Addr>,
@@ -172,6 +176,14 @@ pub struct Message {
     pub body_text: String,
     pub body_html: String,
     pub attachments: Vec<Attachment>,
+}
+
+/// What the local model said about one mail.
+#[derive(Debug, Clone, Deserialize)]
+pub struct MessageSummary {
+    pub text: String,
+    #[serde(default)]
+    pub attachments: Vec<BriefingFile>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
