@@ -112,4 +112,11 @@
 		height: 0;
 		pointer-events: none;
 	}
+	/* Big enough for a finger. */
+	@media (pointer: coarse) {
+		.toolbar button {
+			min-height: 2.5rem;
+			min-width: 2.75rem;
+		}
+	}
 </style>

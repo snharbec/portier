@@ -201,6 +201,26 @@
 
 	let trashing = $state(false);
 
+	// ---- On a phone: a bar of the main actions at the bottom, the others in a sheet above it ----
+	/** The sheet with every action is open. */
+	let more = $state(false);
+	let mailbarHeight = $state(0);
+	$effect(() => {
+		// Another conversation: the sheet belonged to the one before.
+		id;
+		more = false;
+	});
+	$effect(() => {
+		if (embedded) return;
+		document.documentElement.style.setProperty('--mailbar', `${mailbarHeight}px`);
+		return () => document.documentElement.style.setProperty('--mailbar', '0px');
+	});
+
+	/** Back to where the mail was opened from: the search results or its list. */
+	function back() {
+		goto(hit >= 0 ? '/search' : listPath());
+	}
+
 	const trash = () => putAway('trash', 'Moved to Trash: 1 conversation');
 	const archive = () => putAway('archive', 'Archived: 1 conversation');
 	/** Important and Home are two lists; the key i moves the conversation to the other one. */
@@ -359,7 +379,7 @@
 				<button class="btn small quiet" onclick={editNote}>Edit note <span class="key">(t)</span></button>
 			</div>
 		{/if}
-		<div class="tools">
+		<div class="tools" class:more>
 			<button class="btn primary" onclick={() => draft('reply')}>Reply <span class="key">(r)</span></button>
 			{#if last && last.to.length + last.cc.length > 1}
 				<button class="btn" onclick={() => draft('reply_all')}>Reply all <span class="key">(Shift r)</span></button>
@@ -414,6 +434,42 @@
 				<button class="btn small quiet" onclick={closePane}>Close</button>
 			{/if}
 		</div>
+		{#if !embedded}
+			{#if more}
+				<button class="scrim" aria-label="Close the actions" onclick={() => (more = false)}></button>
+			{/if}
+			<nav class="mailbar" aria-label="Actions" bind:offsetHeight={mailbarHeight}>
+				<button onclick={back}>
+					<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M15 5l-7 7 7 7" /></svg>
+					<span>Back</span>
+				</button>
+				<button onclick={() => draft('reply')}>
+					<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M10 7 4 12l6 5M4 12h10a6 6 0 0 1 6 6" /></svg>
+					<span>Reply</span>
+				</button>
+				{#if thread.can_archive}
+					<button onclick={archive} disabled={trashing}>
+						<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 5h16v4H4zM5.5 9v10h13V9M10 13h4" /></svg>
+						<span>Archive</span>
+					</button>
+				{:else if thread.can_restore}
+					<button onclick={untrash} disabled={trashing}>
+						<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 13.5 6.5 5h11L20 13.5V19H4zM4 13.5h4.5l1 2.5h5l1-2.5H20" /></svg>
+						<span>To Home</span>
+					</button>
+				{/if}
+				{#if thread.can_trash}
+					<button onclick={trash} disabled={trashing}>
+						<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 7h14M10 7V4.5h4V7M7 7l.8 12h8.4L17 7M10.5 10.5v5M13.5 10.5v5" /></svg>
+						<span>Trash</span>
+					</button>
+				{/if}
+				<button onclick={() => (more = !more)} aria-expanded={more}>
+					<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12h.01M12 12h.01M19 12h.01" /></svg>
+					<span>More</span>
+				</button>
+			</nav>
+		{/if}
 	</div>
 
 	{#if summary}
@@ -509,6 +565,85 @@
 		flex-wrap: wrap;
 		align-items: center;
 		gap: 0.5rem;
+	}
+	.mailbar {
+		display: none;
+	}
+	/* A phone: the actions would fill the screen above the mail. The main ones sit in a bar at the
+	   bottom, within reach of the thumb; "More" brings up all of them as a sheet above it. */
+	@media (max-width: 44rem) {
+		.tools:not(.more) {
+			display: none;
+		}
+		.tools.more {
+			position: fixed;
+			left: 0;
+			right: 0;
+			bottom: var(--mailbar, 0px);
+			z-index: 19;
+			margin: 0;
+			padding: 1rem 1rem 1.1rem;
+			border-radius: 18px 18px 0 0;
+			background: var(--surface);
+			box-shadow: 0 -18px 40px -18px color-mix(in srgb, var(--ink) 55%, transparent);
+		}
+		.tools.more :global(.btn) {
+			min-height: 2.75rem;
+		}
+		.tools.more .divider {
+			flex-basis: 100%;
+			width: auto;
+			height: 1px;
+			margin: 0.15rem 0;
+		}
+		.scrim {
+			position: fixed;
+			inset: 0;
+			z-index: 18;
+			border: 0;
+			background: color-mix(in srgb, var(--ink) 25%, transparent);
+		}
+		.mailbar {
+			position: fixed;
+			left: 0;
+			right: 0;
+			bottom: 0;
+			z-index: 20;
+			display: flex;
+			padding: 0.2rem 0.25rem env(safe-area-inset-bottom);
+			background: color-mix(in srgb, var(--paper) 92%, transparent);
+			backdrop-filter: blur(10px);
+			border-top: 1px solid var(--line);
+		}
+		.mailbar button {
+			flex: 1;
+			display: grid;
+			justify-items: center;
+			align-content: center;
+			gap: 0.15rem;
+			min-height: 3.4rem;
+			border: 0;
+			border-radius: 12px;
+			background: none;
+			color: var(--ink-soft);
+			font: 600 0.72rem var(--body);
+			cursor: pointer;
+		}
+		.mailbar button[aria-expanded='true'] {
+			color: var(--important);
+		}
+		.mailbar button:disabled {
+			opacity: 0.5;
+		}
+		.mailbar svg {
+			width: 1.5rem;
+			height: 1.5rem;
+			fill: none;
+			stroke: currentColor;
+			stroke-width: 1.8;
+			stroke-linejoin: round;
+			stroke-linecap: round;
+		}
 	}
 	.divider {
 		width: 1px;

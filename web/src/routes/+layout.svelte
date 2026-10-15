@@ -14,6 +14,10 @@
 
 	let { children } = $props();
 	let menuOpen = $state(false);
+	/** On a phone the search field shows only when asked for (or on the results page). */
+	let searchOpen = $state(false);
+	/** Height of the bar of places at the bottom of a phone screen; 0 where there is none. */
+	let tabsHeight = $state(0);
 	let loadError = $state('');
 
 	let offline = $state(false);
@@ -70,7 +74,31 @@
 	const keyLabel = (key: string) => (/^[A-Z]$/.test(key) ? `Shift ${key}` : key);
 	let keyHelp: KeyHelp | undefined = $state();
 	const startsGroup = (index: number) => index > 0 && places[index].group !== places[index - 1].group;
-	const here = $derived(places.find((p) => p.href === page.url.pathname)?.label ?? 'Portier');
+	const here = $derived(
+		places.find((p) => p.href === page.url.pathname)?.label ??
+			(page.url.pathname.startsWith('/thread/')
+				? 'Mail'
+				: page.url.pathname.startsWith('/compose/')
+					? 'Writing'
+					: page.url.pathname === '/search'
+						? 'Search'
+						: 'Portier')
+	);
+	/** The places a phone has at the bottom of the screen; everything else is under "More". */
+	const tabs = $derived(['/', '/important', '/feed', '/screener'].map((href) => places.find((p) => p.href === href)!));
+	/** A single mail has its own bar there, and writing needs the room for the keyboard. */
+	const tabsShown = $derived(!page.url.pathname.startsWith('/thread/') && !page.url.pathname.startsWith('/compose/'));
+	const searching = $derived(searchOpen || page.url.pathname === '/search');
+
+	// Whatever sits at the bottom of the window (the toast, the selection bar) keeps clear of the bar.
+	$effect(() => {
+		document.documentElement.style.setProperty('--tabs', `${tabsShown ? tabsHeight : 0}px`);
+	});
+
+	function toggleSearch() {
+		searchOpen = !searchOpen;
+		if (searchOpen) setTimeout(() => searchField?.focus());
+	}
 
 	let searchField: HTMLInputElement | undefined = $state();
 	let searchTimer: ReturnType<typeof setTimeout> | undefined;
@@ -298,7 +326,7 @@
 	function onkeydown(event: KeyboardEvent) {
 		const target = event.target as HTMLElement;
 		const typing = target.closest('input, textarea, select, [contenteditable="true"]');
-		if (event.key === 'Escape') menuOpen = false;
+		if (event.key === 'Escape') menuOpen = searchOpen = false;
 		// An open dialog (the attachment viewer) owns the keyboard.
 		if (document.querySelector('dialog[open]')) return;
 		// From the search field, the arrows step into the results below it.
@@ -382,7 +410,7 @@
 					><path d="M1 1.5 6 6.5l5-5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" /></svg
 				>
 			</button>
-			<form class="search" role="search" onsubmit={searchSubmitted}>
+			<form class="search" class:open={searching} role="search" onsubmit={searchSubmitted}>
 				<input
 					type="search"
 					bind:this={searchField}
@@ -395,6 +423,9 @@
 				/>
 			</form>
 			<div class="view" role="group" aria-label="Split view">
+				<button class="find" onclick={toggleSearch} aria-expanded={searching} aria-label="Search mail">
+					<svg viewBox="0 0 24 24" aria-hidden="true"><path d={searchIcon} /></svg>
+				</button>
 				<button
 					class="again"
 					onclick={reload}
@@ -425,41 +456,60 @@
 				</button>
 			</div>
 		</div>
-		{#if menuOpen}
-			<button class="scrim" aria-label="Close menu" onclick={() => (menuOpen = false)}></button>
-			<nav id="places" class="column">
-				<ul class="sheet">
-					{#each places as place, index}
-						<li class:gap={startsGroup(index)}>
-							<a
-								href={place.href}
-								aria-current={place.href === page.url.pathname ? 'page' : undefined}
-								onclick={() => (menuOpen = false)}
-							>
-								<span class="label">{place.label}</span>
-								<span class="hint">{place.hint}</span>
-								{#if place.badge}<span class="badge" class:quiet={'quiet' in place}>{place.badge}</span>{/if}
-								{#if place.key}<kbd>{keyLabel(place.key)}</kbd>{/if}
-							</a>
-						</li>
-					{/each}
-					{#each app.searches as saved (saved.id)}
-						<li>
-							<a href="/search" aria-current={showing(saved) ? 'page' : undefined} onclick={() => openSaved(saved)}>
-								<span class="label">{saved.name}</span>
-								<span class="hint">Saved search</span>
-								{#if saved.unread}<span class="badge">{saved.unread}</span>{/if}
-							</a>
-						</li>
-					{/each}
-					<li class="foot">
-						<span class="muted">{app.user.email}</span>
-						<button class="btn small" onclick={logout}>Sign out</button>
-					</li>
-				</ul>
-			</nav>
-		{/if}
 	</header>
+	{#if menuOpen}
+		<button class="scrim" aria-label="Close menu" onclick={() => (menuOpen = false)}></button>
+		<nav id="places" class="column" style="--bar: {barHeight}px" aria-label="All places">
+			<ul class="sheet">
+				<li class="sheet-head">
+					<strong>Go to</strong>
+					<button class="btn small quiet" onclick={() => (menuOpen = false)}>Close</button>
+				</li>
+				{#each places as place, index}
+					<li class:gap={startsGroup(index)}>
+						<a
+							href={place.href}
+							aria-current={place.href === page.url.pathname ? 'page' : undefined}
+							onclick={() => (menuOpen = false)}
+						>
+							<span class="label">{place.label}</span>
+							<span class="hint">{place.hint}</span>
+							{#if place.badge}<span class="badge" class:quiet={'quiet' in place}>{place.badge}</span>{/if}
+							{#if place.key}<kbd>{keyLabel(place.key)}</kbd>{/if}
+						</a>
+					</li>
+				{/each}
+				{#each app.searches as saved (saved.id)}
+					<li>
+						<a href="/search" aria-current={showing(saved) ? 'page' : undefined} onclick={() => openSaved(saved)}>
+							<span class="label">{saved.name}</span>
+							<span class="hint">Saved search</span>
+							{#if saved.unread}<span class="badge">{saved.unread}</span>{/if}
+						</a>
+					</li>
+				{/each}
+				<li class="foot">
+					<span class="muted">{app.user.email}</span>
+					<button class="btn small" onclick={logout}>Sign out</button>
+				</li>
+			</ul>
+		</nav>
+	{/if}
+	{#if tabsShown}
+		<nav class="tabs" aria-label="Places" bind:offsetHeight={tabsHeight}>
+			{#each tabs as place (place.href)}
+				<a href={place.href} aria-current={place.href === page.url.pathname ? 'page' : undefined} onclick={() => (menuOpen = false)}>
+					<svg viewBox="0 0 24 24" aria-hidden="true"><path d={place.icon} /></svg>
+					<span>{place.label}</span>
+					{#if place.badge}<b class:quiet={'quiet' in place}>{place.badge}</b>{/if}
+				</a>
+			{/each}
+			<button onclick={() => (menuOpen = !menuOpen)} aria-expanded={menuOpen} aria-controls="places">
+				<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M4 12h16M4 17h16" /></svg>
+				<span>More</span>
+			</button>
+		</nav>
+	{/if}
 	<nav class="rail" aria-label="Places" style="--bar: {barHeight}px">
 		<ul>
 			{#each places as place, index}
@@ -618,18 +668,148 @@
 		border-radius: 999px;
 		background: var(--surface);
 	}
+	.view button.find {
+		display: none;
+	}
+	/* A phone: one row at the top (Write, where you are, search, reload); the places sit in a bar at
+	   the bottom where the thumb is, the full list of them comes up from there as a sheet. */
 	@media (max-width: 44rem) {
 		.bar {
 			grid-template-columns: auto 1fr auto;
 			row-gap: 0.5rem;
+			padding: 0.45rem 0;
+		}
+		.bar .place {
+			justify-self: start;
+			min-width: 0;
+			padding-inline: 0.5rem;
+			font-size: 1.1rem;
 		}
 		.search {
+			display: none;
 			grid-column: 1 / -1;
 			grid-row: 2;
 			width: 100%;
 		}
-		.view span {
+		.search.open {
+			display: block;
+		}
+		/* A list and a mail side by side do not fit a phone. */
+		.view span,
+		.view button[aria-pressed] {
 			display: none;
+		}
+		.view button.find {
+			display: grid;
+		}
+		.view button.find[aria-expanded='true'] {
+			background: var(--ink);
+			border-color: var(--ink);
+			color: var(--paper);
+		}
+		#places {
+			top: auto;
+			bottom: 0;
+		}
+		#places ul {
+			max-width: none;
+			max-height: min(85dvh, calc(100dvh - 4rem));
+			margin: 0;
+			padding: 0.3rem 0.5rem calc(0.6rem + env(safe-area-inset-bottom));
+			border-radius: 18px 18px 0 0;
+			border-bottom: 0;
+		}
+		.sheet-head {
+			display: flex;
+			justify-content: space-between;
+			align-items: center;
+			position: sticky;
+			top: -0.3rem;
+			z-index: 1;
+			padding: 0.5rem 0.4rem 0.4rem 0.8rem;
+			background: var(--surface);
+		}
+		#places a {
+			min-height: 3rem;
+		}
+		/* The words under each place would make the list twice as long. */
+		#places .hint,
+		#places kbd {
+			display: none;
+		}
+	}
+	.tabs {
+		display: none;
+	}
+	@media (max-width: 44rem) {
+		.tabs {
+			position: fixed;
+			left: 0;
+			right: 0;
+			bottom: 0;
+			z-index: 17;
+			display: grid;
+			grid-template-columns: repeat(5, 1fr);
+			padding: 0.2rem 0.25rem env(safe-area-inset-bottom);
+			background: color-mix(in srgb, var(--paper) 92%, transparent);
+			backdrop-filter: blur(10px);
+			border-top: 1px solid var(--line);
+		}
+		.tabs a,
+		.tabs button {
+			position: relative;
+			display: grid;
+			justify-items: center;
+			align-content: center;
+			gap: 0.15rem;
+			min-height: 3.4rem;
+			padding: 0.25rem 0.1rem;
+			border: 0;
+			border-radius: 12px;
+			background: none;
+			color: var(--ink-soft);
+			font: 600 0.72rem var(--body);
+			text-decoration: none;
+			cursor: pointer;
+		}
+		.tabs span {
+			max-width: 100%;
+			overflow: hidden;
+			text-overflow: ellipsis;
+			white-space: nowrap;
+		}
+		.tabs a[aria-current='page'],
+		.tabs button[aria-expanded='true'] {
+			color: var(--important);
+		}
+		.tabs a[aria-current='page'] svg {
+			stroke-width: 2.2;
+		}
+		.tabs svg {
+			width: 1.5rem;
+			height: 1.5rem;
+			fill: none;
+			stroke: currentColor;
+			stroke-width: 1.8;
+			stroke-linejoin: round;
+			stroke-linecap: round;
+		}
+		.tabs b {
+			position: absolute;
+			top: 0.2rem;
+			left: calc(50% + 0.45rem);
+			min-width: 1.15rem;
+			padding: 0 0.3rem;
+			border-radius: 999px;
+			background: var(--signal);
+			color: var(--signal-ink);
+			font-size: 0.7rem;
+			line-height: 1.15rem;
+			text-align: center;
+		}
+		.tabs b.quiet {
+			background: var(--line);
+			color: var(--ink);
 		}
 	}
 	.place {
@@ -650,23 +830,35 @@
 	.scrim {
 		position: fixed;
 		inset: 0;
+		z-index: 18;
 		border: 0;
 		background: color-mix(in srgb, var(--ink) 25%, transparent);
-		z-index: -1;
-		top: 3.4rem;
-		height: 100vh;
 	}
+	/* Below the top bar, and never longer than the window: what does not fit scrolls inside it. */
 	#places {
-		position: absolute;
+		position: fixed;
+		top: var(--bar, 57px);
 		left: 0;
 		right: 0;
+		z-index: 19;
+		pointer-events: none;
 	}
 	#places ul {
 		list-style: none;
 		margin: 0.5rem auto 0;
 		padding: 0.4rem;
 		max-width: 26rem;
+		max-height: calc(100dvh - var(--bar, 57px) - 1rem);
+		overflow-y: auto;
+		overscroll-behavior: contain;
+		pointer-events: auto;
 		box-shadow: 0 18px 40px -18px color-mix(in srgb, var(--ink) 55%, transparent);
+	}
+	/* The heading with its Close button belongs to the sheet of a phone. */
+	@media (min-width: 44.01rem) {
+		.sheet-head {
+			display: none;
+		}
 	}
 	#places a {
 		display: grid;
@@ -828,7 +1020,7 @@
 		box-shadow: inset 0 0 0 1px var(--line);
 	}
 	main {
-		padding-bottom: 5rem;
+		padding-bottom: calc(5rem + var(--tabs, 0px));
 	}
 	/* Split view: the list and the opened mail each scroll on their own, below the top bar. */
 	main.split {
@@ -973,7 +1165,7 @@
 	.toast {
 		position: fixed;
 		left: 50%;
-		bottom: 1rem;
+		bottom: calc(1rem + var(--tabs, 0px) + var(--mailbar, 0px));
 		transform: translateX(-50%);
 		z-index: 30;
 		max-width: calc(100vw - 2rem);

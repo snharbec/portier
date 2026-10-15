@@ -64,7 +64,9 @@
 		const height = bar.offsetHeight;
 		const width = bar.offsetWidth;
 		const highest = (document.querySelector('header')?.getBoundingClientRect().bottom ?? 0) + 8;
-		const lowest = window.innerHeight - height - 12;
+		// Clear of the bar of places at the bottom of a phone screen.
+		const tabs = parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--tabs')) || 0;
+		const lowest = window.innerHeight - tabs - height - 12;
 		let top = lowest;
 		let left = (window.innerWidth - width) / 2;
 		const box = row?.getBoundingClientRect();
