@@ -569,6 +569,19 @@
 	.mailbar {
 		display: none;
 	}
+	/* A phone: the sender's name on a line of its own, the tag and the two small buttons close
+	   together below it, instead of wrapping one of them onto a line of its own. */
+	@media (max-width: 44rem) {
+		.sender {
+			gap: 0.1rem 0.4rem;
+		}
+		.sender > span:first-child {
+			flex-basis: 100%;
+		}
+		.sender .btn {
+			padding-inline: 0.6rem;
+		}
+	}
 	/* A phone: the actions would fill the screen above the mail. The main ones sit in a bar at the
 	   bottom, within reach of the thumb; "More" brings up all of them as a sheet above it. */
 	@media (max-width: 44rem) {

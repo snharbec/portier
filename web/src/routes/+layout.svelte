@@ -707,17 +707,20 @@
 			border-color: var(--ink);
 			color: var(--paper);
 		}
+		/* Right above the bar it was opened from, which stays in view: More closes it again. */
 		#places {
-			top: auto;
-			bottom: 0;
+			bottom: calc(var(--tabs, 0px) + var(--mailbar, 0px));
 		}
-		#places ul {
+		/* More specific than the rule for wider windows, which comes later in this file. */
+		#places > ul.sheet {
 			max-width: none;
-			max-height: min(85dvh, calc(100dvh - 4rem));
+			box-sizing: border-box;
+			max-height: min(85dvh, calc(100dvh - var(--bar, 57px) - var(--tabs, 0px) - var(--mailbar, 0px) - 0.5rem));
 			margin: 0;
-			padding: 0.3rem 0.5rem calc(0.6rem + env(safe-area-inset-bottom));
+			padding: 0.3rem 0.5rem 0.6rem;
 			border-radius: 18px 18px 0 0;
 			border-bottom: 0;
+			box-shadow: 0 -18px 40px -18px color-mix(in srgb, var(--ink) 55%, transparent);
 		}
 		.sheet-head {
 			display: flex;
@@ -747,7 +750,8 @@
 			left: 0;
 			right: 0;
 			bottom: 0;
-			z-index: 17;
+			/* Above the shade of an open menu, so that More can close it. */
+			z-index: 20;
 			display: grid;
 			grid-template-columns: repeat(5, 1fr);
 			padding: 0.2rem 0.25rem env(safe-area-inset-bottom);
@@ -837,7 +841,6 @@
 	/* Below the top bar, and never longer than the window: what does not fit scrolls inside it. */
 	#places {
 		position: fixed;
-		top: var(--bar, 57px);
 		left: 0;
 		right: 0;
 		z-index: 19;
@@ -856,6 +859,9 @@
 	}
 	/* The heading with its Close button belongs to the sheet of a phone. */
 	@media (min-width: 44.01rem) {
+		#places {
+			top: var(--bar, 57px);
+		}
 		.sheet-head {
 			display: none;
 		}
