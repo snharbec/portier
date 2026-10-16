@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { page } from '$app/state';
 	import { tick } from 'svelte';
 	import { api, withToken, type Account, type Addr, type Category, type RecipientGroup, type Sender, type User } from '#lib/api.ts';
 	import { app, categoryNames, classify, refreshAccounts, refreshCounts, refreshSettings } from '#lib/app.svelte.ts';
@@ -9,6 +10,74 @@
 	import SenderPicture from '#lib/components/SenderPicture.svelte';
 	import { displayName, fullDate } from '#lib/format.ts';
 	import { look, modes, setLook, themes } from '#lib/look.svelte.ts';
+
+	// ---- The aspects of the settings, chosen on the left ----
+	/** Each aspect is a few sections of this page; only the chosen aspect is shown. */
+	const aspects = $derived([
+		{ id: 'mail', name: 'Mail accounts', hint: 'Where your mail comes from and goes out', sections: ['accounts'] },
+		{ id: 'people', name: 'Senders and groups', hint: 'Who gets in, who you write to', sections: ['senders', 'groups'] },
+		{ id: 'reading', name: 'Reading', hint: 'Sliding, archiving, summaries', sections: ['sliding', 'archive', 'summaries'] },
+		{ id: 'device', name: 'This device', hint: 'Look, mail kept for offline', sections: ['look', 'device'] },
+		{ id: 'backup', name: 'Backup and export', hint: 'Settings and mail as files', sections: ['portable'] },
+		{
+			id: 'access',
+			name: app.user?.is_admin ? 'Password and users' : 'Password',
+			hint: app.user?.is_admin ? 'Your password, who can sign in' : 'Your password',
+			sections: app.user?.is_admin ? ['password', 'users'] : ['password']
+		}
+	]);
+	const aspectOf = (section: string) => aspects.find((a) => a.sections.includes(section) || a.id === section);
+
+	/**
+	 * The chosen aspect comes from the address (`/settings#reading`), so the browser's back button
+	 * and links to a single section (`#summaries`) work. Without one, a wide window shows the
+	 * first aspect and a phone shows the list of them.
+	 */
+	const chosen = $derived(aspectOf(page.url.hash.slice(1))?.id ?? null);
+	let wide = $state(true);
+	$effect(() => {
+		const query = matchMedia('(min-width: 44.01rem)');
+		const update = () => (wide = query.matches);
+		update();
+		query.addEventListener('change', update);
+		return () => query.removeEventListener('change', update);
+	});
+	const aspect = $derived(chosen ?? (wide ? 'mail' : null));
+
+	// A link to one section of an aspect (#summaries) scrolls to it once it is shown.
+	$effect(() => {
+		const target = page.url.hash.slice(1);
+		if (!target || aspects.some((a) => a.id === target)) {
+			if (!wide) window.scrollTo({ top: 0 });
+			return;
+		}
+		tick().then(() => document.getElementById(target)?.scrollIntoView({ block: 'start' }));
+	});
+
+	// ---- Searching the settings ----
+	let settingsQuery = $state('');
+	/** The sections whose words contain every word typed. */
+	let matches = $state<string[]>([]);
+	const searching = $derived(settingsQuery.trim().length > 0);
+	$effect(() => {
+		const words = settingsQuery.toLowerCase().split(/\s+/).filter(Boolean);
+		const all = aspects.flatMap((a) => a.sections.map((section) => ({ section, aspect: a })));
+		// Searched in what the page shows, so that every label and explanation is found.
+		tick().then(() => {
+			matches = all
+				.filter(({ section, aspect }) => {
+					const text = `${aspect.name} ${document.getElementById(section)?.textContent ?? ''}`.toLowerCase();
+					return words.every((word) => text.includes(word));
+				})
+				.map(({ section }) => section);
+		});
+	});
+	const shown = (section: string) => (searching ? matches.includes(section) : aspectOf(section)?.id === aspect);
+	const matchesIn = (id: string) => aspects.find((a) => a.id === id)!.sections.filter((s) => matches.includes(s)).length;
+
+	function settingsKeydown(event: KeyboardEvent) {
+		if (event.key === 'Escape') settingsQuery = '';
+	}
 
 	// ---- Mail accounts ----
 	const blank = () => ({
@@ -113,17 +182,23 @@
 
 	// ---- Senders ----
 	let senders = $state<Sender[]>([]);
-	let filter = $state<Category | ''>('');
+	/** What is typed to find a sender: part of a name or an address. */
+	let senderQuery = $state('');
 	let editingSender = $state<number | null>(null);
 	/** Sender whose picture chooser is open. */
 	let pictureOf = $state<number | null>(null);
+	let sendersAsked = 0;
 
 	async function loadSenders() {
-		senders = await api.get<Sender[]>(`/senders${filter ? `?category=${filter}` : ''}`);
+		const term = senderQuery.trim();
+		const asked = ++sendersAsked;
+		const found = term ? await api.get<Sender[]>(`/senders?q=${encodeURIComponent(term)}`) : [];
+		// An answer to something typed earlier must not replace a newer one.
+		if (asked === sendersAsked) senders = found;
 	}
 	$effect(() => {
 		app.tick;
-		filter;
+		senderQuery;
 		loadSenders().catch(() => {});
 	});
 
@@ -550,23 +625,60 @@
 	}
 </script>
 
-<div class="page-head measure"><h1>Settings</h1></div>
+<div class="settings" class:picked={aspect !== null || searching} class:searching>
+	<div class="page-head"><h1>Settings</h1></div>
 
-<nav class="jump" aria-label="Sections of this page">
-	<a class="btn small" href="#accounts">Mail accounts</a>
-	<a class="btn small" href="#senders">Senders</a>
-	<a class="btn small" href="#look">Look</a>
-	<a class="btn small" href="#sliding">Sliding</a>
-	<a class="btn small" href="#archive">Automatic archive</a>
-	<a class="btn small" href="#summaries">Summaries</a>
-	<a class="btn small" href="#groups">Groups</a>
-	<a class="btn small" href="#portable">Backup and export</a>
-	<a class="btn small" href="#device">Mail on this device</a>
-	{#if app.user?.is_admin}<a class="btn small" href="#users">Users</a>{/if}
-	<a class="btn small" href="#password">Password</a>
-</nav>
+	<nav class="aspects" aria-label="Settings">
+		<label class="find">
+			<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M10.5 4a6.5 6.5 0 1 0 0 13 6.5 6.5 0 0 0 0-13zM15.5 15.5 20 20" /></svg>
+			<input
+				type="search"
+				bind:value={settingsQuery}
+				onkeydown={settingsKeydown}
+				placeholder="Find a setting"
+				aria-label="Find a setting"
+				autocomplete="off"
+				spellcheck="false"
+			/>
+		</label>
+		<ul>
+			{#each aspects as item (item.id)}
+				{@const found = searching ? matchesIn(item.id) : 0}
+				<li>
+					<a
+						href="#{item.id}"
+						aria-current={!searching && aspect === item.id ? 'page' : undefined}
+						class:none={searching && found === 0}
+						onclick={() => (settingsQuery = '')}
+					>
+						<span class="name">{item.name}</span>
+						<span class="hint">{item.hint}</span>
+						{#if searching && found}<span class="found">{found}</span>{/if}
+					</a>
+				</li>
+			{/each}
+		</ul>
+	</nav>
 
-<section id="accounts">
+	<div class="panes">
+		<a class="back btn small quiet" href="/settings" onclick={() => (settingsQuery = '')}>
+			<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M15 5l-7 7 7 7" /></svg>
+			All settings
+		</a>
+		{#if searching && matches.length === 0}
+			<p class="nothing">
+				No setting mentions “{settingsQuery.trim()}”. Try another word, or
+				<button class="link" onclick={() => (settingsQuery = '')}>show all settings</button>.
+			</p>
+		{:else if searching}
+			<p class="muted results">
+				{matches.length} {matches.length === 1 ? 'section mentions' : 'sections mention'} “{settingsQuery.trim()}”.
+			</p>
+		{/if}
+
+
+<section id="accounts" hidden={!shown('accounts')}>
+	{#if searching}<p class="from">{aspectOf('accounts')?.name}</p>{/if}
 	<h2>Mail accounts</h2>
 	{#if app.accounts.length === 0 && !form}
 		<p class="muted">No account connected yet. Portier works with any mailbox that offers IMAP and SMTP.</p>
@@ -712,19 +824,28 @@
 	{/if}
 </section>
 
-<section id="senders">
-	<h2>Senders you decided on</h2>
-	<p class="muted">Changing a sender moves all of their mail, old and new. Leaving Junk brings back the last 90 days.</p>
-	<div class="filter">
-		<button class="btn small" aria-pressed={filter === ''} onclick={() => (filter = '')}>All</button>
-		{#each ['important', 'feed', 'junk'] as const as category}
-			<button class="btn small" aria-pressed={filter === category} onclick={() => (filter = category)}>
-				{categoryNames[category]}
-			</button>
-		{/each}
-	</div>
-	{#if senders.length === 0}
-		<p class="muted">No senders here yet. Decisions you make in the Screener are listed here.</p>
+<section id="senders" hidden={!shown('senders')}>
+	{#if searching}<p class="from">{aspectOf('senders')?.name}</p>{/if}
+	<h2>Senders</h2>
+	<p class="muted">
+		Find a sender you decided on to change where their mail goes or to give them a picture. Changing a sender moves
+		all of their mail, old and new; leaving Junk brings back the last 90 days.
+	</p>
+	<label class="find sender-find">
+		<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M10.5 4a6.5 6.5 0 1 0 0 13 6.5 6.5 0 0 0 0-13zM15.5 15.5 20 20" /></svg>
+		<input
+			type="search"
+			bind:value={senderQuery}
+			placeholder="Any part of a name or address, e.g. ann or example.org"
+			aria-label="Find a sender"
+			autocomplete="off"
+			spellcheck="false"
+		/>
+	</label>
+	{#if !senderQuery.trim()}
+		<!-- Nothing listed until asked: the list of everybody who ever wrote is long. -->
+	{:else if senders.length === 0}
+		<p class="muted">No sender you decided on matches “{senderQuery.trim()}”. New senders are decided in the Screener.</p>
 	{:else}
 		<ul class="sheet list">
 			{#each senders as sender (sender.id)}
@@ -761,10 +882,12 @@
 				</li>
 			{/each}
 		</ul>
+		{#if senders.length >= 50}<p class="muted note">The first 50 are shown. Type more to narrow them down.</p>{/if}
 	{/if}
 </section>
 
-<section id="look">
+<section id="look" hidden={!shown('look')}>
+	{#if searching}<p class="from">{aspectOf('look')?.name}</p>{/if}
 	<h2>Look</h2>
 	<p class="muted">Colours of Portier in this browser. Mails that bring their own design keep their white page.</p>
 	<fieldset class="choices">
@@ -794,7 +917,8 @@
 	</fieldset>
 </section>
 
-<section id="sliding">
+<section id="sliding" hidden={!shown('sliding')}>
+	{#if searching}<p class="from">{aspectOf('sliding')?.name}</p>{/if}
 	<h2>Sliding a mail</h2>
 	<p class="muted">
 		In the mail lists, slide a row left or right with a finger or the mouse. With one action chosen, sliding far
@@ -820,7 +944,8 @@
 	{#if swipeError}<p class="error" role="alert">{swipeError}</p>{/if}
 </section>
 
-<section id="archive">
+<section id="archive" hidden={!shown('archive')}>
+	{#if searching}<p class="from">{aspectOf('archive')?.name}</p>{/if}
 	<h2>Automatic archive</h2>
 	<p class="muted">
 		Seen conversations in Home move to the Archive folder by themselves once their newest mail
@@ -853,7 +978,8 @@
 	{#if archiveNote}<p class="ok" role="status">{archiveNote}</p>{/if}
 </section>
 
-<section id="groups">
+<section id="groups" hidden={!shown('groups')}>
+	{#if searching}<p class="from">{aspectOf('groups')?.name}</p>{/if}
 	<h2>Groups</h2>
 	<p class="muted">
 		A group is a name for several addresses. When writing a mail, type the name in the To field and pick the
@@ -932,7 +1058,8 @@
 	{#if groupError}<p class="error" role="alert">{groupError}</p>{/if}
 </section>
 
-<section id="portable">
+<section id="portable" hidden={!shown('portable')}>
+	{#if searching}<p class="from">{aspectOf('portable')?.name}</p>{/if}
 	<h2>Backup and export</h2>
 
 	<h3>Your settings</h3>
@@ -1007,7 +1134,8 @@
 	{/if}
 </section>
 
-<section id="device">
+<section id="device" hidden={!shown('device')}>
+	{#if searching}<p class="from">{aspectOf('device')?.name}</p>{/if}
 	<h2>Mail on this device</h2>
 	<p class="muted">
 		Keeps the mail you read, and the newest 50 conversations of Home, in this browser, so that they can be read
@@ -1043,7 +1171,8 @@
 	{/if}
 </section>
 
-<section id="summaries">
+<section id="summaries" hidden={!shown('summaries')}>
+	{#if searching}<p class="from">{aspectOf('summaries')?.name}</p>{/if}
 	<h2>Summaries</h2>
 	<p class="muted">
 		A language model running on your own machines (Ollama) writes a sentence or two about each new, unseen mail
@@ -1085,7 +1214,8 @@
 </section>
 
 {#if app.user?.is_admin}
-	<section id="users">
+	<section id="users" hidden={!shown('users')}>
+		{#if searching}<p class="from">{aspectOf('users')?.name}</p>{/if}
 		<h2>Users</h2>
 		<p class="muted">Each user has their own mail accounts and their own sender decisions.</p>
 		<ul class="sheet list">
@@ -1119,7 +1249,8 @@
 	</section>
 {/if}
 
-<section id="password">
+<section id="password" hidden={!shown('password')}>
+	{#if searching}<p class="from">{aspectOf('password')?.name}</p>{/if}
 	<h2>Your password</h2>
 	<form class="inline" onsubmit={changePassword}>
 		<label class="field">
@@ -1135,22 +1266,194 @@
 	{#if passwordError}<p class="error" role="alert">{passwordError}</p>{/if}
 	{#if passwordNote}<p class="ok" role="status">{passwordNote}</p>{/if}
 </section>
+	</div>
+</div>
 
 <style>
-	/* Forms stay at a readable width instead of stretching across the window. */
-	:global(main:has(> .measure)) {
-		max-width: var(--column);
+	/* The aspects on the left, the chosen one on the right, its forms at a readable width. */
+	:global(main:has(> .settings)) {
+		max-width: 66rem;
+	}
+	.settings {
+		display: grid;
+		grid-template-columns: 15.5rem minmax(0, var(--column));
+		column-gap: 2.5rem;
+		align-items: start;
+	}
+	.settings > .page-head {
+		grid-column: 1 / -1;
+	}
+	.aspects {
+		position: sticky;
+		top: calc(var(--top, 57px) + 1rem);
+	}
+	.aspects ul {
+		list-style: none;
+		margin: 0.9rem 0 0;
+		padding: 0;
+		display: grid;
+		gap: 0.15rem;
+	}
+	.aspects a {
+		display: grid;
+		grid-template-columns: 1fr auto;
+		align-items: center;
+		column-gap: 0.5rem;
+		padding: 0.55rem 0.8rem 0.6rem;
+		border-left: 3px solid transparent;
+		border-radius: 0 10px 10px 0;
+		text-decoration: none;
+		color: var(--ink);
+	}
+	.aspects a:hover {
+		background: var(--surface);
+	}
+	.aspects a[aria-current='page'] {
+		border-left-color: var(--important);
+		background: var(--surface);
+	}
+	.aspects a[aria-current='page'] .name {
+		color: var(--important);
+	}
+	.aspects .name {
+		font-weight: 700;
+	}
+	.aspects .hint {
+		grid-column: 1;
+		font-size: 0.85rem;
+		color: var(--ink-soft);
+	}
+	/* While searching: the aspects with nothing found step back, the others say how much. */
+	.aspects a.none {
+		opacity: 0.45;
+	}
+	.aspects .found {
+		grid-column: 2;
+		grid-row: 1 / span 2;
+		min-width: 1.5rem;
+		padding: 0 0.4rem;
+		border-radius: 999px;
+		background: var(--important);
+		color: var(--surface);
+		font-size: 0.8rem;
+		font-weight: 700;
+		text-align: center;
+	}
+	.find {
+		display: flex;
+		align-items: center;
+		gap: 0.5rem;
+		padding: 0 0.85rem;
+		border: 1px solid var(--line);
+		border-radius: 999px;
+		background: var(--surface);
+	}
+	.find:focus-within {
+		border-color: var(--important);
+		box-shadow: 0 0 0 3px color-mix(in srgb, var(--important) 18%, transparent);
+	}
+	.find svg {
+		flex: none;
+		width: 1.1rem;
+		height: 1.1rem;
+		fill: none;
+		stroke: var(--ink-soft);
+		stroke-width: 1.8;
+		stroke-linecap: round;
+	}
+	.find input {
+		flex: 1;
+		min-width: 0;
+		padding: 0.55rem 0;
+		border: 0;
+		outline: 0;
+		background: none;
+		color: inherit;
+		font: inherit;
+	}
+	.sender-find {
+		max-width: 30rem;
+		margin-top: 0.9rem;
+	}
+	.panes {
+		min-width: 0;
+		padding-top: 0.4rem;
+	}
+	.back {
+		display: none;
+	}
+	.back svg {
+		width: 1rem;
+		height: 1rem;
+		fill: none;
+		stroke: currentColor;
+		stroke-width: 2;
+		stroke-linecap: round;
+		stroke-linejoin: round;
+	}
+	.results,
+	.nothing {
+		margin: 0 0 1.5rem;
+	}
+	.link {
+		padding: 0;
+		border: 0;
+		background: none;
+		color: var(--important);
+		font: inherit;
+		text-decoration: underline;
+		cursor: pointer;
+	}
+	/* While searching, each section found names the aspect it belongs to. */
+	.from {
+		margin: 0 0 0.2rem;
+		font-size: 0.85rem;
+		font-weight: 600;
+		color: var(--important);
 	}
 	section {
 		margin-bottom: 3rem;
-		/* Jump links must not park the heading under the fixed top bar. */
+		/* Links to a section must not park its heading under the fixed top bar. */
 		scroll-margin-top: 5rem;
 	}
-	.jump {
-		display: flex;
-		flex-wrap: wrap;
-		gap: 0.4rem;
-		margin-bottom: 2rem;
+	section[hidden] {
+		display: none;
+	}
+	/* A phone: first the list of aspects (with the search above it), then the chosen one on a page
+	   of its own, with a way back to the list. */
+	@media (max-width: 44rem) {
+		.settings {
+			grid-template-columns: minmax(0, 1fr);
+		}
+		.aspects {
+			position: static;
+		}
+		.aspects a {
+			min-height: 3.4rem;
+			border-left: 0;
+			border-radius: 12px;
+			background: var(--surface);
+		}
+		.settings.picked .aspects,
+		.settings:not(.picked) .panes {
+			display: none;
+		}
+		.settings.picked > .page-head {
+			display: none;
+		}
+		/* Searching keeps the field in view; the sections found replace the list. */
+		.settings.searching .aspects {
+			display: block;
+		}
+		.settings.searching .aspects ul {
+			display: none;
+		}
+		.back {
+			display: inline-flex;
+			align-items: center;
+			gap: 0.3rem;
+			margin: 1rem 0 0.5rem -0.6rem;
+		}
 	}
 	section > h2 {
 		margin-bottom: 0.6rem;
@@ -1486,16 +1789,6 @@
 		flex-wrap: wrap;
 		gap: 0.6rem;
 		margin-top: 1.25rem;
-	}
-	.filter {
-		display: flex;
-		flex-wrap: wrap;
-		gap: 0.4rem;
-	}
-	.filter .btn[aria-pressed='true'] {
-		background: var(--ink);
-		border-color: var(--ink);
-		color: var(--paper);
 	}
 	.inline {
 		display: flex;

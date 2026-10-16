@@ -61,6 +61,8 @@ pub async fn screener(State(state): State<AppState>, user: CurrentUser) -> ApiRe
 #[derive(Deserialize)]
 pub struct SenderQuery {
     category: Option<String>,
+    /// Part of a name or an address: only the matching senders, at most 50.
+    q: Option<String>,
 }
 
 #[derive(Serialize, sqlx::FromRow)]
@@ -87,10 +89,18 @@ pub async fn senders(
                     EXISTS (SELECT 1 FROM sender_pictures p WHERE p.sender_id = s.id) AS has_picture
              FROM senders s
              WHERE s.user_id = ?1 AND s.category IS NOT NULL AND (?2 IS NULL OR s.category = ?2)
-             ORDER BY s.decided_at DESC",
+               AND (?3 IS NULL OR s.address LIKE ?3 OR s.display_name LIKE ?3)
+             ORDER BY s.decided_at DESC
+             LIMIT CASE WHEN ?3 IS NULL THEN -1 ELSE 50 END",
         )
         .bind(user.id)
         .bind(q.category)
+        .bind(
+            q.q.as_deref()
+                .map(str::trim)
+                .filter(|term| !term.is_empty())
+                .map(|term| format!("%{}%", term.replace(['%', '_'], ""))),
+        )
         .fetch_all(&state.db)
         .await?,
     ))
