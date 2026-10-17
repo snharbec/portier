@@ -241,6 +241,8 @@
 	}
 	.briefing a {
 		display: grid;
+		/* Long names, addresses and links must not make the entry wider than the screen. */
+		grid-template-columns: minmax(0, 1fr);
 		gap: 0.2rem;
 		padding: 0.7rem 1rem;
 		text-decoration: none;
@@ -253,6 +255,13 @@
 		display: flex;
 		align-items: baseline;
 		gap: 0.6rem;
+		min-width: 0;
+	}
+	.briefing .who strong {
+		min-width: 0;
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
 	}
 	.briefing .about {
 		min-width: 0;
@@ -270,6 +279,7 @@
 	}
 	.briefing .says {
 		max-width: 80ch;
+		overflow-wrap: anywhere;
 	}
 	.briefing .pending {
 		color: var(--ink-soft);
@@ -277,6 +287,7 @@
 	}
 	.briefing .file {
 		max-width: 80ch;
+		overflow-wrap: anywhere;
 		font-size: 0.925rem;
 		color: var(--ink-soft);
 	}
@@ -288,6 +299,18 @@
 		color: var(--ink);
 		font-weight: 600;
 		font-size: 0.85rem;
+	}
+	/* A phone: sender and time on the first line, the subject below them in full width. */
+	@media (max-width: 44rem) {
+		.briefing .who {
+			display: grid;
+			grid-template-columns: minmax(0, 1fr) auto;
+			gap: 0 0.6rem;
+		}
+		.briefing .about {
+			grid-row: 2;
+			grid-column: 1 / -1;
+		}
 	}
 	.nothing {
 		margin: 0;
