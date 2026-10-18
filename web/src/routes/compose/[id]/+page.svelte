@@ -107,7 +107,7 @@
 		toField?.focus();
 	}
 
-	/** The name of the first recipient, for the template's {name} and {first name}. Empty when unknown. */
+	/** The name of the first recipient, for the template's {name}, {first name} and {last name}. Empty when unknown. */
 	async function recipientName(): Promise<string> {
 		if (!detail) return '';
 		const address = detail.draft.to_addrs.split(',')[0]?.trim().replace(/^.*<(.+)>$/, '$1') ?? '';
@@ -123,7 +123,7 @@
 		picking = false;
 		const { html, unfilled } = fillTemplate(template.body_html, await recipientName());
 		editor?.insert(html);
-		if (unfilled) status = 'No name known for the recipient: fill in the name in the text';
+		if (unfilled) status = 'The recipient\'s name is not fully known: fill it in where the template asks for it';
 	}
 
 	async function upload(event: Event) {

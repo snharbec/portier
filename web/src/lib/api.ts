@@ -45,7 +45,7 @@ export interface Addr {
 export interface MailTemplate {
 	id: number;
 	name: string;
-	/** Formatted text; may hold {first name}, {name} and {date}. */
+	/** Formatted text; may hold {first name}, {last name}, {name} and {date}. */
 	body_html: string;
 }
 
