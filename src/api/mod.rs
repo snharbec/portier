@@ -10,6 +10,7 @@ mod mail;
 mod pictures;
 mod portable;
 mod saved;
+mod templates;
 
 use axum::{
     Router,
@@ -67,6 +68,8 @@ pub fn router() -> Router<AppState> {
         .route("/backup/download", get(portable::backup_download))
         .route("/groups", get(groups::list).post(groups::create))
         .route("/groups/{id}", put(groups::update).delete(groups::delete))
+        .route("/templates", get(templates::list).post(templates::create))
+        .route("/templates/{id}", put(templates::update).delete(templates::delete))
         .route("/avatar", get(mail::avatar))
         .route("/counts", get(mail::counts))
         .route("/threads", get(mail::threads))
@@ -2144,6 +2147,8 @@ mod tests {
         call(&app, "POST", "/api/groups", Some(&cookie), Some(group)).await;
         let search = json!({ "name": "Invoices", "query": "invoice" });
         call(&app, "POST", "/api/searches", Some(&cookie), Some(search)).await;
+        let template = json!({ "name": "Thanks", "body_html": "<p>Thank you, {first name}!</p>" });
+        call(&app, "POST", "/api/templates", Some(&cookie), Some(template)).await;
 
         let (status, _, file) = call(&app, "GET", "/api/export/settings", Some(&cookie), None).await;
         assert_eq!(status, StatusCode::OK);
@@ -2156,6 +2161,7 @@ mod tests {
             file["groups"],
             json!([{ "name": "Board", "members": "anna@example.org" }])
         );
+        assert_eq!(file["templates"][0]["name"], "Thanks");
         assert_eq!(file["notes"][0]["note"], "call back");
         assert!(
             file.get("accounts").is_none() && !file.to_string().contains("password"),
@@ -2175,6 +2181,9 @@ mod tests {
             (&json!(1), &json!(1), &json!(1))
         );
         assert_eq!((&taken["notes"], &taken["notes_without_mail"]), (&json!(0), &json!(1)));
+        assert_eq!(taken["templates"], 1);
+        let (_, _, theirs) = call(&app, "GET", "/api/templates", other_cookie, None).await;
+        assert_eq!(theirs[0]["body_html"], "<p>Thank you, {first name}!</p>");
         let (_, _, theirs) = call(&app, "GET", "/api/groups", other_cookie, None).await;
         assert_eq!(theirs[0]["name"], "Board");
         let waiting: Option<String> = sqlx::query_scalar("SELECT category FROM senders WHERE user_id = 2")
@@ -2344,6 +2353,69 @@ mod tests {
         let (status, _, _) = call(&app, "DELETE", &path, Some(&cookie), None).await;
         assert_eq!(status, StatusCode::OK);
         let (_, _, listed) = call(&app, "GET", "/api/groups", Some(&cookie), None).await;
+        assert_eq!(listed, json!([]));
+    }
+
+    #[tokio::test]
+    async fn templates_are_kept_per_user_with_their_text_cleaned() {
+        let (app, _state) = test_app().await;
+        let admin = json!({ "email": "admin@example.org", "password": "password1" });
+        let (_, cookie, _) = call(&app, "POST", "/api/register", None, Some(admin)).await;
+        let cookie = cookie.unwrap();
+
+        // Script never makes it into a template; the placeholders stay as they are.
+        let thanks = json!({
+            "name": " Thanks ",
+            "body_html": "<p>Dear {first name},</p><script>alert(1)</script><p><strong>thank you</strong> ({date})</p>"
+        });
+        let (status, _, made) = call(&app, "POST", "/api/templates", Some(&cookie), Some(thanks)).await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(made["name"], "Thanks");
+        assert_eq!(
+            made["body_html"],
+            "<p>Dear {first name},</p><p><strong>thank you</strong> ({date})</p>"
+        );
+        let id = made["id"].as_i64().unwrap();
+
+        for (bad, why) in [
+            (json!({ "name": "", "body_html": "<p>x</p>" }), "no name"),
+            (json!({ "name": "Empty", "body_html": "<p> </p>" }), "no text"),
+            (
+                json!({ "name": "thanks", "body_html": "<p>x</p>" }),
+                "name taken, whatever the case",
+            ),
+            (
+                json!({ "name": "Huge", "body_html": "x".repeat(super::templates::MAX_BODY + 1) }),
+                "too long",
+            ),
+        ] {
+            let (status, _, _) = call(&app, "POST", "/api/templates", Some(&cookie), Some(bad)).await;
+            assert_eq!(status, StatusCode::BAD_REQUEST, "{why}");
+        }
+
+        let path = format!("/api/templates/{id}");
+        let changed = json!({ "name": "Regards", "body_html": "<p>Kind regards</p>" });
+        let (status, _, _) = call(&app, "PUT", &path, Some(&cookie), Some(changed)).await;
+        assert_eq!(status, StatusCode::OK);
+        let (_, _, listed) = call(&app, "GET", "/api/templates", Some(&cookie), None).await;
+        assert_eq!(
+            listed,
+            json!([{ "id": id, "name": "Regards", "body_html": "<p>Kind regards</p>" }])
+        );
+
+        // Another user neither sees nor changes it.
+        let other = json!({ "email": "other@example.org", "password": "password2" });
+        call(&app, "POST", "/api/users", Some(&cookie), Some(other.clone())).await;
+        let (_, other_cookie, _) = call(&app, "POST", "/api/login", None, Some(other)).await;
+        let other_cookie = other_cookie.as_deref();
+        let (_, _, theirs) = call(&app, "GET", "/api/templates", other_cookie, None).await;
+        assert_eq!(theirs, json!([]));
+        let (status, _, _) = call(&app, "DELETE", &path, other_cookie, None).await;
+        assert_eq!(status, StatusCode::NOT_FOUND);
+
+        let (status, _, _) = call(&app, "DELETE", &path, Some(&cookie), None).await;
+        assert_eq!(status, StatusCode::OK);
+        let (_, _, listed) = call(&app, "GET", "/api/templates", Some(&cookie), None).await;
         assert_eq!(listed, json!([]));
     }
 

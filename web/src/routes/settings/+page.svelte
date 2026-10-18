@@ -1,21 +1,24 @@
 <script lang="ts">
 	import { page } from '$app/state';
 	import { tick } from 'svelte';
-	import { api, withToken, type Account, type Addr, type Category, type RecipientGroup, type Sender, type User } from '#lib/api.ts';
+	import { api, withToken, type Account, type Addr, type Category, type MailTemplate, type RecipientGroup, type Sender, type User } from '#lib/api.ts';
 	import { app, categoryNames, classify, refreshAccounts, refreshCounts, refreshSettings } from '#lib/app.svelte.ts';
 	import { clearOffline, offline, setOffline } from '#lib/offline.svelte.ts';
 	import { swipeActions, type SwipeAction } from '#lib/swipe.ts';
 	import Avatar from '#lib/components/Avatar.svelte';
 	import ClassifyButtons from '#lib/components/ClassifyButtons.svelte';
+	import Editor from '#lib/components/Editor.svelte';
 	import SenderPicture from '#lib/components/SenderPicture.svelte';
 	import { displayName, fullDate } from '#lib/format.ts';
 	import { look, modes, setLook, themes } from '#lib/look.svelte.ts';
+	import { placeholders, preview } from '#lib/templates.ts';
 
 	// ---- The aspects of the settings, chosen on the left ----
 	/** Each aspect is a few sections of this page; only the chosen aspect is shown. */
 	const aspects = $derived([
 		{ id: 'mail', name: 'Mail accounts', hint: 'Where your mail comes from and goes out', sections: ['accounts'] },
 		{ id: 'people', name: 'Senders and groups', hint: 'Who gets in, who you write to', sections: ['senders', 'groups'] },
+		{ id: 'writing', name: 'Writing', hint: 'Templates for mail you write often', sections: ['templates'] },
 		{ id: 'reading', name: 'Reading', hint: 'Sliding, archiving, summaries', sections: ['sliding', 'archive', 'summaries'] },
 		{ id: 'device', name: 'This device', hint: 'Look, mail kept for offline', sections: ['look', 'device'] },
 		{ id: 'backup', name: 'Backup and export', hint: 'Settings and mail as files', sections: ['portable'] },
@@ -243,6 +246,7 @@
 		senders: number;
 		pictures: number;
 		groups: number;
+		templates: number;
 		saved_searches: number;
 		notes: number;
 		notes_without_mail: number;
@@ -462,6 +466,57 @@
 			groupError = (e as Error).message;
 		}
 	}
+
+	// ---- Templates ----
+	let templates = $state<MailTemplate[]>([]);
+	/** The template being edited: its id, 0 for a new one, or null when the form is closed. */
+	let templateId = $state<number | null>(null);
+	let templateName = $state('');
+	let templateBody = $state('');
+	let templateError = $state('');
+	let templateBusy = $state(false);
+
+	$effect(() => {
+		api.get<MailTemplate[]>('/templates')
+			.then((list) => (templates = list))
+			.catch(() => {});
+	});
+
+	function editTemplate(template: MailTemplate | null) {
+		templateId = template?.id ?? 0;
+		templateName = template?.name ?? '';
+		templateBody = template?.body_html ?? '';
+		templateError = '';
+	}
+
+	async function saveTemplate(event: SubmitEvent) {
+		event.preventDefault();
+		templateError = '';
+		templateBusy = true;
+		try {
+			const body = { name: templateName, body_html: templateBody };
+			if (templateId) await api.put(`/templates/${templateId}`, body);
+			else await api.post('/templates', body);
+			templates = await api.get<MailTemplate[]>('/templates');
+			templateId = null;
+		} catch (e) {
+			templateError = (e as Error).message;
+		} finally {
+			templateBusy = false;
+		}
+	}
+
+	async function deleteTemplate(template: MailTemplate) {
+		templateError = '';
+		try {
+			await api.delete(`/templates/${template.id}`);
+			templates = templates.filter((t) => t.id !== template.id);
+			if (templateId === template.id) templateId = null;
+		} catch (e) {
+			templateError = (e as Error).message;
+		}
+	}
+
 
 	// ---- Mail on this device ----
 	let offlineBusy = $state(false);
@@ -1058,13 +1113,60 @@
 	{#if groupError}<p class="error" role="alert">{groupError}</p>{/if}
 </section>
 
+<section id="templates" hidden={!shown('templates')}>
+	{#if searching}<p class="from">{aspectOf('templates')?.name}</p>{/if}
+	<h2>Templates</h2>
+	<p class="muted">
+		Text for mail you write again and again. When writing a mail, a new one or a reply, choose Template and pick
+		one: its text is put where the cursor is. {placeholders.join(', ').replace(/, ([^,]*)$/, ' and $1')} are filled in
+		with the first recipient's name and today's date.
+	</p>
+	{#if templates.length}
+		<ul class="groups">
+			{#each templates as template (template.id)}
+				<li>
+					<div>
+						<strong>{template.name}</strong>
+						<span class="muted">{preview(template.body_html)}</span>
+					</div>
+					<button class="btn small" onclick={() => editTemplate(template)}>Edit</button>
+					<button class="btn small danger" onclick={() => deleteTemplate(template)}>Delete</button>
+				</li>
+			{/each}
+		</ul>
+	{/if}
+	{#if templateId === null}
+		<p><button class="btn" onclick={() => editTemplate(null)}>New template</button></p>
+	{:else}
+		<form class="group template" onsubmit={saveTemplate}>
+			<label class="field">
+				Name
+				<input bind:value={templateName} maxlength="40" placeholder="e.g. Thanks for applying" autocomplete="off" />
+			</label>
+			<div class="field">
+				Text
+				{#key templateId}
+					<div class="text">
+						<Editor bind:value={templateBody} label="Text of the template" placeholder="Dear {'{first name}'}, …" />
+					</div>
+				{/key}
+			</div>
+			<div class="actions">
+				<button class="btn primary" disabled={templateBusy}>{templateId ? 'Save template' : 'Add template'}</button>
+				<button type="button" class="btn" onclick={() => (templateId = null)}>Cancel</button>
+			</div>
+		</form>
+	{/if}
+	{#if templateError}<p class="error" role="alert">{templateError}</p>{/if}
+</section>
+
 <section id="portable" hidden={!shown('portable')}>
 	{#if searching}<p class="from">{aspectOf('portable')?.name}</p>{/if}
 	<h2>Backup and export</h2>
 
 	<h3>Your settings</h3>
 	<p class="muted">
-		One file with what you set up in Portier: where each sender's mail goes, sender pictures, groups, saved
+		One file with what you set up in Portier: where each sender's mail goes, sender pictures, groups, templates, saved
 		searches, notes on mails, slide actions, automatic archive and the look. Mail and mail accounts are not in
 		it. Importing sets what the file names and leaves everything else as it is.
 	</p>
@@ -1078,7 +1180,7 @@
 	{#if portableError}<p class="error" role="alert">{portableError}</p>{/if}
 	{#if imported}
 		<p class="ok" role="status">
-			Imported: {imported.senders} senders, {imported.pictures} pictures, {imported.groups} groups,
+			Imported: {imported.senders} senders, {imported.pictures} pictures, {imported.groups} groups, {imported.templates} templates,
 			{imported.saved_searches} saved searches, {imported.notes} notes.
 		</p>
 		{#if imported.notes_without_mail}
@@ -1664,6 +1766,20 @@
 		gap: 0.75rem;
 		max-width: 34rem;
 		margin-top: 0.75rem;
+	}
+	.template {
+		max-width: 40rem;
+	}
+	.template .text {
+		padding: 0 0.75rem;
+		border: 1px solid var(--line);
+		border-radius: 10px;
+		background: var(--surface);
+		font-weight: 400;
+		color: var(--ink);
+	}
+	.template .text :global(.tiptap) {
+		min-height: 8rem;
 	}
 	.group textarea {
 		resize: vertical;

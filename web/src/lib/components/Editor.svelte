@@ -7,32 +7,51 @@
 	let {
 		value = $bindable(''),
 		onchange,
-		autofocus = false
+		autofocus = false,
+		placeholder = 'Write your message',
+		label = 'Message'
 	}: {
 		value?: string;
 		onchange?: () => void;
 		/** Puts the cursor into the text as soon as the editor is there. */
 		autofocus?: boolean;
+		placeholder?: string;
+		/** What the text field is called for a screen reader. */
+		label?: string;
 	} = $props();
 
 	let element: HTMLDivElement;
 	let editor: Editor | undefined = $state();
 	let revision = $state(0);
+	/** The cursor was put into the text at some point: what is inserted goes where it was left. */
+	let touched = false;
 
 	onMount(() => {
 		editor = new Editor({
 			element,
-			extensions: [StarterKit, Placeholder.configure({ placeholder: 'Write your message' })],
+			extensions: [StarterKit, Placeholder.configure({ placeholder })],
 			content: value,
+			editorProps: { attributes: { 'aria-label': label, 'aria-multiline': 'true', role: 'textbox' } },
 			autofocus: autofocus ? 'end' : false,
 			onUpdate: ({ editor }) => {
 				value = editor.isEmpty ? '' : editor.getHTML();
 				onchange?.();
 			},
-			onTransaction: () => (revision += 1)
+			onTransaction: () => (revision += 1),
+			onFocus: () => (touched = true)
 		});
 		return () => editor?.destroy();
 	});
+
+	/** Puts formatted text where the cursor is (at the end when the text was never clicked into). */
+	export function insert(html: string) {
+		if (!editor) return;
+		editor
+			.chain()
+			.focus(touched ? undefined : 'end')
+			.insertContent(html)
+			.run();
+	}
 
 	const tools = [
 		{ label: 'Bold', mark: 'bold', run: (e: Editor) => e.chain().focus().toggleBold().run() },
@@ -41,6 +60,11 @@
 		{ label: 'Numbered', mark: 'orderedList', run: (e: Editor) => e.chain().focus().toggleOrderedList().run() },
 		{ label: 'Quote', mark: 'blockquote', run: (e: Editor) => e.chain().focus().toggleBlockquote().run() }
 	];
+
+	/** Whether the text at the cursor has this format; `revision` makes it follow each change. */
+	function active(mark: string, revision: number) {
+		return revision >= 0 && (editor?.isActive(mark) ?? false);
+	}
 
 	function addLink() {
 		if (!editor) return;
@@ -53,17 +77,22 @@
 	}
 </script>
 
+<!-- The buttons take no focus from the text (mousedown), so a click formats where the cursor is;
+     they stay the same elements while the text changes, else a click on one would be lost. -->
 <div class="toolbar" role="toolbar" aria-label="Formatting">
 	{#each tools as tool}
-		{#key revision}
-			<button type="button" aria-pressed={editor?.isActive(tool.mark) ?? false} onclick={() => editor && tool.run(editor)}>
-				{tool.label}
-			</button>
-		{/key}
+		<button
+			type="button"
+			aria-pressed={active(tool.mark, revision)}
+			onmousedown={(event) => event.preventDefault()}
+			onclick={() => editor && tool.run(editor)}
+		>
+			{tool.label}
+		</button>
 	{/each}
-	{#key revision}
-		<button type="button" aria-pressed={editor?.isActive('link') ?? false} onclick={addLink}>Link</button>
-	{/key}
+	<button type="button" aria-pressed={active('link', revision)} onmousedown={(event) => event.preventDefault()} onclick={addLink}>
+		Link
+	</button>
 </div>
 <div class="editor" bind:this={element}></div>
 

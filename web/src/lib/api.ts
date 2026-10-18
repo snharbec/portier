@@ -41,6 +41,14 @@ export interface Addr {
 }
 
 /** A name that stands for several addresses when writing. */
+/** A text kept for mail written again and again. */
+export interface MailTemplate {
+	id: number;
+	name: string;
+	/** Formatted text; may hold {first name}, {name} and {date}. */
+	body_html: string;
+}
+
 export interface RecipientGroup {
 	id: number;
 	name: string;

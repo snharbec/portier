@@ -234,6 +234,12 @@ struct GroupEntry {
 }
 
 #[derive(Serialize, Deserialize)]
+struct TemplateEntry {
+    name: String,
+    body_html: String,
+}
+
+#[derive(Serialize, Deserialize)]
 struct SearchEntry {
     name: String,
     query: String,
@@ -271,6 +277,8 @@ pub struct SettingsFile {
     #[serde(default)]
     groups: Vec<GroupEntry>,
     #[serde(default)]
+    templates: Vec<TemplateEntry>,
+    #[serde(default)]
     saved_searches: Vec<SearchEntry>,
     #[serde(default)]
     notes: Vec<NoteEntry>,
@@ -300,6 +308,11 @@ pub async fn export_settings(State(state): State<AppState>, user: CurrentUser) -
     .await?;
     let groups: Vec<(String, String)> =
         sqlx::query_as("SELECT name, members FROM recipient_groups WHERE user_id = ? ORDER BY name")
+            .bind(user.id)
+            .fetch_all(db)
+            .await?;
+    let templates: Vec<(String, String)> =
+        sqlx::query_as("SELECT name, body_html FROM mail_templates WHERE user_id = ? ORDER BY name")
             .bind(user.id)
             .fetch_all(db)
             .await?;
@@ -342,6 +355,10 @@ pub async fn export_settings(State(state): State<AppState>, user: CurrentUser) -
         groups: groups
             .into_iter()
             .map(|(name, members)| GroupEntry { name, members })
+            .collect(),
+        templates: templates
+            .into_iter()
+            .map(|(name, body_html)| TemplateEntry { name, body_html })
             .collect(),
         saved_searches: searches
             .into_iter()
@@ -455,7 +472,7 @@ pub async fn import_settings(
         }
     }
 
-    // Groups and saved searches: by name; one of the same name is replaced.
+    // Groups, templates and saved searches: by name; one of the same name is replaced.
     let mut groups = 0;
     for entry in &file.groups {
         let name = entry.name.trim();
@@ -480,6 +497,23 @@ pub async fn import_settings(
         .execute(db)
         .await?;
         groups += 1;
+    }
+    let mut templates = 0;
+    for entry in &file.templates {
+        let Ok((name, body_html)) = super::templates::checked(&entry.name, &entry.body_html) else {
+            problems.push(format!("template {}: not understood", entry.name.trim()));
+            continue;
+        };
+        sqlx::query(
+            "INSERT INTO mail_templates (user_id, name, body_html) VALUES (?, ?, ?)
+             ON CONFLICT (user_id, name) DO UPDATE SET body_html = excluded.body_html",
+        )
+        .bind(user.id)
+        .bind(name)
+        .bind(body_html)
+        .execute(db)
+        .await?;
+        templates += 1;
     }
     let mut searches = 0;
     let today = chrono::Local::now().date_naive();
@@ -571,6 +605,7 @@ pub async fn import_settings(
         "senders": senders,
         "pictures": pictures,
         "groups": groups,
+        "templates": templates,
         "saved_searches": searches,
         "notes": notes,
         "notes_without_mail": notes_without_mail,

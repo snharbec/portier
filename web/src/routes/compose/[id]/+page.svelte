@@ -1,11 +1,12 @@
 <script lang="ts">
 	import { goto } from '$app/navigation';
 	import { page } from '$app/state';
-	import { api, type Addr, type DraftAttachment, type DraftDetail, type Message } from '#lib/api.ts';
+	import { api, type Addr, type DraftAttachment, type DraftDetail, type MailTemplate, type Message } from '#lib/api.ts';
 	import { app, draftReturnPath, notify, refreshCounts } from '#lib/app.svelte.ts';
 	import Editor from '#lib/components/Editor.svelte';
 	import MessageCard from '#lib/components/MessageCard.svelte';
 	import { displayName, fileSize } from '#lib/format.ts';
+	import { fillTemplate, preview } from '#lib/templates.ts';
 	import { onMount } from 'svelte';
 
 	const id = page.params.id;
@@ -24,6 +25,10 @@
 	let toField: HTMLInputElement | undefined = $state();
 	let saveTimer: ReturnType<typeof setTimeout> | undefined;
 	let dirty = false;
+	let editor: ReturnType<typeof Editor> | undefined = $state();
+	/** The user's templates, offered under "Template"; null until they are loaded. */
+	let templates = $state<MailTemplate[] | null>(null);
+	let picking = $state(false);
 
 	onMount(() => {
 		api.get<DraftDetail>(`/drafts/${id}`)
@@ -39,6 +44,10 @@
 				}
 			})
 			.catch((e) => (error = e.message));
+		// Without them the draft works all the same.
+		api.get<MailTemplate[]>('/templates')
+			.then((list) => (templates = list))
+			.catch(() => (templates = []));
 		return () => {
 			clearTimeout(saveTimer);
 			if (dirty) save().catch(() => {});
@@ -96,6 +105,25 @@
 		changed();
 		// Ready for the next recipient, also after a click on a suggestion.
 		toField?.focus();
+	}
+
+	/** The name of the first recipient, for the template's {name} and {first name}. Empty when unknown. */
+	async function recipientName(): Promise<string> {
+		if (!detail) return '';
+		const address = detail.draft.to_addrs.split(',')[0]?.trim().replace(/^.*<(.+)>$/, '$1') ?? '';
+		if (!address) return '';
+		const source = detail.source?.from;
+		if (source?.name && source.address.toLowerCase() === address.toLowerCase()) return source.name;
+		const known = await api.get<Addr[]>(`/contacts?q=${encodeURIComponent(address)}`).catch(() => []);
+		return known.find((contact) => !contact.group && contact.address.toLowerCase() === address.toLowerCase())?.name ?? '';
+	}
+
+
+	async function useTemplate(template: MailTemplate) {
+		picking = false;
+		const { html, unfilled } = fillTemplate(template.body_html, await recipientName());
+		editor?.insert(html);
+		if (unfilled) status = 'No name known for the recipient: fill in the name in the text';
 	}
 
 	async function upload(event: Event) {
@@ -159,7 +187,13 @@
 	}
 </script>
 
-<svelte:window onkeydowncapture={onkeydown} />
+<svelte:window
+	onkeydowncapture={onkeydown}
+	onpointerdown={(event) => {
+		// A click anywhere else closes the templates.
+		if (picking && !(event.target as Element).closest('.picker')) picking = false;
+	}}
+/>
 
 {#if !detail}
 	{#if error}
@@ -259,6 +293,7 @@
 
 		<!-- A reply has its recipients and subject already: writing starts in the text. -->
 		<Editor
+			bind:this={editor}
 			bind:value={detail.draft.body_html}
 			onchange={changed}
 			autofocus={detail.draft.kind === 'reply' || detail.draft.kind === 'reply_all'}
@@ -305,6 +340,36 @@
 				Attach files
 				<input type="file" multiple onchange={upload} hidden />
 			</label>
+			<div class="picker">
+				<button class="btn" aria-expanded={picking} aria-controls="templates" onclick={() => (picking = !picking)}>
+					Template
+				</button>
+				{#if picking}
+					<!-- svelte-ignore a11y_no_static_element_interactions -->
+					<div
+						class="templates sheet"
+						id="templates"
+						onkeydown={(event) => {
+							if (event.key === 'Escape') picking = false;
+						}}
+					>
+						{#if templates?.length}
+							<ul aria-label="Templates">
+								{#each templates as template (template.id)}
+									<li>
+										<button onclick={() => useTemplate(template)}>
+											<strong>{template.name}</strong>
+											<span class="muted">{preview(template.body_html)}</span>
+										</button>
+									</li>
+								{/each}
+							</ul>
+						{:else}
+							<p class="muted">No templates yet. Set them up in <a href="/settings#templates">Settings</a>.</p>
+						{/if}
+					</div>
+				{/if}
+			</div>
 			<span class="muted status" aria-live="polite">{status}</span>
 			<button class="btn quiet danger" onclick={discard}>Discard</button>
 		</div>
@@ -416,5 +481,50 @@
 	}
 	.actions .danger {
 		margin-left: auto;
+	}
+	/* The templates open above the button: below it the page may end. */
+	.picker {
+		position: relative;
+	}
+	.templates {
+		position: absolute;
+		bottom: calc(100% + 0.4rem);
+		left: 0;
+		z-index: 5;
+		/* Within the composer's frame on a phone too. */
+		width: min(24rem, calc(100vw - 4.5rem));
+		max-height: 18rem;
+		overflow: auto;
+		padding: 0.3rem;
+	}
+	.templates ul {
+		list-style: none;
+		margin: 0;
+		padding: 0;
+	}
+	.templates button {
+		display: grid;
+		width: 100%;
+		padding: 0.5rem 0.6rem;
+		border: 0;
+		border-radius: 8px;
+		background: none;
+		text-align: left;
+		cursor: pointer;
+	}
+	.templates button:hover,
+	.templates button:focus-visible {
+		background: var(--paper);
+	}
+	.templates button span {
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
+		font-size: 0.875rem;
+	}
+	.templates p {
+		margin: 0;
+		padding: 0.5rem 0.6rem;
+		font-size: 0.925rem;
 	}
 </style>
