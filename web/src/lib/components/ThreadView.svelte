@@ -143,6 +143,74 @@
 		if (next !== undefined) goto(`/thread/${next}`, { replace: true });
 	}
 
+	/** Whether there is a mail before or after this one to go to. */
+	function hasNeighbour(step: -1 | 1): boolean {
+		if (hit >= 0) return hit + step >= 0 && hit + step < (search.hits?.length ?? 0);
+		return neighbour(Number(id), step) !== undefined;
+	}
+	const hasPrevious = $derived(id !== undefined && hasNeighbour(-1));
+	const hasNext = $derived(id !== undefined && hasNeighbour(1));
+
+	// ---- On a phone: a swipe sideways goes to the next (to the left) or previous mail ----
+	// Only outside the mail's own text: that lives in a frame of its own, whose touches never get
+	// here, so reading and scrolling within it stays as it is.
+	let swipe: { x: number; y: number; at: number; dx: number; sideways: boolean | null } | null = null;
+	const SWIPE_DISTANCE = 80;
+
+	function swipeArea(target: EventTarget | null): boolean {
+		if (embedded || !matchMedia('(max-width: 44rem)').matches) return false;
+		// Zoomed in with two fingers: a swipe moves the zoomed page.
+		if ((visualViewport?.scale ?? 1) > 1.01) return false;
+		const element = target as HTMLElement | null;
+		if (!element?.closest || element.closest('nav, header, input, textarea, select, dialog, .tools, .scrim, [contenteditable="true"]')) return false;
+		// Something in the way that scrolls sideways itself.
+		for (let at: HTMLElement | null = element; at && at !== document.body; at = at.parentElement) {
+			if (at.scrollWidth > at.clientWidth + 1 && getComputedStyle(at).overflowX !== 'visible') return false;
+		}
+		return true;
+	}
+
+	/** The mail follows the finger a little. Not the whole page: its bars are fixed to the screen. */
+	function slide(dx: number) {
+		for (const part of document.querySelectorAll<HTMLElement>('main h1, main article, main aside.briefing')) {
+			part.style.transform = dx ? `translateX(${dx * 0.35}px)` : '';
+			part.style.transition = dx ? 'none' : 'transform 0.2s ease';
+		}
+	}
+
+	function touchstart(event: TouchEvent) {
+		const touch = event.touches[0];
+		// From the very edge the browser's own gesture (back, forward) is meant.
+		if (event.touches.length !== 1 || touch.clientX < 24 || touch.clientX > innerWidth - 24 || !swipeArea(event.target)) {
+			swipe = null;
+			return;
+		}
+		swipe = { x: touch.clientX, y: touch.clientY, at: Date.now(), dx: 0, sideways: null };
+	}
+
+	function touchmove(event: TouchEvent) {
+		if (!swipe) return;
+		const touch = event.touches[0];
+		const dx = touch.clientX - swipe.x;
+		const dy = touch.clientY - swipe.y;
+		// Decided once, after the finger moved a little: sideways is a swipe, otherwise scrolling.
+		if (swipe.sideways === null && Math.hypot(dx, dy) > 10) swipe.sideways = Math.abs(dx) > Math.abs(dy) * 1.5;
+		if (!swipe.sideways) return;
+		// Nothing to go to that way: it moves only a little, and springs back.
+		swipe.dx = dx < 0 ? (hasNext ? dx : dx / 4) : hasPrevious ? dx : dx / 4;
+		slide(swipe.dx);
+	}
+
+	function touchend() {
+		if (!swipe) return;
+		const { dx, sideways } = swipe;
+		swipe = null;
+		slide(0);
+		if (!sideways || Math.abs(dx) < SWIPE_DISTANCE) return;
+		if (dx < 0 && hasNext) toNeighbour(1);
+		else if (dx > 0 && hasPrevious) toNeighbour(-1);
+	}
+
 	// ---- Your own note on the conversation ----
 	/** The text being edited, or null while the note is only shown. */
 	let noteDraft = $state<string | null>(null);
@@ -303,7 +371,7 @@
 	}
 </script>
 
-<svelte:window {onkeydown} />
+<svelte:window {onkeydown} ontouchstart={touchstart} ontouchmove={touchmove} ontouchend={touchend} ontouchcancel={touchend} />
 
 {#if error}
 	<p class="empty"><strong>This conversation cannot be shown</strong>{error}</p>
@@ -443,6 +511,14 @@
 					<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M15 5l-7 7 7 7" /></svg>
 					<span>Back</span>
 				</button>
+				<button onclick={() => toNeighbour(-1)} disabled={!hasPrevious} aria-label="Previous mail">
+					<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 15l6-6 6 6" /></svg>
+					<span>Previous</span>
+				</button>
+				<button onclick={() => toNeighbour(1)} disabled={!hasNext} aria-label="Next mail">
+					<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 9l6 6 6-6" /></svg>
+					<span>Next</span>
+				</button>
 				<button onclick={() => draft('reply')}>
 					<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M10 7 4 12l6 5M4 12h10a6 6 0 0 1 6 6" /></svg>
 					<span>Reply</span>
@@ -500,6 +576,8 @@
 <style>
 	/* What the model said about the conversation, above the mail it is about. */
 	.briefing {
+		/* Long attachment names must not make the page wider than a phone. */
+		overflow-wrap: anywhere;
 		margin: 0 0 0.9rem;
 		padding: 0.9rem 1.1rem;
 		background: var(--surface);

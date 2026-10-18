@@ -132,6 +132,8 @@ h3 {
 	line-height: 1.15;
 	letter-spacing: -0.02em;
 	margin: 0;
+	/* A subject with one very long word still fits a phone. */
+	overflow-wrap: break-word;
 }
 h1 {
 	font-size: 2.25rem;
