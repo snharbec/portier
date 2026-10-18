@@ -44,6 +44,12 @@ export function neighbour(id: number, step: -1 | 1): number | undefined {
 	return index < 0 ? undefined : reading.ids[index + step];
 }
 
+/** Where the conversation is in the list it was opened from (from 0), or null when it is not in it. */
+export function placeIn(id: number): { index: number; total: number } | null {
+	const index = reading.ids.indexOf(id);
+	return index < 0 ? null : { index, total: reading.ids.length };
+}
+
 /**
  * Takes a conversation out of the list it was opened from and says where to go:
  * the conversation that followed it, the one before it if it was the last, or back to the list.

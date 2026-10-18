@@ -8,7 +8,7 @@
 	import SenderPicture from './SenderPicture.svelte';
 	import DelayMenu from './DelayMenu.svelte';
 	import { displayName, returnTime } from '#lib/format.ts';
-	import { afterRemoving, listPath, neighbour } from '#lib/reading.ts';
+	import { afterRemoving, listPath, neighbour, placeIn } from '#lib/reading.ts';
 	import { rememberSearch, resultPath, runSearch, search } from '#lib/search.svelte.ts';
 	import { mailAction } from '#lib/swipe.ts';
 
@@ -150,6 +150,8 @@
 	}
 	const hasPrevious = $derived(id !== undefined && hasNeighbour(-1));
 	const hasNext = $derived(id !== undefined && hasNeighbour(1));
+	/** Where this mail is in the list it was opened from, for "Mail 3 of 21". */
+	const place = $derived(id === undefined ? null : placeIn(Number(id)));
 
 	// ---- On a phone: a swipe sideways goes to the next (to the left) or previous mail ----
 	// Only outside the mail's own text: that lives in a frame of its own, whose touches never get
@@ -158,7 +160,8 @@
 	const SWIPE_DISTANCE = 80;
 
 	function swipeArea(target: EventTarget | null): boolean {
-		if (embedded || !matchMedia('(max-width: 44rem)').matches) return false;
+		// A phone, or a tablet held in the hand; beside a list in split view the list is there to tap.
+		if (embedded || !matchMedia('(max-width: 44rem), (pointer: coarse)').matches) return false;
 		// Zoomed in with two fingers: a swipe moves the zoomed page.
 		if ((visualViewport?.scale ?? 1) > 1.01) return false;
 		const element = target as HTMLElement | null;
@@ -386,6 +389,14 @@
 			<button class="btn small" onclick={() => toResult(hit + 1)} disabled={hit === search.hits.length - 1}>
 				Next <span class="key">(n)</span>
 			</button>
+		</nav>
+	{/if}
+	{#if hit < 0 && !embedded && place}
+		<nav class="results stepper" aria-label="Mail in the list">
+			<a class="btn small" href={listPath()}>Back to the list</a>
+			<span class="muted">Mail {place.index + 1} of {place.total}</span>
+			<button class="btn small" onclick={() => toNeighbour(-1)} disabled={!hasPrevious}>Previous <span class="key">(↑)</span></button>
+			<button class="btn small" onclick={() => toNeighbour(1)} disabled={!hasNext}>Next <span class="key">(↓)</span></button>
 		</nav>
 	{/if}
 	<div class="page-head stack reading">
@@ -622,7 +633,13 @@
 		border: 1px solid var(--line);
 		border-radius: 999px;
 	}
-	.results span {
+	/* A phone has these in its bar at the bottom. */
+	@media (max-width: 44rem) {
+		.stepper {
+			display: none;
+		}
+	}
+	.results > span {
 		flex: 1;
 		min-width: 8rem;
 		font-size: 0.9rem;
